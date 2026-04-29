@@ -67,7 +67,7 @@ Out of scope for this rework:
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-All API routes follow the existing pattern: `getTenantContext(req)` → `requirePermission(ctx, 'expenses.view'|'expenses.manage')` → tenant-scoped Prisma queries. Vendors and Accounts share the existing `expenses.*` permission keys (they are sub-resources of expenses).
+All API routes follow the existing pattern: `getTenantContext(req)` → `requirePermission(ctx, 'expenses.view'|'expenses.edit'|'expenses.delete')` → tenant-scoped Prisma queries. Vendors and Accounts share the existing `expenses.*` permission keys (they are sub-resources of expenses).
 
 ## Data model
 
@@ -349,7 +349,7 @@ GET    /api/reports/expenses              by-category, by-vendor, by-account,
                                           over-time aggregates with date range filter
 ```
 
-Permissions: `expenses.view` for GETs, `expenses.manage` for POST/PATCH/DELETE on expenses, vendors, accounts, and receipts.
+Permissions: `expenses.view` for GETs, `expenses.edit` for POST/PATCH and archive on expenses, vendors, accounts, and receipts. `expenses.delete` for hard-delete (only allowed when no references; otherwise route returns 409 and the UI offers Archive instead).
 
 ## Hooks
 
