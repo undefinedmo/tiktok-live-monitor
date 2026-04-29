@@ -1,1 +1,15 @@
 .worktrees/
+
+# Local Claude Code config
+.claude/
+
+# Brainstorm sessions
+.superpowers/
+
+# Sub-repos (each has its own .git)
+desktop/
+web/
+middleware/
+
+# Misc
+node_modules/
