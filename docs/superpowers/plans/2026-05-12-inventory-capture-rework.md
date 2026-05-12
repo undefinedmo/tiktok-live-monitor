@@ -12,6 +12,35 @@
 
 **Deviation from spec:** The spec lists Gemini as the default voice-extract provider. The v2 web package has `openai` installed but no Gemini SDK. To keep dependency surface small, this plan uses OpenAI Whisper (transcription) + GPT-4o-mini (structured extraction) as the default. Gemini can be swapped in later by replacing the provider wrapper. Credits accounting uses a new `openai/whisper-extract` cost entry.
 
+## Reality Reconciliation (2026-05-12)
+
+Task 1.1 discovered the DB already had the three inventory tables (created by an orphan migration `20260506120000_add_inventory_tables` that wasn't on disk). The orphan migration was reconstructed locally and the Prisma models updated to match the live shapes. **Subsequent tasks must use the real column/model names below**, not the names in the original plan tasks:
+
+| Original plan name | Actual name |
+|---|---|
+| `ReceivingSession` (model) | `InventoryReceipt` |
+| `delta` (column) | `qtyDelta` (`qty_delta`) |
+| `qtyAfter` (column) | **does not exist** — derive on read if needed |
+| `note` (column on movement) | `notes` |
+| `sessionId` (column on movement) | `receiptId` (`receipt_id`) |
+| `createdBy: Int` (movement, receipt) | `userId: Int?` (`user_id`, nullable) |
+| `size` (column on inventory) | **does not exist yet** — add via follow-up migration when needed |
+| `enrichmentStatus` (column on inventory) | **does not exist yet** — same |
+| `Decimal(10, 2)` precision | plain `@db.Decimal` (matches existing) |
+| `onDelete: Cascade` for tenant FK | `onDelete: Restrict` (matches existing) |
+
+**Allowed `sourceType` values** (per desktop MovementHistoryPanel + DB convention):
+- `received` — scan or voice-create (was `scan` / `voice_create` in plan)
+- `adjusted` — qty PATCH default; bulk operations
+- `manual_count` — qty PATCH when sourceType='manual_count'
+- `sold` — future, not in this plan
+
+**Partial unique index** (`inventory_receipts_one_open_per_tenant` on `tenant_id WHERE closed_at IS NULL`) **already exists** in the DB. POST `/api/inventory/receipts` must catch the unique-violation `P2002` and return 409 with the active receipt payload.
+
+**No RLS** is enabled on these three tables. The base routes scope by `tenantId` in every query (no extra RLS dependency).
+
+**URL paths** (`/api/inventory/receipts/...`) **do not change** — only the Prisma model name (`InventoryReceipt` instead of `ReceivingSession`).
+
 ---
 
 ## File Map
