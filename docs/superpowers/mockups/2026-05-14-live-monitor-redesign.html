@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Live Monitor — Redesign Mockup</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root {
+    --bg-primary: #0b0d10;
+    --bg-secondary: #14181d;
+    --bg-tertiary: #1d2329;
+    --border-subtle: #262d35;
+    --text-primary: #e8ecf1;
+    --text-secondary: #aab2bd;
+    --text-tertiary: #6b7480;
+    --accent: #4f8ef7;
+  }
+  body { background: var(--bg-primary); color: var(--text-primary); font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .bg-bg-secondary { background: var(--bg-secondary); }
+  .bg-bg-tertiary { background: var(--bg-tertiary); }
+  .border-border-subtle { border-color: var(--border-subtle); }
+  .text-text-primary { color: var(--text-primary); }
+  .text-text-secondary { color: var(--text-secondary); }
+  .text-text-tertiary { color: var(--text-tertiary); }
+  .text-accent { color: var(--accent); }
+  .bg-accent { background: var(--accent); }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary { list-style: none; cursor: pointer; }
+  .chip { background: var(--bg-tertiary); border: 1px solid var(--border-subtle); }
+  .pill { background: rgba(34,197,94,0.10); color: #4ade80; border:1px solid rgba(34,197,94,0.25); }
+  .stat-card { background: var(--bg-secondary); border:1px solid var(--border-subtle); border-radius: 12px; padding: 14px 16px; }
+  .stat-label { color: var(--text-secondary); font-size: 12px; }
+  .stat-value { color: var(--text-primary); font-size: 22px; font-weight: 600; line-height: 1.1; margin-top: 4px; }
+  .stat-sub { color: var(--text-tertiary); font-size: 11px; margin-top: 2px; }
+  table thead th { color: var(--text-tertiary); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .row-divider > * + * { border-top: 1px solid var(--border-subtle); }
+</style>
+</head>
+<body class="p-6">
+
+<div class="max-w-[1400px] mx-auto space-y-4">
+
+  <!-- HEADER NOTE -->
+  <div class="text-xs text-text-tertiary mb-2">
+    Mockup · Live Monitor redesign · 2026-05-14 ·
+    <span class="text-text-secondary">toggle items below to preview interactions</span>
+  </div>
+
+  <!-- CONNECTION PANEL (unchanged) -->
+  <div class="bg-bg-secondary border border-border-subtle rounded-xl p-5 flex items-center gap-4">
+    <div class="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49"/></svg>
+    </div>
+    <div class="flex-1">
+      <div class="text-lg font-semibold">Live Monitoring Active</div>
+      <div class="text-sm text-text-secondary">Tracking sales and detecting trolls in real-time · NATION LOS ANGELES drop</div>
+    </div>
+    <span class="pill px-3 py-1 rounded-full text-xs flex items-center gap-1">
+      <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span> Connected · 1h 12m
+    </span>
+    <button class="px-4 py-2 bg-red-600 text-white rounded-lg text-sm">Stop Monitoring</button>
+  </div>
+
+  <!-- STATS ROW: 6 cards including Unique Buyers -->
+  <div class="grid grid-cols-2 lg:grid-cols-6 gap-3">
+    <div class="stat-card">
+      <div class="stat-label">Items Sold</div>
+      <div class="stat-value">142</div>
+      <div class="stat-sub">+12 in last 10 min</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Gross Revenue</div>
+      <div class="stat-value">$3,284.00</div>
+      <div class="stat-sub">avg $23.13</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Net Earned</div>
+      <div class="stat-value">$2,651.27</div>
+      <div class="stat-sub">after fees</div>
+    </div>
+    <!-- NEW: Unique Buyers -->
+    <div class="stat-card border-accent/40" style="border-color: rgba(79,142,247,0.35);">
+      <div class="stat-label flex items-center gap-1">
+        Unique Buyers
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-accent"><circle cx="12" cy="7" r="4"/><path d="M5.5 21a6.5 6.5 0 0 1 13 0"/></svg>
+      </div>
+      <div class="stat-value">38</div>
+      <div class="stat-sub">3.7 items/buyer</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Pending Ship</div>
+      <div class="stat-value">24</div>
+      <div class="stat-sub">5 ready to print</div>
+    </div>
+    <div class="stat-card" style="border-color: rgba(239,68,68,0.35);">
+      <div class="stat-label text-red-400">Failed Payments</div>
+      <div class="stat-value text-red-400">2</div>
+      <div class="stat-sub">$47 at risk</div>
+    </div>
+  </div>
+
+  <!-- MAIN LAYOUT: 2/3 sales feed, 1/3 right rail -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+    <!-- LEFT (2/3): Sales Feed -->
+    <div class="lg:col-span-2 bg-bg-secondary border border-border-subtle rounded-xl overflow-hidden">
+      <div class="px-5 py-3 border-b border-border-subtle flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="font-semibold">Live Sales Feed</div>
+          <span class="text-sm text-text-tertiary">(142 sales · 38 buyers)</span>
+        </div>
+        <span class="pill px-2 py-0.5 rounded-full text-xs flex items-center gap-1">
+          <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span> Live
+        </span>
+      </div>
+      <div class="row-divider max-h-[520px] overflow-y-auto">
+        <div class="p-4 flex items-center gap-4">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="text-accent font-medium">@amy0602</span>
+              <span class="text-text-tertiary">·</span>
+              <span class="text-text-primary truncate">NATION LOS ANGELES — NWT #26</span>
+            </div>
+            <div class="text-xs text-text-tertiary mt-1">7:42 PM · printed</div>
+          </div>
+          <div class="font-bold text-green-500">$21.00</div>
+          <button class="p-2 text-text-tertiary hover:text-accent rounded-lg">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+          </button>
+        </div>
+        <div class="p-4 flex items-center gap-4">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="text-accent font-medium">@beanzz123</span>
+              <span class="text-text-tertiary">·</span>
+              <span class="text-text-primary truncate">NATION LOS ANGELES — NWT #25</span>
+            </div>
+            <div class="text-xs text-text-tertiary mt-1">7:41 PM · printed</div>
+          </div>
+          <div class="font-bold text-green-500">$17.00</div>
+          <button class="p-2 text-text-tertiary"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button>
+        </div>
+        <div class="p-4 flex items-center gap-4">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="text-accent font-medium">@amy0602</span>
+              <span class="text-text-tertiary">·</span>
+              <span class="text-text-primary truncate">NATION LOS ANGELES — NWT #24</span>
+            </div>
+            <div class="text-xs text-text-tertiary mt-1">7:39 PM · printed</div>
+          </div>
+          <div class="font-bold text-green-500">$19.00</div>
+          <button class="p-2 text-text-tertiary"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT RAIL (1/3) -->
+    <div class="space-y-3">
+
+      <!-- COLLAPSED PRINTER STRIP -->
+      <details class="bg-bg-secondary border border-border-subtle rounded-xl">
+        <summary class="px-4 py-3 flex items-center justify-between">
+          <div class="flex items-center gap-2 text-sm">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-accent"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+            <span class="font-medium">ZDesigner ZD420</span>
+            <span class="text-text-tertiary">·</span>
+            <span class="pill text-[10px] px-1.5 py-0.5 rounded">Auto · On</span>
+            <span class="text-text-tertiary text-xs">· last #27</span>
+          </div>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-text-tertiary"><polyline points="6 9 12 15 18 9"/></svg>
+        </summary>
+        <div class="px-4 pb-4 pt-1 border-t border-border-subtle space-y-3 text-sm">
+          <div>
+            <label class="block text-xs text-text-secondary mb-1">Printer</label>
+            <select class="w-full px-3 py-2 bg-bg-tertiary border border-border-subtle rounded-lg">
+              <option>ZDesigner ZD420</option>
+              <option>Brother QL-820NWB</option>
+            </select>
+          </div>
+          <label class="flex items-center gap-2">
+            <input type="checkbox" checked> <span>Auto-print on sale</span>
+          </label>
+          <div class="border-t border-border-subtle pt-3">
+            <div class="text-xs text-text-secondary mb-2">Quick print · last #27</div>
+            <div class="flex gap-2">
+              <button class="flex-1 px-3 py-2 bg-accent text-white rounded-lg text-xs">Print #28</button>
+              <input class="w-20 px-2 py-2 bg-bg-tertiary border border-border-subtle rounded-lg text-xs" placeholder="#">
+              <button class="px-3 py-2 chip rounded-lg text-xs">Go</button>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <!-- TOP BUYERS -->
+      <div class="bg-bg-secondary border border-border-subtle rounded-xl">
+        <div class="px-4 py-3 border-b border-border-subtle flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-accent"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 22V18"/><path d="M14 22V18"/><path d="M6 9c0 5 3 7 6 7s6-2 6-7V4H6z"/></svg>
+            <div class="font-semibold text-sm">Top Buyers</div>
+          </div>
+          <div class="flex chip rounded-md text-[10px] overflow-hidden">
+            <button class="px-2 py-1 bg-accent text-white">$</button>
+            <button class="px-2 py-1 text-text-secondary">items</button>
+          </div>
+        </div>
+        <div class="row-divider">
+          <div class="px-4 py-2 flex items-center gap-3">
+            <div class="w-6 text-center text-text-tertiary text-xs">1</div>
+            <div class="flex-1 min-w-0">
+              <div class="text-accent font-medium truncate">@amy0602</div>
+              <div class="text-xs text-text-tertiary">8 items</div>
+            </div>
+            <div class="font-semibold text-green-500">$184.00</div>
+          </div>
+          <div class="px-4 py-2 flex items-center gap-3">
+            <div class="w-6 text-center text-text-tertiary text-xs">2</div>
+            <div class="flex-1 min-w-0">
+              <div class="text-accent font-medium truncate">@thriftqueen87</div>
+              <div class="text-xs text-text-tertiary">6 items</div>
+            </div>
+            <div class="font-semibold text-green-500">$142.00</div>
+          </div>
+          <div class="px-4 py-2 flex items-center gap-3">
+            <div class="w-6 text-center text-text-tertiary text-xs">3</div>
+            <div class="flex-1 min-w-0">
+              <div class="text-accent font-medium truncate">@beanzz123</div>
+              <div class="text-xs text-text-tertiary">5 items</div>
+            </div>
+            <div class="font-semibold text-green-500">$118.00</div>
+          </div>
+          <div class="px-4 py-2 flex items-center gap-3">
+            <div class="w-6 text-center text-text-tertiary text-xs">4</div>
+            <div class="flex-1 min-w-0">
+              <div class="text-accent font-medium truncate">@nikkivintage</div>
+              <div class="text-xs text-text-tertiary">4 items</div>
+            </div>
+            <div class="font-semibold text-green-500">$96.00</div>
+          </div>
+          <div class="px-4 py-2 flex items-center gap-3">
+            <div class="w-6 text-center text-text-tertiary text-xs">5</div>
+            <div class="flex-1 min-w-0">
+              <div class="text-accent font-medium truncate">@coastalcloset</div>
+              <div class="text-xs text-text-tertiary">3 items</div>
+            </div>
+            <div class="font-semibold text-green-500">$74.00</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PRINT QUEUE -->
+      <div class="bg-bg-secondary border border-border-subtle rounded-xl">
+        <div class="px-4 py-3 border-b border-border-subtle flex items-center justify-between">
+          <div class="font-semibold text-sm">Print Queue</div>
+          <button class="text-xs text-text-tertiary">Clear</button>
+        </div>
+        <div class="row-divider max-h-44 overflow-y-auto">
+          <div class="px-4 py-2 flex items-center gap-2 text-sm">
+            <span class="w-2 h-2 rounded-full bg-green-400"></span>
+            <span class="font-medium">#27</span>
+            <span class="text-text-tertiary">@amy0602</span>
+            <span class="ml-auto text-xs text-text-tertiary">printed</span>
+          </div>
+          <div class="px-4 py-2 flex items-center gap-2 text-sm">
+            <span class="w-2 h-2 rounded-full bg-green-400"></span>
+            <span class="font-medium">#26</span>
+            <span class="text-text-tertiary">@beanzz123</span>
+            <span class="ml-auto text-xs text-text-tertiary">printed</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- TROLL DETECTION (collapsed by default) -->
+      <details class="bg-bg-secondary border border-border-subtle rounded-xl">
+        <summary class="px-4 py-3 flex items-center justify-between text-sm">
+          <div class="flex items-center gap-2">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-accent"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span class="font-medium">Troll Detection</span>
+            <span class="text-text-tertiary text-xs">· off</span>
+          </div>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-text-tertiary"><polyline points="6 9 12 15 18 9"/></svg>
+        </summary>
+        <div class="px-4 pb-4 pt-1 border-t border-border-subtle space-y-2 text-sm">
+          <label class="flex items-center gap-2"><input type="checkbox"> Enable troll detection</label>
+        </div>
+      </details>
+    </div>
+
+    <!-- AUCTIONS TABLE (full width below) -->
+    <div class="lg:col-span-3 bg-bg-secondary border border-border-subtle rounded-xl overflow-hidden">
+      <div class="px-5 py-3 border-b border-border-subtle flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="font-semibold">Auctions</div>
+          <span class="text-sm text-text-tertiary">(27 auctions · 5 missing bid data)</span>
+        </div>
+        <div class="flex items-center gap-2 text-xs text-text-tertiary">
+          <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+          <span>Backfilling 2 auctions…</span>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-bg-secondary border-b border-border-subtle">
+            <tr class="text-left">
+              <th class="px-4 py-2 font-medium">Item</th>
+              <th class="px-4 py-2 font-medium">Winner</th>
+              <th class="px-4 py-2 font-medium text-right">Final</th>
+              <th class="px-4 py-2 font-medium text-right">Bids</th>
+              <th class="px-4 py-2 font-medium text-right">Bidders</th>
+              <th class="px-4 py-2 font-medium text-right">Duration</th>
+              <th class="px-4 py-2 font-medium text-right">Ended</th>
+            </tr>
+          </thead>
+          <tbody class="row-divider">
+            <tr>
+              <td class="px-4 py-2 truncate max-w-xs">NATION LOS ANGELES — NWT #27</td>
+              <td class="px-4 py-2 text-text-tertiary">No winner</td>
+              <td class="px-4 py-2 text-right text-text-tertiary">—</td>
+              <td class="px-4 py-2 text-right text-text-tertiary">—</td>
+              <td class="px-4 py-2 text-right text-text-tertiary">—</td>
+              <td class="px-4 py-2 text-right text-text-tertiary">—</td>
+              <td class="px-4 py-2 text-right text-text-tertiary">7:43 PM</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2 truncate max-w-xs">NATION LOS ANGELES — NWT #26</td>
+              <td class="px-4 py-2 text-accent">@amy0602</td>
+              <td class="px-4 py-2 text-right font-medium text-green-500">$21.00</td>
+              <td class="px-4 py-2 text-right">14</td>
+              <td class="px-4 py-2 text-right">6</td>
+              <td class="px-4 py-2 text-right text-text-tertiary">42s</td>
+              <td class="px-4 py-2 text-right text-text-tertiary">7:42 PM</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2 truncate max-w-xs">NATION LOS ANGELES — NWT #25</td>
+              <td class="px-4 py-2 text-accent">@beanzz123</td>
+              <td class="px-4 py-2 text-right font-medium text-green-500">$17.00</td>
+              <td class="px-4 py-2 text-right text-amber-400 inline-flex items-center justify-end gap-1">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                —
+              </td>
+              <td class="px-4 py-2 text-right text-text-tertiary">—</td>
+              <td class="px-4 py-2 text-right text-text-tertiary">—</td>
+              <td class="px-4 py-2 text-right text-text-tertiary">7:41 PM</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2 truncate max-w-xs">NATION LOS ANGELES — NWT #25</td>
+              <td class="px-4 py-2 text-text-tertiary">No winner</td>
+              <td class="px-4 py-2 text-right text-text-tertiary">—</td>
+              <td class="px-4 py-2 text-right text-text-tertiary">—</td>
+              <td class="px-4 py-2 text-right text-text-tertiary">—</td>
+              <td class="px-4 py-2 text-right text-text-tertiary">—</td>
+              <td class="px-4 py-2 text-right text-text-tertiary">7:40 PM</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2 truncate max-w-xs">NATION LOS ANGELES — NWT #24</td>
+              <td class="px-4 py-2 text-accent">@amy0602</td>
+              <td class="px-4 py-2 text-right font-medium text-green-500">$19.00</td>
+              <td class="px-4 py-2 text-right">11</td>
+              <td class="px-4 py-2 text-right">5</td>
+              <td class="px-4 py-2 text-right text-text-tertiary">38s</td>
+              <td class="px-4 py-2 text-right text-text-tertiary">7:39 PM</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="px-5 py-2 border-t border-border-subtle text-xs text-text-tertiary flex items-center gap-2">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        Amber clock = backfill in progress. Em-dash = not captured (connected mid-auction).
+      </div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>
