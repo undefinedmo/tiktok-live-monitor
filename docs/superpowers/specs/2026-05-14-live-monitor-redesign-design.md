@@ -70,7 +70,7 @@ When expanded, the same controls render that exist today (printer select, auto-p
 
 **Implementation:** native HTML `<details>`/`<summary>` keeps it accessible and avoids a controlled-state React boilerplate. Style summary to match the existing card chrome.
 
-### 4. Auctions table: em-dash + backfill
+### 4. Auctions table: em-dash + missing-data flag
 
 **Display fix (immediate):** in `LiveMonitor.tsx:1042-1046`, treat `0` and `null`/`undefined` the same — render `—` for `totalBids`, `uniqueBidders`, and `durationSeconds` whenever the value is falsy. The winner column already does this correctly.
 
@@ -82,19 +82,19 @@ When expanded, the same controls render that exist today (printer select, auto-p
 
 This is purely cosmetic but immediately stops the false-zero noise.
 
-**Backfill (deeper fix):** when `finalizeAuction()` in `desktop/electron/ipc/label-generator.ts` is called for an auction we never saw start (`!auction` branch at line 152), we have only the `auctionId`, item name, final price, and winner. The bid history exists in Whatnot's GraphQL — we just didn't observe it locally.
+**Why no GraphQL backfill:** the original spec proposed querying `auctionDetails(id:)` to recover bid history for auctions we joined mid-stream. Investigation against v0 (`app/src/ipc/label-generator.js`) and v1 (`sellerfolio-desktop/electron/ipc/label-generator.ts`) confirmed that **bids are captured only from WebSocket events** (`new_bid`, `bid_placed`, `product_changed.highestBid`). Both legacy versions have a `backfillSales()` function, but it queries `LiveShopSold` for sales backfill only — neither version has ever queried Whatnot for post-hoc bid history, and no such endpoint is known to exist. Bids missed are unrecoverable.
 
-**New IPC:** `whatnot-auction-backfill` handler in `desktop/electron/ipc/live-stats.ts`, queried via the existing API window. Takes `{ auctionId }`, runs the same GraphQL `auctionDetails(id: $auctionId)` query Whatnot's own dashboard uses, returns `{ totalBids, uniqueBidders, durationSeconds }` or null on failure.
+**Compromise — make "missed" visible:** when `finalizeAuction()` in `desktop/electron/ipc/label-generator.ts` hits the `!auction` fallback branch (line 152), we know the listener never observed the auction's bid stream. Set a `needsBackfill: true` flag on the emitted payload so the renderer can distinguish "we know we missed this" from "this auction genuinely had no bids."
 
 **Flow:**
 
-1. `finalizeAuction()` in the listener detects the `!auction` fallback case and emits the auction with a new flag `needsBackfill: true`.
-2. Main process forwards to renderer as usual (`auction-data` IPC). Renderer persists the partial row via the existing `/api/live-auctions` POST, including a `needsBackfill: true` column.
-3. A new renderer-side effect watches for `needsBackfill: true` auctions and dispatches `window.liveStatsAPI.backfillAuction(auctionId)` for each, throttled to one in flight at a time. On success, the renderer PATCHes the auction row and updates local state. On failure, the row stays as-is (em-dash forever — better than a wrong zero).
-
-**UI signal:** rows currently being backfilled get an amber clock icon next to the "Bids" cell. Header subtitle shows `(N auctions · M missing bid data)` and a footer line shows `Backfilling K auctions…` while requests are in flight. Both disappear when the queue drains.
+1. `finalizeAuction()` sets `needsBackfill: true` on the fallback branch.
+2. Layout-level listener persists the row via existing `/api/live-auctions` POST, including the flag.
+3. Renderer reads the flag and renders an amber clock icon next to the "Bids" cell with tooltip "Bid data missing — joined mid-auction." Header subtitle shows `(N auctions · M missing bid data)`. The flag never clears for that row — it's a permanent record of "we don't know."
 
 **Schema change:** add `needs_backfill BOOLEAN DEFAULT FALSE` to the `live_auctions` table. Migration is additive and safe.
+
+**Future work:** if a Whatnot endpoint for archived bid history is ever discovered (e.g. via mobile app reverse engineering or a replay-mode GraphQL query), the flag becomes the trigger for an opt-in "Recover bid data" button per row. Not in scope here.
 
 ### 5. Layout summary
 
@@ -119,11 +119,9 @@ Failed Payments today renders as both a stats card and a full right-rail panel. 
 
 | File | Change |
 |------|--------|
-| `desktop/src/pages/LiveMonitor.tsx` | Add `uniqueBuyers` state + seed from persisted auctions; add Top Buyers panel + toggle; collapse Printer + Troll into `<details>`; em-dash for zero/null auction metrics; backfill effect |
+| `desktop/src/pages/LiveMonitor.tsx` | Add `uniqueBuyers` state + seed from persisted auctions; add Top Buyers panel + toggle; collapse Printer + Troll into `<details>`; em-dash for zero/null auction metrics; render amber clock for `needsBackfill` rows |
 | `desktop/electron/ipc/label-generator.ts` | `finalizeAuction()` sets `needsBackfill: true` when the active-auction record is missing; payload includes the flag |
-| `desktop/electron/ipc/live-stats.ts` | New IPC `whatnot-auction-backfill` handler — runs `auctionDetails(id:)` GraphQL via API window |
-| `desktop/electron/preload.ts` | Expose `liveStatsAPI.backfillAuction(auctionId)` |
-| `web/app/api/live-auctions/route.ts` | Accept `needsBackfill` on POST; new PATCH `/api/live-auctions/:id` to update totals after backfill |
+| `web/src/app/api/live-auctions/route.ts` | Accept `needsBackfill` on POST |
 | `web/prisma/schema.prisma` | Add `needsBackfill Boolean @default(false)` to `LiveAuction` |
 | `web/prisma/migrations/<timestamp>_live_auction_backfill_flag/migration.sql` | New migration |
 
@@ -133,5 +131,5 @@ Failed Payments today renders as both a stats card and a full right-rail panel. 
 - Sales Feed row design (unchanged — only the surrounding chrome changes).
 - OBS overlay (untouched).
 - Per-buyer drill-down ("click buyer to see their items") — defer; Top Buyers list is read-only for now.
-- Backfilling auctions that ended before the user ever connected to the show — out of scope; backfill triggers only on the `auction_ended` event with `needsBackfill: true`.
+- Recovering bid history for auctions joined mid-stream — not feasible with any known Whatnot endpoint (see Section 4).
 - Persisting Top Buyers toggle preference across reloads.

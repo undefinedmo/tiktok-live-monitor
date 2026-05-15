@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement the Live Monitor redesign — add Unique Buyers + Top Buyers, collapse settings panels into header strips, em-dash + GraphQL backfill for auctions with missing bid data.
+**Goal:** Implement the Live Monitor redesign — add Unique Buyers + Top Buyers, collapse settings panels into header strips, em-dash for missing auction metrics with a `needsBackfill` flag to mark auctions joined mid-stream.
 
-**Architecture:** Mostly renderer-side changes in `desktop/src/pages/LiveMonitor.tsx`, with a small extracted helper for Top Buyers aggregation. Backfill spans Prisma schema, two web API routes, the Whatnot listener script, a new IPC handler, and a renderer-side single-flight queue.
+**Architecture:** Mostly renderer-side changes in `desktop/src/pages/LiveMonitor.tsx`, with a small extracted helper for Top Buyers aggregation. The "missing bid data" feature is a flag-and-display change only — no GraphQL backfill, since investigation of v0/v1 confirmed bid history is unrecoverable from Whatnot once missed (the listener captures bids only via WebSocket events).
 
 **Tech Stack:** React 19 + TypeScript (renderer), Electron 33 (main), Next.js 16 + Prisma 7 (web API), Vitest (web tests).
 
@@ -20,14 +20,10 @@
 | `desktop/src/lib/buyer-stats.test.ts` | Create | Vitest unit tests for the helper |
 | `desktop/vitest.config.ts` | Create | Minimal vitest config so the helper test runs |
 | `desktop/package.json` | Modify | Add `test` script + vitest devDep |
-| `desktop/src/pages/LiveMonitor.tsx` | Modify | Stats card, Top Buyers panel, collapsed `<details>` strips, em-dash, backfill effect, layout reorder |
+| `desktop/src/pages/LiveMonitor.tsx` | Modify | Stats card, Top Buyers panel, collapsed `<details>` strips, em-dash, amber clock for `needsBackfill` rows, layout reorder |
 | `desktop/electron/ipc/label-generator.ts` | Modify | `finalizeAuction()` sets `needsBackfill: true` on the fallback branch |
-| `desktop/electron/ipc/live-stats.ts` | Modify | New `whatnot-auction-backfill` IPC handler |
-| `desktop/electron/preload.ts` | Modify | Expose `liveStatsAPI.backfillAuction()` + window type |
 | `web/src/app/api/live-auctions/route.ts` | Modify | Accept `needsBackfill` on POST |
-| `web/src/app/api/live-auctions/[id]/route.ts` | Create | PATCH handler for backfill updates |
 | `web/tests/api/live-auctions/post.test.ts` | Create | Test that POST persists `needsBackfill` |
-| `web/tests/api/live-auctions/patch.test.ts` | Create | Test that PATCH updates an existing auction's totals |
 | `web/prisma/schema.prisma` | Modify | Add `needsBackfill Boolean @default(false)` to `LiveAuction` |
 | `web/prisma/migrations/<ts>_live_auction_backfill_flag/migration.sql` | Create | Additive column migration |
 
@@ -894,47 +890,11 @@ git commit -m "feat(live-monitor): move Failed Payments below auctions as collap
 
 ---
 
-## Phase 2 — Backfill backend (Prisma + web API)
+## Phase 2 — Missing-data flag (Prisma + web API)
 
-### Task 8: GraphQL discovery — capture the actual Whatnot auction-details query
+> Investigation of v0 (`app/src/ipc/label-generator.js`) and v1 (`sellerfolio-desktop/electron/ipc/label-generator.ts`) confirmed that bids are captured **only from WebSocket events**. No known Whatnot endpoint exposes post-hoc bid history. This phase persists a `needsBackfill` flag so the UI can distinguish "we joined mid-auction and missed bids" from "this auction genuinely had no bidders" — but does not attempt recovery.
 
-**Files:** none (manual investigation)
-
-The spec assumes a query named `auctionDetails(id: $auctionId)`. We have not verified this exists in Whatnot's GraphQL schema. Before writing the IPC handler, capture the actual query Whatnot's own dashboard fires when an operator views a single auction's bid history.
-
-- [ ] **Step 8.1: Capture the live request**
-
-While running the desktop app and connected to a Whatnot show (any show, even a recent one):
-
-1. Open Chrome DevTools on the Whatnot monitor window (`Ctrl+Shift+I` while it's focused).
-2. Open the Network tab, filter by `graphql`.
-3. In the Whatnot dashboard, click into an auction's bid detail view (or expand a sold item).
-4. Locate the GraphQL request that returns bid count / unique bidder count / duration.
-5. Copy the request payload (operationName, query string, variables).
-
-- [ ] **Step 8.2: Record findings**
-
-Append a short section to the spec at `docs/superpowers/specs/2026-05-14-live-monitor-redesign-design.md` titled `## Implementation notes (added during Task 8)` with:
-
-- The actual operationName (e.g. `BidHistory`, `AuctionPostMortem`, etc.)
-- The query string verbatim
-- The variables shape (e.g. `{ auctionId: ID! }` vs `{ id: String! }`)
-- The response shape — specifically which fields map to `totalBids`, `uniqueBidders`, `durationSeconds`
-
-If the query expects a different ID format than what we store as `auctionId` (e.g. base64-encoded GraphQL ID), note the encoding step needed.
-
-If no such query exists (the dashboard computes it client-side from a stream of bid events), STOP and flag this — the backfill design needs revision. In that case, fall back to displaying em-dashes only (Task 1 already covers that) and skip Tasks 9-16.
-
-- [ ] **Step 8.3: Commit the spec update**
-
-```
-git add docs/superpowers/specs/2026-05-14-live-monitor-redesign-design.md
-git commit -m "docs(live-monitor): record discovered Whatnot auction-details GraphQL query"
-```
-
----
-
-### Task 9: Prisma migration — add `needs_backfill` column
+### Task 8: Prisma migration — add `needs_backfill` column
 
 **Files:**
 - Modify: `web/prisma/schema.prisma:1037`
@@ -971,13 +931,13 @@ git commit -m "feat(live-auctions): add needs_backfill flag to schema"
 
 ---
 
-### Task 10: POST /api/live-auctions accepts `needsBackfill`
+### Task 9: POST /api/live-auctions accepts `needsBackfill`
 
 **Files:**
 - Modify: `web/src/app/api/live-auctions/route.ts`
 - Create: `web/tests/api/live-auctions/post.test.ts`
 
-- [ ] **Step 10.1: Write the failing test**
+- [ ] **Step 9.1: Write the failing test**
 
 Create `web/tests/api/live-auctions/post.test.ts`:
 
@@ -1097,7 +1057,7 @@ describe('POST /api/live-auctions', () => {
 });
 ```
 
-- [ ] **Step 10.2: Run test to verify it fails**
+- [ ] **Step 9.2: Run test to verify it fails**
 
 ```
 cd web && npx vitest run tests/api/live-auctions/post.test.ts
@@ -1105,7 +1065,7 @@ cd web && npx vitest run tests/api/live-auctions/post.test.ts
 
 Expected: FAIL — `needsBackfill` field is dropped because the route doesn't read it.
 
-- [ ] **Step 10.3: Update the route**
+- [ ] **Step 9.3: Update the route**
 
 In `web/src/app/api/live-auctions/route.ts`:
 
@@ -1123,7 +1083,7 @@ Add to the `data` object inside the POST handler (line 44-58), at the end before
     };
 ```
 
-- [ ] **Step 10.4: Run test to verify it passes**
+- [ ] **Step 9.4: Run test to verify it passes**
 
 ```
 cd web && npx vitest run tests/api/live-auctions/post.test.ts
@@ -1131,7 +1091,7 @@ cd web && npx vitest run tests/api/live-auctions/post.test.ts
 
 Expected: both tests PASS.
 
-- [ ] **Step 10.5: Commit**
+- [ ] **Step 9.5: Commit**
 
 ```
 git add web/src/app/api/live-auctions/route.ts web/tests/api/live-auctions/post.test.ts
@@ -1140,251 +1100,14 @@ git commit -m "feat(api): accept needsBackfill on POST /api/live-auctions"
 
 ---
 
-### Task 11: PATCH /api/live-auctions/:id endpoint
-
-**Files:**
-- Create: `web/src/app/api/live-auctions/[id]/route.ts`
-- Create: `web/tests/api/live-auctions/patch.test.ts`
-
-- [ ] **Step 11.1: Write the failing test**
-
-Create `web/tests/api/live-auctions/patch.test.ts`:
-
-```ts
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-const ctxHolder: { tenantId: string; userId: number } = {
-  tenantId: '00000000-0000-0000-0000-000000000000',
-  userId: 1,
-};
-
-vi.mock('@/lib/tenant', () => {
-  class AuthError extends Error {
-    status: number;
-    constructor(message: string, status: number) {
-      super(message);
-      this.name = 'AuthError';
-      this.status = status;
-    }
-  }
-  return {
-    AuthError,
-    getTenantContext: vi.fn(async () => ({
-      tenantId: ctxHolder.tenantId,
-      userId: ctxHolder.userId,
-      role: 'owner' as const,
-      overrides: [],
-    })),
-    requirePermission: vi.fn(() => undefined),
-    requireMasterAdmin: vi.fn(),
-    handleAuthError: (error: unknown) => {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { NextResponse } = require('next/server');
-      if (error instanceof AuthError) {
-        return NextResponse.json(
-          { success: false, error: error.message },
-          { status: error.status },
-        );
-      }
-      return NextResponse.json(
-        { success: false, error: 'Internal server error' },
-        { status: 500 },
-      );
-    },
-  };
-});
-
-import { PATCH } from '@/app/api/live-auctions/[id]/route';
-import { prisma } from '@/lib/prisma';
-import { mockTenantContext } from '../../helpers/api';
-import { NextRequest } from 'next/server';
-
-function patchReq(tenantId: string, body: unknown): NextRequest {
-  return new NextRequest('http://localhost/api/live-auctions/123', {
-    method: 'PATCH',
-    headers: { 'X-Tenant-Id': tenantId, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-}
-
-describe('PATCH /api/live-auctions/[id]', () => {
-  let tenantId: string;
-  let auctionRowId: number;
-
-  beforeEach(async () => {
-    tenantId = await mockTenantContext();
-    ctxHolder.tenantId = tenantId;
-    const row = await prisma.liveAuction.create({
-      data: {
-        tenantId,
-        showId: 'show-1',
-        auctionId: 'auction-1',
-        itemName: 'Item',
-        finalPriceCents: 500,
-        winnerUsername: 'alice',
-        needsBackfill: true,
-      },
-    });
-    auctionRowId = row.id;
-  });
-
-  afterEach(async () => {
-    await prisma.liveAuction.deleteMany({ where: { tenantId } });
-    await prisma.tenant.delete({ where: { id: tenantId } });
-  });
-
-  it('updates totals and clears needsBackfill', async () => {
-    const res = await PATCH(
-      patchReq(tenantId, {
-        totalBids: 7,
-        uniqueBidders: 4,
-        durationSeconds: 25,
-      }),
-      { params: Promise.resolve({ id: String(auctionRowId) }) },
-    );
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.success).toBe(true);
-
-    const row = await prisma.liveAuction.findUnique({ where: { id: auctionRowId } });
-    expect(row?.totalBids).toBe(7);
-    expect(row?.uniqueBidders).toBe(4);
-    expect(row?.durationSeconds).toBe(25);
-    expect(row?.needsBackfill).toBe(false);
-  });
-
-  it('returns 404 for an unknown id within this tenant', async () => {
-    const res = await PATCH(
-      patchReq(tenantId, { totalBids: 1 }),
-      { params: Promise.resolve({ id: '99999999' }) },
-    );
-    expect(res.status).toBe(404);
-  });
-
-  it('returns 404 for an id that belongs to a different tenant', async () => {
-    const otherTenantId = await mockTenantContext();
-    const otherRow = await prisma.liveAuction.create({
-      data: {
-        tenantId: otherTenantId,
-        showId: 'show-x',
-        auctionId: 'auction-x',
-        finalPriceCents: 100,
-        needsBackfill: true,
-      },
-    });
-
-    const res = await PATCH(
-      patchReq(tenantId, { totalBids: 1 }),
-      { params: Promise.resolve({ id: String(otherRow.id) }) },
-    );
-    expect(res.status).toBe(404);
-
-    // cleanup
-    await prisma.liveAuction.deleteMany({ where: { tenantId: otherTenantId } });
-    await prisma.tenant.delete({ where: { id: otherTenantId } });
-  });
-});
-```
-
-- [ ] **Step 11.2: Run test to verify it fails**
-
-```
-cd web && npx vitest run tests/api/live-auctions/patch.test.ts
-```
-
-Expected: FAIL — module `@/app/api/live-auctions/[id]/route` not found.
-
-- [ ] **Step 11.3: Implement the route**
-
-Create `web/src/app/api/live-auctions/[id]/route.ts`:
-
-```ts
-import { NextRequest, NextResponse } from 'next/server';
-import { getTenantContext, requirePermission, handleAuthError } from '@/lib/tenant';
-import { prisma } from '@/lib/prisma';
-
-interface PatchPayload {
-  totalBids?: number | null;
-  uniqueBidders?: number | null;
-  durationSeconds?: number | null;
-}
-
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
-  try {
-    const ctx = await getTenantContext(request);
-    requirePermission(ctx, 'live_auctions.write');
-
-    const { id: rawId } = await params;
-    const id = parseInt(rawId, 10);
-    if (Number.isNaN(id)) {
-      return NextResponse.json(
-        { success: false, error: 'Invalid id' },
-        { status: 400 },
-      );
-    }
-
-    const body = (await request.json()) as PatchPayload;
-
-    // Tenant-scoped lookup before update — prevents cross-tenant writes
-    // even if the model didn't have RLS as a backstop.
-    const existing = await prisma.liveAuction.findFirst({
-      where: { id, tenantId: ctx.tenantId },
-      select: { id: true },
-    });
-    if (!existing) {
-      return NextResponse.json(
-        { success: false, error: 'Not found' },
-        { status: 404 },
-      );
-    }
-
-    const auction = await prisma.liveAuction.update({
-      where: { id },
-      data: {
-        totalBids: body.totalBids ?? null,
-        uniqueBidders: body.uniqueBidders ?? null,
-        durationSeconds: body.durationSeconds ?? null,
-        needsBackfill: false,
-      },
-    });
-
-    return NextResponse.json({ success: true, auction });
-  } catch (error) {
-    return handleAuthError(error);
-  }
-}
-```
-
-- [ ] **Step 11.4: Run tests to verify they pass**
-
-```
-cd web && npx vitest run tests/api/live-auctions/patch.test.ts
-```
-
-Expected: all 3 tests PASS.
-
-- [ ] **Step 11.5: Commit**
-
-```
-git add web/src/app/api/live-auctions/ web/tests/api/live-auctions/patch.test.ts
-git commit -m "feat(api): add PATCH /api/live-auctions/[id] for backfill writes"
-```
-
----
-
-## Phase 3 — Backfill desktop side
-
-### Task 12: Listener script flags partial auctions with `needsBackfill`
+### Task 10: Listener script flags partial auctions with `needsBackfill`
 
 **Files:**
 - Modify: `desktop/electron/ipc/label-generator.ts:149-187`
 
 When `finalizeAuction()` is called for an auction the listener never observed start (`!auction` branch at line 152), the resulting payload currently has `bids: []`, `totalBids: 0`, `uniqueBidders: 0`. Tag this case so the renderer can request backfill.
 
-- [ ] **Step 12.1: Add the flag in the fallback branch**
+- [ ] **Step 10.1: Add the flag in the fallback branch**
 
 In the listener template string in `desktop/electron/ipc/label-generator.ts`, modify `finalizeAuction()` (lines 149-187). Track whether the fallback branch was hit and propagate that into the result:
 
@@ -1435,7 +1158,7 @@ function finalizeAuction(auctionId, finalData) {
 
 The `Layout.tsx` listener (line 251) already POSTs the entire payload to `/api/live-auctions`, so `needsBackfill` flows through unchanged once Task 10 is in place.
 
-- [ ] **Step 12.2: Update the AuctionData TypeScript interface**
+- [ ] **Step 10.2: Update the AuctionData TypeScript interface**
 
 In the same file, add `needsBackfill: boolean;` to the `AuctionData` interface (line 33-47):
 
@@ -1458,7 +1181,7 @@ interface AuctionData {
 }
 ```
 
-- [ ] **Step 12.3: Update the renderer-side `PersistedAuction` and `AuctionDataPayload` types**
+- [ ] **Step 10.3: Update the renderer-side `PersistedAuction` and `AuctionDataPayload` types**
 
 In `desktop/src/pages/LiveMonitor.tsx`, add `needsBackfill: boolean | null;` to `PersistedAuction` (lines 71-84) and `needsBackfill?: boolean | null;` to `AuctionDataPayload` (lines 86-98).
 
@@ -1472,7 +1195,7 @@ const optimistic: PersistedAuction = {
 };
 ```
 
-- [ ] **Step 12.4: Type-check + commit**
+- [ ] **Step 10.4: Type-check + commit**
 
 ```
 cd desktop && npm run typecheck
@@ -1482,258 +1205,25 @@ git commit -m "feat(live-monitor): flag auctions finalized without observed bid 
 
 ---
 
-### Task 13: Add `whatnot-auction-backfill` IPC handler
-
-**Files:**
-- Modify: `desktop/electron/ipc/live-stats.ts`
-
-Use the query captured in Task 8. The handler returns `{ success: true, totals: { totalBids, uniqueBidders, durationSeconds } }` or `{ success: false, error }`.
-
-This task assumes Task 8 produced a working query. If Task 8 found no usable query, skip Tasks 13-16 and stop after Phase 2.
-
-- [ ] **Step 13.1: Add the handler**
-
-Inside `registerLiveStatsHandlers` in `desktop/electron/ipc/live-stats.ts`, before the closing `}` of the function (around line 313), add:
-
-```ts
-  // Backfill bid totals for an auction the listener never observed start.
-  // Uses the GraphQL query captured during Task 8 of the Live Monitor redesign.
-  ipcMain.handle('whatnot-auction-backfill', async (_event, { auctionId }: { auctionId: string }) => {
-    if (!auctionId) {
-      return { success: false, error: 'auctionId required' };
-    }
-
-    // TODO(Task 8): replace placeholders with the captured query/operationName/variable shape
-    const query = `<INSERT QUERY FROM TASK 8>`;
-    const operationName = `<INSERT OPERATION NAME FROM TASK 8>`;
-    const variables = { /* INSERT VARIABLES SHAPE FROM TASK 8 */ auctionId };
-
-    try {
-      const result = await executeGraphQLViaWindow(query, variables, operationName);
-      if (result.error || result.errors) {
-        return { success: false, error: result.error || result.errors?.[0]?.message };
-      }
-
-      // TODO(Task 8): map response.data fields to totals based on the captured response shape
-      const data = result.data as Record<string, unknown> | undefined;
-      if (!data) {
-        return { success: false, error: 'No data in response' };
-      }
-
-      // Example shape — adjust to actual:
-      //   const node = (data.auctionDetails ?? data.auction) as Record<string, unknown> | undefined;
-      //   const totals = {
-      //     totalBids: node?.totalBids ?? null,
-      //     uniqueBidders: node?.uniqueBidders ?? null,
-      //     durationSeconds: node?.durationSeconds ?? null,
-      //   };
-
-      return { success: true, totals: { totalBids: null, uniqueBidders: null, durationSeconds: null } };
-    } catch (error) {
-      console.error('[AuctionBackfill] Error:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
-    }
-  });
-```
-
-The `<INSERT ...>` placeholders must be replaced with the concrete values discovered in Task 8 before this task is committable. Do not commit with placeholders left in.
-
-- [ ] **Step 13.2: Verify by type-check**
-
-```
-cd desktop && npm run typecheck
-```
-
-Expected: no errors. (The handler doesn't return until the placeholders are filled — this is intentional. It will type-check fine; manual smoke test happens in Task 17.)
-
-- [ ] **Step 13.3: Commit**
-
-```
-git add desktop/electron/ipc/live-stats.ts
-git commit -m "feat(live-stats): add whatnot-auction-backfill IPC handler"
-```
-
----
-
-### Task 14: Expose `liveStatsAPI.backfillAuction` in preload
-
-**Files:**
-- Modify: `desktop/electron/preload.ts`
-
-There is no `liveStatsAPI` bridge today — live-stats IPCs are exposed under `liveMonitorAPI`. Add the new method to `liveMonitorAPI` to keep it consistent with the rest of the file. (The spec calls it `liveStatsAPI.backfillAuction`; we adapt to the existing bridge name to avoid creating a parallel surface.)
-
-- [ ] **Step 14.1: Expose the IPC**
-
-In `desktop/electron/preload.ts`, inside the `liveMonitorAPI` `contextBridge.exposeInMainWorld` block (lines 158-190), add this method (anywhere inside the object, e.g. between `stopPolling` and `onSaleDetected`):
-
-```ts
-  backfillAuction: (auctionId: string) =>
-    ipcRenderer.invoke('whatnot-auction-backfill', { auctionId }),
-```
-
-In the `liveMonitorAPI` window type declaration (lines 360-372), add:
-
-```ts
-  backfillAuction: (auctionId: string) => Promise<{
-    success: boolean;
-    totals?: { totalBids: number | null; uniqueBidders: number | null; durationSeconds: number | null };
-    error?: string;
-  }>;
-```
-
-- [ ] **Step 14.2: Type-check + commit**
-
-```
-cd desktop && npm run typecheck
-git add desktop/electron/preload.ts
-git commit -m "feat(preload): expose backfillAuction on liveMonitorAPI"
-```
-
----
-
-### Task 15: Renderer-side backfill effect
+### Task 11: UI signals for missing bid data
 
 **Files:**
 - Modify: `desktop/src/pages/LiveMonitor.tsx`
 
-Watch `auctions` for any with `needsBackfill: true`, dispatch a single backfill at a time, PATCH the row on success, drop the flag locally on the row regardless of outcome (success → updated totals + cleared flag; failure → keep flag in DB but stop retrying within this session).
+Render an amber clock icon next to the Bids cell for any row with `needsBackfill === true`, and show a count in the auctions header subtitle. The flag is permanent (no recovery path), so the icon represents "we know we missed this," not "queued for backfill."
 
-- [ ] **Step 15.1: Add backfill state**
-
-Near other useState declarations:
-
-```tsx
-// Set of auctionIds we've already attempted to backfill in this session
-// (success or failure — either way, don't retry until next reload).
-const [backfillAttempted, setBackfillAttempted] = useState<Set<string>>(new Set());
-const [backfillingId, setBackfillingId] = useState<string | null>(null);
-```
-
-- [ ] **Step 15.2: Add the effect**
-
-Below the rehydrate effect (line 431), add:
-
-```tsx
-// Single-flight backfill loop. Walks the auctions list each render, picks
-// the first auction that needs backfill and hasn't been attempted, fires
-// the IPC, PATCHes the row, marks attempted. Throttled by `backfillingId`
-// being non-null while a request is in flight.
-useEffect(() => {
-  if (backfillingId !== null) return;
-
-  const next = auctions.find(
-    (a) =>
-      a.needsBackfill === true &&
-      a.auctionId != null &&
-      a.id > 0 && // skip optimistic rows (negative ids) — wait for real DB id
-      !backfillAttempted.has(a.auctionId),
-  );
-  if (!next || !next.auctionId) return;
-
-  const auctionId = next.auctionId;
-  const rowId = next.id;
-  setBackfillingId(auctionId);
-
-  (async () => {
-    try {
-      const result = await window.liveMonitorAPI.backfillAuction(auctionId);
-      if (result.success && result.totals) {
-        const patch = await apiClient.patch<{ success: boolean; error?: string }>(
-          `/api/live-auctions/${rowId}`,
-          result.totals,
-        );
-        if (patch.success) {
-          setAuctions((prev) =>
-            prev.map((a) =>
-              a.id === rowId
-                ? {
-                    ...a,
-                    totalBids: result.totals!.totalBids,
-                    uniqueBidders: result.totals!.uniqueBidders,
-                    durationSeconds: result.totals!.durationSeconds,
-                    needsBackfill: false,
-                  }
-                : a,
-            ),
-          );
-        } else {
-          console.error('[Backfill] PATCH failed:', patch.error);
-        }
-      } else {
-        console.warn('[Backfill] Failed:', auctionId, result.error);
-      }
-    } catch (err) {
-      console.error('[Backfill] Unexpected error:', err);
-    } finally {
-      setBackfillAttempted((prev) => {
-        const nextSet = new Set(prev);
-        nextSet.add(auctionId);
-        return nextSet;
-      });
-      setBackfillingId(null);
-    }
-  })();
-}, [auctions, backfillingId, backfillAttempted]);
-```
-
-- [ ] **Step 15.3: Add `apiClient.patch`**
-
-Check whether `apiClient` already has a `patch` method:
-
-```
-grep -n "patch:" desktop/src/lib/apiClient.ts
-```
-
-If it doesn't exist, add it. In `desktop/src/lib/apiClient.ts`, add a wrapper analogous to the existing `post`:
-
-```ts
-patch<T>(path: string, body?: unknown): Promise<T> {
-  return this.request<T>('PATCH', path, { body });
-}
-```
-
-If `get`/`post` are defined as arrow methods on the singleton instance, follow that exact pattern.
-
-- [ ] **Step 15.4: Reset attempted-set on disconnect**
-
-In the disconnect locations identified in Task 2 (where `setUniqueBuyers(new Set())` was added), also add:
-
-```tsx
-setBackfillAttempted(new Set());
-setBackfillingId(null);
-```
-
-- [ ] **Step 15.5: Type-check + commit**
-
-```
-cd desktop && npm run typecheck
-git add desktop/src/pages/LiveMonitor.tsx desktop/src/lib/apiClient.ts
-git commit -m "feat(live-monitor): backfill missing auction totals via single-flight queue"
-```
-
----
-
-### Task 16: UI signals for backfill state
-
-**Files:**
-- Modify: `desktop/src/pages/LiveMonitor.tsx`
-
-Show an amber clock icon next to the Bids cell for rows that need backfill. Show `(N auctions · M missing bid data)` in the auctions header subtitle. Show a footer line `Backfilling K auctions…` while requests are in flight.
-
-- [ ] **Step 16.1: Compute counts**
+- [ ] **Step 11.1: Compute the count**
 
 Add near the `topBuyers` useMemo:
 
 ```tsx
-const missingBackfillCount = useMemo(
+const missingBidDataCount = useMemo(
   () => auctions.filter((a) => a.needsBackfill).length,
   [auctions],
 );
 ```
 
-`backfillingCount` is effectively `backfillingId ? 1 : 0` because we throttle to one in flight; we display "Backfilling…" rather than a count.
-
-- [ ] **Step 16.2: Update the auctions header subtitle**
+- [ ] **Step 11.2: Update the auctions header subtitle**
 
 Find the subtitle around line 995-997:
 
@@ -1748,11 +1238,11 @@ Replace with:
 ```tsx
 <span className="text-sm text-text-tertiary">
   ({auctions.length} {auctions.length === 1 ? 'auction' : 'auctions'}
-  {missingBackfillCount > 0 && ` · ${missingBackfillCount} missing bid data`})
+  {missingBidDataCount > 0 && ` · ${missingBidDataCount} missing bid data`})
 </span>
 ```
 
-- [ ] **Step 16.3: Add amber clock to the Bids cell**
+- [ ] **Step 11.3: Add amber clock to the Bids cell**
 
 Find the Bids cell (after Task 1 it reads `{a.totalBids ? a.totalBids : '—'}` around line 1042). Replace with:
 
@@ -1761,12 +1251,8 @@ Find the Bids cell (after Task 1 it reads `{a.totalBids ? a.totalBids : '—'}` 
   <span className="inline-flex items-center justify-end gap-1">
     {a.needsBackfill && (
       <Clock
-        className={`w-3 h-3 ${
-          backfillingId === a.auctionId ? 'text-amber-500 animate-pulse' : 'text-amber-500/60'
-        }`}
-        aria-label={
-          backfillingId === a.auctionId ? 'Backfilling…' : 'Bid data missing — queued for backfill'
-        }
+        className="w-3 h-3 text-amber-500/70"
+        aria-label="Bid data missing — joined mid-auction"
       />
     )}
     {a.totalBids ? a.totalBids : '—'}
@@ -1774,55 +1260,40 @@ Find the Bids cell (after Task 1 it reads `{a.totalBids ? a.totalBids : '—'}` 
 </td>
 ```
 
-`Clock` is already imported (line 11).
+`Clock` is already imported (line 11). The icon is a subtle amber, not pulsing — this is a static "we don't know" indicator, not a transient state.
 
-- [ ] **Step 16.4: Add footer line for in-flight backfill**
-
-After the `<table>` closing tag inside the auctions panel (around line 1053), but still inside the auctions container, add:
-
-```tsx
-{backfillingId !== null && (
-  <div className="px-5 py-2 border-t border-border-subtle bg-bg-tertiary/40 text-xs text-text-tertiary flex items-center gap-2">
-    <Loader2 className="w-3 h-3 animate-spin" />
-    Backfilling auction {backfillingId}…
-  </div>
-)}
-```
-
-`Loader2` is already imported.
-
-- [ ] **Step 16.5: Type-check + commit**
+- [ ] **Step 11.4: Type-check + commit**
 
 ```
 cd desktop && npm run typecheck
 git add desktop/src/pages/LiveMonitor.tsx
-git commit -m "feat(live-monitor): show backfill status in auctions header, rows, and footer"
+git commit -m "feat(live-monitor): mark auctions with missing bid data via amber clock"
 ```
 
 ---
 
-## Phase 4 — Verify and wrap up
+## Phase 3 — Verify and wrap up
 
-### Task 17: Manual end-to-end smoke test
+### Task 12: Manual end-to-end smoke test
 
 **Files:** none
 
 The desktop app has no automated UI tests. Run through the redesigned screen manually before declaring done.
 
-- [ ] **Step 17.1: Build and launch**
+- [ ] **Step 12.1: Build and launch**
 
 ```
 cd desktop && npm run electron:dev
 ```
 
-- [ ] **Step 17.2: Connect to a live (or recently-ended) Whatnot show**
+- [ ] **Step 12.2: Connect to a live (or recently-ended) Whatnot show**
 
 In the app:
 1. Log in (web app must be running on port 3000 or the URL set in localStorage `webAppUrl`).
 2. Navigate to Live Monitor.
 3. Paste a Whatnot show URL. Click Connect.
 
-- [ ] **Step 17.3: Verify each redesign element**
+- [ ] **Step 12.3: Verify each redesign element**
 
 Walk through and confirm each:
 
@@ -1833,19 +1304,18 @@ Walk through and confirm each:
 - [ ] Open/close state of printer strip persists across page reload (check by navigating away and back).
 - [ ] Troll Detection strip is collapsed by default, summary shows on/off + threshold.
 - [ ] Auctions table shows `—` for any row with 0 bids/0 bidders/0 duration (not literal `0`).
-- [ ] If at least one auction has `needs_backfill=true` (you may need to disconnect mid-show and let an auction end while disconnected to reproduce), the header subtitle shows the missing-data count, the row has an amber clock, and the footer shows "Backfilling…" while requests are in flight.
-- [ ] After backfill completes successfully, the clock disappears, the totals populate, and the row no longer counts toward missing.
+- [ ] If at least one auction has `needs_backfill=true` (reproduce by disconnecting mid-show and letting an auction end while disconnected, then reconnecting and letting `finalizeAuction` hit its fallback branch), the row shows an amber clock next to its em-dash bid count, and the auctions header subtitle includes `· N missing bid data`. The flag is permanent — no recovery is attempted.
 - [ ] Failed Payments now appears below the Auctions table, collapsed by default. Auto-expands on first failed payment.
 
-- [ ] **Step 17.4: Note any issues**
+- [ ] **Step 12.4: Note any issues**
 
 Capture any deviations from the spec in `docs/superpowers/specs/2026-05-14-live-monitor-redesign-design.md` under a new `## Implementation Notes — Smoke test findings` section. Decide which to fix in this PR vs file as follow-up.
 
 ---
 
-### Task 18: Final type-check + push
+### Task 13: Final type-check + push
 
-- [ ] **Step 18.1: Full type-check**
+- [ ] **Step 13.1: Full type-check**
 
 ```
 cd desktop && npm run typecheck
@@ -1854,7 +1324,7 @@ cd ../web && npx tsc --noEmit
 
 Expected: no errors in either.
 
-- [ ] **Step 18.2: Run all tests one final time**
+- [ ] **Step 13.2: Run all tests one final time**
 
 ```
 cd desktop && npm test
@@ -1863,7 +1333,7 @@ cd ../web && npx vitest run tests/api/live-auctions
 
 Expected: all PASS.
 
-- [ ] **Step 18.3: Push the branch**
+- [ ] **Step 13.3: Push the branch**
 
 ```
 git push origin feature/sales-foundation
