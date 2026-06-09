@@ -7,7 +7,17 @@ import { SaleDeduper } from '../core/normalizer'
 import type { LiveEvent, StatusEvent } from '../core/types'
 
 const DASHBOARD = 'https://shop.tiktok.com/streamer/live/event/dashboard'
+// Where the monitor window first opens. Set TT_START_URL to log in via Seller
+// Center (https://seller-us.tiktok.com/) — its TikTok SSO session also covers the
+// streamer dashboard, so a later launch onto DASHBOARD is already authenticated.
+const START_URL = process.env.TT_START_URL || DASHBOARD
 const LOGIN_RE = /\/(login|passport|account\/login)/
+
+// TikTok's login/anti-bot keys off the User-Agent; the default Electron UA
+// (which contains "Electron/…") triggers ticket-expired/refusal flows. Present
+// as a normal Chrome-on-Windows browser (matches what real captures showed).
+const CHROME_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36'
 
 let viewer: BrowserWindow | null = null
 let monitor: BrowserWindow | null = null
@@ -42,7 +52,31 @@ function createMonitor() {
       preload: join(__dirname, 'preload.cjs'),
     },
   })
-  void monitor.loadURL(DASHBOARD)
+  // Let TikTok's login/captcha popups open as child windows that share this
+  // partition (so the auth ticket round-trips in the same session). Restrict to
+  // TikTok origins and keep popups at secure defaults — only the main monitor
+  // window needs the relaxed isolation (for the XHR hook).
+  monitor.webContents.setWindowOpenHandler(({ url }) => {
+    let host = ''
+    try {
+      host = new URL(url).hostname.toLowerCase()
+    } catch {
+      return { action: 'deny' }
+    }
+    const allowed =
+      host === 'tiktok.com' ||
+      host.endsWith('.tiktok.com') ||
+      host === 'tiktokv.com' ||
+      host.endsWith('.tiktokv.com')
+    if (!allowed) return { action: 'deny' }
+    return {
+      action: 'allow',
+      overrideBrowserWindowOptions: {
+        webPreferences: { session: part, contextIsolation: true, sandbox: true, nodeIntegration: false },
+      },
+    }
+  })
+  void monitor.loadURL(START_URL)
   monitor.webContents.on('did-navigate', (_e, url) => {
     if (LOGIN_RE.test(url)) {
       send({ kind: 'status', status: 'needs-login', detail: 'Log in to TikTok in the monitor window' })
@@ -78,6 +112,7 @@ ipcMain.on('tt-roster', (_e, raw: unknown) => {
 })
 
 app.whenReady().then(() => {
+  app.userAgentFallback = CHROME_UA
   createViewer()
   createMonitor()
 })
