@@ -92,6 +92,25 @@ Detect `401` / redirect-to-login → emit `status: needs-login` and reopen the l
 ### Multi-tenant (real app, not PoC)
 Desktop-only (web app can't hold a browser session — consistent with the CLAUDE.md rule that live-monitoring stays Electron IPC). One persisted partition **per seller/TikTok account**; cookies stay **on the desktop machine**, never synced to the DB. Server-side stores only a "connected / last-seen" flag.
 
+### Empirical finding (2026-06-08 live test) — embedded fresh login does NOT work for TikTok
+
+Tested the PoC's embedded-login against TikTok Seller Center (`seller-us.tiktok.com`) on Windows. **A fresh interactive login inside the embedded Electron browser consistently fails** — `error_code 1042 "Ticket expired"` and generic TikTok error pages — despite all of:
+- a real Chrome-on-Windows User-Agent (not the default `Electron/…`),
+- login popups allowed and scoped to TikTok origins,
+- a clean persisted partition (cleared between attempts),
+- correct system clock,
+- QR-code login as well.
+
+Root cause: TikTok's passport/anti-bot + device verification (`webmssdk`/`mssdk`, device fingerprint) rejects a fresh login from a blank-profile embedded Chromium. By contrast, the user's **established real Chrome on the same machine is authenticated and the full capture + decode works there** (demonstrated earlier in this session).
+
+**Decision — for TikTok, do NOT rely on fresh embedded login. Reuse an existing authenticated browser session.** Production options:
+- **(a) Browser extension** in the user's real Chrome (hooks `im/fetch`/roster in-page, posts normalized events to the app), or
+- **(b) CDP attach** to the user's running Chrome.
+
+Copying Chrome cookies into an Electron partition is impractical (Chrome App-Bound Encryption) and crosses a credential boundary — rejected.
+
+**Implication vs. Whatnot:** the Whatnot monitor's embedded-login pattern works; **TikTok does not follow it** and needs the real-browser-session approach. This does not affect the portable `core/` (decoder/mapper/rosterDiffer/normalizer) at all — it consumes the same normalized events regardless of where the raw frames are hooked. Only the *harness/transport* changes from "embedded window with its own login" to "extension/CDP hook on the existing session."
+
 ## Data flow
 
 1. **Connect:** Electron opens a `BrowserWindow` on `shop.tiktok.com/streamer/live/event/dashboard` using the user's existing Chrome/TikTok session. Preload injects the XHR hook before page scripts.
