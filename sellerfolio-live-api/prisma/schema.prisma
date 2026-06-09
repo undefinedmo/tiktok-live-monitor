@@ -1,0 +1,644 @@
+// ============================================================================
+// SellerFolio Live — multi-tenant schema
+// Postgres + Prisma 7. Modern clean-slate conventions:
+//   • UUID primary keys everywhere            • snake_case columns (@map)
+//   • organization_id on every business table • soft delete (deleted_at)
+//   • created_at / updated_at on everything    • RLS-ready (see scripts/rls-policies.sql)
+//
+// Layers:
+//   1. Identity & auth        — User, AuthAccount, Session, ApiToken
+//   2. Tenancy & membership   — Organization, Membership, PermissionOverride, Invitation
+//   3. Plans & billing        — Plan, PlanPrice, Subscription, Invoice, UsageCounter, UsageEvent
+//   4. Platform & domain      — PlatformConnection, Show, Customer, Order, OrderItem,
+//                               Shipment, Receipt
+//   5. Platform admin & audit — PlatformAdmin, AuditLog
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum Role {
+  OWNER
+  ADMIN
+  MANAGER
+  VIEWER
+}
+
+enum MembershipStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+enum PermissionEffect {
+  ALLOW
+  DENY
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+  PAUSED
+}
+
+enum BillingInterval {
+  MONTH
+  YEAR
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+  UNCOLLECTIBLE
+}
+
+enum UsageMetric {
+  TRANSCRIPTION
+  ORDER_SYNC
+  SHOW_SYNC
+  RECEIPT_CAPTURE
+}
+
+enum PlatformType {
+  TIKTOK
+  WHATNOT
+}
+
+enum ConnectionStatus {
+  CONNECTED
+  EXPIRED
+  DISCONNECTED
+}
+
+enum ShowStatus {
+  SCHEDULED
+  LIVE
+  ENDED
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  SHIPPED
+  DELIVERED
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum ShipmentStatus {
+  PENDING
+  LABEL_CREATED
+  IN_TRANSIT
+  DELIVERED
+  RETURNED
+}
+
+enum TranscriptStatus {
+  NONE
+  PENDING
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+// ============================================================================
+// 1. IDENTITY & AUTH
+// ============================================================================
+
+model User {
+  id              String    @id @default(uuid()) @db.Uuid
+  email           String    @unique @db.VarChar(255)
+  name            String?   @db.VarChar(255)
+  avatarUrl       String?   @map("avatar_url") @db.Text
+  passwordHash    String?   @map("password_hash") @db.VarChar(255) // null for OAuth-only users
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz
+  isActive        Boolean   @default(true) @map("is_active")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz
+
+  authAccounts        AuthAccount[]
+  sessions            Session[]
+  apiTokens           ApiToken[]
+  memberships         Membership[]
+  membershipsInvited  Membership[]         @relation("MembershipInviter")
+  organizationsOwned  Organization[]       @relation("OrganizationCreator")
+  invitationsSent     Invitation[]         @relation("InvitationSender")
+  platformConnections PlatformConnection[] @relation("ConnectionConnectedBy")
+  platformAdmin       PlatformAdmin?
+  auditLogs           AuditLog[]
+
+  @@index([email])
+  @@map("users")
+}
+
+// OAuth / external identity providers (Google, etc.)
+model AuthAccount {
+  id                String    @id @default(uuid()) @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  provider          String    @db.VarChar(50)
+  providerAccountId String    @map("provider_account_id") @db.VarChar(255)
+  type              String    @db.VarChar(50) // oauth, oidc, email
+  accessToken       String?   @map("access_token") @db.Text
+  refreshToken      String?   @map("refresh_token") @db.Text
+  expiresAt         BigInt?   @map("expires_at")
+  scope             String?   @db.VarChar(500)
+  idToken           String?   @map("id_token") @db.Text
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("auth_accounts")
+}
+
+// Web session cookies (NextAuth-style)
+model Session {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  sessionToken String   @unique @map("session_token") @db.VarChar(255)
+  expiresAt    DateTime @map("expires_at") @db.Timestamptz
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// Bearer tokens for programmatic clients (the LIVE LEDGER desktop app authenticates with these).
+// Only the hash is stored; the plaintext is shown to the user once at creation.
+model ApiToken {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  name           String    @db.VarChar(120) // e.g. "Mo's MacBook"
+  tokenHash      String    @unique @map("token_hash") @db.VarChar(255)
+  lastFour       String    @map("last_four") @db.VarChar(8)
+  scopes         String[]  @default([])
+  lastUsedAt     DateTime? @map("last_used_at") @db.Timestamptz
+  expiresAt      DateTime? @map("expires_at") @db.Timestamptz
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([userId])
+  @@map("api_tokens")
+}
+
+// ============================================================================
+// 2. TENANCY & MEMBERSHIP
+// ============================================================================
+
+model Organization {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String    @db.VarChar(255)
+  slug        String    @unique @db.VarChar(100)
+  isActive    Boolean   @default(true) @map("is_active")
+  settings    Json      @default("{}") @db.JsonB
+  createdById String?   @map("created_by") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
+
+  createdBy           User?                @relation("OrganizationCreator", fields: [createdById], references: [id])
+  memberships         Membership[]
+  invitations         Invitation[]
+  apiTokens           ApiToken[]
+  subscription        Subscription?
+  invoices            Invoice[]
+  usageCounters       UsageCounter[]
+  usageEvents         UsageEvent[]
+  platformConnections PlatformConnection[]
+  shows               Show[]
+  customers           Customer[]
+  orders              Order[]
+  orderItems          OrderItem[]
+  shipments           Shipment[]
+  receipts            Receipt[]
+  auditLogs           AuditLog[]
+
+  @@index([slug])
+  @@map("organizations")
+}
+
+model Membership {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  userId         String           @map("user_id") @db.Uuid
+  role           Role             @default(VIEWER)
+  status         MembershipStatus @default(ACTIVE)
+  invitedById    String?          @map("invited_by") @db.Uuid
+  invitedAt      DateTime?        @map("invited_at") @db.Timestamptz
+  joinedAt       DateTime?        @map("joined_at") @db.Timestamptz
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invitedBy           User?                @relation("MembershipInviter", fields: [invitedById], references: [id])
+  permissionOverrides PermissionOverride[]
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
+  @@map("memberships")
+}
+
+// Per-member grant/deny on top of role defaults (resolved in code; see src/permissions.ts).
+model PermissionOverride {
+  id            String           @id @default(uuid()) @db.Uuid
+  membershipId  String           @map("membership_id") @db.Uuid
+  permissionKey String           @map("permission_key") @db.VarChar(100)
+  effect        PermissionEffect
+
+  membership Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@unique([membershipId, permissionKey])
+  @@map("permission_overrides")
+}
+
+model Invitation {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  email          String           @db.VarChar(255)
+  role           Role             @default(VIEWER)
+  tokenHash      String           @unique @map("token_hash") @db.VarChar(255)
+  status         InvitationStatus @default(PENDING)
+  invitedById    String           @map("invited_by") @db.Uuid
+  expiresAt      DateTime         @map("expires_at") @db.Timestamptz
+  acceptedAt     DateTime?        @map("accepted_at") @db.Timestamptz
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation("InvitationSender", fields: [invitedById], references: [id])
+
+  @@unique([organizationId, email])
+  @@index([organizationId])
+  @@map("invitations")
+}
+
+// ============================================================================
+// 3. PLANS & BILLING (full subscription model)
+// ============================================================================
+
+// Catalog of subscription tiers. Limits & feature flags are JSON so new gates
+// can be added without a migration.
+model Plan {
+  id              String    @id @default(uuid()) @db.Uuid
+  key             String    @unique @db.VarChar(50) // free, starter, pro, enterprise
+  name            String    @db.VarChar(120)
+  description     String?   @db.Text
+  tier            Int       @default(0) // ordering / comparison
+  isPublic        Boolean   @default(true) @map("is_public")
+  // limits e.g. { "members": 3, "platformConnections": 2, "monthlyTranscriptions": 100, "monthlyOrders": 1000 }
+  limits          Json      @default("{}") @db.JsonB
+  // feature flags e.g. { "liveMonitor": true, "videoReceipts": true, "aiTranscription": false }
+  features        Json      @default("{}") @db.JsonB
+  stripeProductId String?   @map("stripe_product_id") @db.VarChar(255)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  prices        PlanPrice[]
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+model PlanPrice {
+  id            String          @id @default(uuid()) @db.Uuid
+  planId        String          @map("plan_id") @db.Uuid
+  interval      BillingInterval
+  amountCents   Int             @map("amount_cents")
+  currency      String          @default("usd") @db.VarChar(3)
+  stripePriceId String?         @map("stripe_price_id") @db.VarChar(255)
+  isActive      Boolean         @default(true) @map("is_active")
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz
+
+  plan          Plan           @relation(fields: [planId], references: [id], onDelete: Cascade)
+  subscriptions Subscription[]
+
+  @@unique([planId, interval, currency])
+  @@map("plan_prices")
+}
+
+// One subscription per organization (the org's current tier + billing state).
+model Subscription {
+  id                   String             @id @default(uuid()) @db.Uuid
+  organizationId       String             @unique @map("organization_id") @db.Uuid
+  planId               String             @map("plan_id") @db.Uuid
+  planPriceId          String?            @map("plan_price_id") @db.Uuid
+  status               SubscriptionStatus @default(TRIALING)
+  stripeCustomerId     String?            @map("stripe_customer_id") @db.VarChar(255)
+  stripeSubscriptionId String?            @unique @map("stripe_subscription_id") @db.VarChar(255)
+  currentPeriodStart   DateTime?          @map("current_period_start") @db.Timestamptz
+  currentPeriodEnd     DateTime?          @map("current_period_end") @db.Timestamptz
+  trialEndsAt          DateTime?          @map("trial_ends_at") @db.Timestamptz
+  cancelAtPeriodEnd    Boolean            @default(false) @map("cancel_at_period_end")
+  canceledAt           DateTime?          @map("canceled_at") @db.Timestamptz
+  createdAt            DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime           @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan         Plan         @relation(fields: [planId], references: [id])
+  planPrice    PlanPrice?   @relation(fields: [planPriceId], references: [id])
+  invoices     Invoice[]
+
+  @@index([planId])
+  @@map("subscriptions")
+}
+
+// Cache/reference of Stripe invoices for in-app billing history.
+model Invoice {
+  id              String        @id @default(uuid()) @db.Uuid
+  organizationId  String        @map("organization_id") @db.Uuid
+  subscriptionId  String?       @map("subscription_id") @db.Uuid
+  stripeInvoiceId String?       @unique @map("stripe_invoice_id") @db.VarChar(255)
+  status          InvoiceStatus @default(DRAFT)
+  amountDueCents  Int           @default(0) @map("amount_due_cents")
+  amountPaidCents Int           @default(0) @map("amount_paid_cents")
+  currency        String        @default("usd") @db.VarChar(3)
+  periodStart     DateTime?     @map("period_start") @db.Timestamptz
+  periodEnd       DateTime?     @map("period_end") @db.Timestamptz
+  hostedInvoiceUrl String?      @map("hosted_invoice_url") @db.Text
+  issuedAt        DateTime?     @map("issued_at") @db.Timestamptz
+  paidAt          DateTime?     @map("paid_at") @db.Timestamptz
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id])
+
+  @@index([organizationId])
+  @@map("invoices")
+}
+
+// Aggregated metered usage per billing period — fast quota checks against Plan.limits.
+model UsageCounter {
+  id             String      @id @default(uuid()) @db.Uuid
+  organizationId String      @map("organization_id") @db.Uuid
+  metric         UsageMetric
+  period         String      @db.VarChar(7) // "YYYY-MM" bucket
+  count          Int         @default(0)
+  updatedAt      DateTime    @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, metric, period])
+  @@index([organizationId])
+  @@map("usage_counters")
+}
+
+// Event-level usage log (audit / analytics behind the counters).
+model UsageEvent {
+  id             String      @id @default(uuid()) @db.Uuid
+  organizationId String      @map("organization_id") @db.Uuid
+  metric         UsageMetric
+  quantity       Int         @default(1)
+  metadata       Json?       @db.JsonB
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([metric])
+  @@index([createdAt])
+  @@map("usage_events")
+}
+
+// ============================================================================
+// 4. PLATFORM CONNECTIONS & DOMAIN DATA (all organization-scoped)
+// ============================================================================
+
+// A connected TikTok / Whatnot account. NEVER stores cookies/passwords —
+// the live session lives on the desktop device. This is metadata + status only.
+model PlatformConnection {
+  id               String           @id @default(uuid()) @db.Uuid
+  organizationId   String           @map("organization_id") @db.Uuid
+  platform         PlatformType
+  externalAccountId String?         @map("external_account_id") @db.VarChar(255)
+  handle           String?          @db.VarChar(255)
+  status           ConnectionStatus @default(DISCONNECTED)
+  connectedById    String?          @map("connected_by") @db.Uuid
+  lastConnectedAt  DateTime?        @map("last_connected_at") @db.Timestamptz
+  lastSyncedAt     DateTime?        @map("last_synced_at") @db.Timestamptz
+  metadata         Json             @default("{}") @db.JsonB
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime         @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt        DateTime?        @map("deleted_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connectedBy  User?        @relation("ConnectionConnectedBy", fields: [connectedById], references: [id])
+  shows        Show[]
+  orders       Order[]
+
+  @@unique([organizationId, platform, externalAccountId])
+  @@index([organizationId])
+  @@map("platform_connections")
+}
+
+model Show {
+  id                   String       @id @default(uuid()) @db.Uuid
+  organizationId       String       @map("organization_id") @db.Uuid
+  platformConnectionId String?      @map("platform_connection_id") @db.Uuid
+  platform             PlatformType
+  externalShowId       String       @map("external_show_id") @db.VarChar(255)
+  title                String?      @db.VarChar(500)
+  status               ShowStatus   @default(ENDED)
+  startedAt            DateTime?    @map("started_at") @db.Timestamptz
+  endedAt              DateTime?    @map("ended_at") @db.Timestamptz
+  metrics              Json         @default("{}") @db.JsonB // gmv, viewers, newFollowers, etc.
+  createdAt            DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt            DateTime?    @map("deleted_at") @db.Timestamptz
+
+  organization       Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  platformConnection PlatformConnection? @relation(fields: [platformConnectionId], references: [id])
+  orders             Order[]
+
+  @@unique([organizationId, platform, externalShowId])
+  @@index([organizationId])
+  @@index([startedAt])
+  @@map("shows")
+}
+
+// Buyer (de-duped per platform handle). Holds minimal PII; address kept as JSON.
+model Customer {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  platform       PlatformType
+  handle         String   @db.VarChar(255)
+  displayName    String?  @map("display_name") @db.VarChar(255)
+  contact        Json     @default("{}") @db.JsonB // email/phone/address (PII)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  orders       Order[]
+
+  @@unique([organizationId, platform, handle])
+  @@index([organizationId])
+  @@map("customers")
+}
+
+model Order {
+  id                   String       @id @default(uuid()) @db.Uuid
+  organizationId       String       @map("organization_id") @db.Uuid
+  platformConnectionId String?      @map("platform_connection_id") @db.Uuid
+  showId               String?      @map("show_id") @db.Uuid
+  customerId           String?      @map("customer_id") @db.Uuid
+  platform             PlatformType
+  externalOrderId      String       @map("external_order_id") @db.VarChar(255)
+  status               OrderStatus  @default(PENDING)
+  buyerHandle          String?      @map("buyer_handle") @db.VarChar(255)
+  currency             String       @default("usd") @db.VarChar(3)
+  subtotalCents        Int          @default(0) @map("subtotal_cents")
+  shippingCents        Int          @default(0) @map("shipping_cents")
+  taxCents             Int          @default(0) @map("tax_cents")
+  totalCents           Int          @default(0) @map("total_cents")
+  placedAt             DateTime?    @map("placed_at") @db.Timestamptz
+  raw                  Json?        @db.JsonB // full platform payload for re-parsing
+  createdAt            DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt            DateTime?    @map("deleted_at") @db.Timestamptz
+
+  organization       Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  platformConnection PlatformConnection? @relation(fields: [platformConnectionId], references: [id])
+  show               Show?               @relation(fields: [showId], references: [id])
+  customer           Customer?           @relation(fields: [customerId], references: [id])
+  items              OrderItem[]
+  shipments          Shipment[]
+  receipts           Receipt[]
+
+  @@unique([organizationId, platform, externalOrderId])
+  @@index([organizationId])
+  @@index([showId])
+  @@index([placedAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  orderId        String   @map("order_id") @db.Uuid
+  productName    String?  @map("product_name") @db.VarChar(500)
+  variant        String?  @db.VarChar(255)
+  sku            String?  @db.VarChar(255)
+  quantity       Int      @default(1)
+  unitPriceCents Int      @default(0) @map("unit_price_cents")
+  totalCents     Int      @default(0) @map("total_cents")
+  raw            Json?    @db.JsonB
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  order        Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([orderId])
+  @@map("order_items")
+}
+
+model Shipment {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @map("organization_id") @db.Uuid
+  orderId        String         @map("order_id") @db.Uuid
+  carrier        String?        @db.VarChar(120)
+  service        String?        @db.VarChar(120)
+  trackingNumber String?        @map("tracking_number") @db.VarChar(255)
+  status         ShipmentStatus @default(PENDING)
+  labelUrl       String?        @map("label_url") @db.Text
+  shippedAt      DateTime?      @map("shipped_at") @db.Timestamptz
+  deliveredAt    DateTime?      @map("delivered_at") @db.Timestamptz
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  order        Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([orderId])
+  @@index([trackingNumber])
+  @@map("shipments")
+}
+
+// Video receipt + Gemini transcription for an order (the LIVE LEDGER feature).
+model Receipt {
+  id               String           @id @default(uuid()) @db.Uuid
+  organizationId   String           @map("organization_id") @db.Uuid
+  orderId          String           @map("order_id") @db.Uuid
+  platform         PlatformType
+  sourceUrl        String?          @map("source_url") @db.Text // signed CDN m3u8 (expires)
+  capturedAt       DateTime?        @map("captured_at") @db.Timestamptz
+  transcriptStatus TranscriptStatus @default(NONE) @map("transcript_status")
+  transcript       String?          @db.Text
+  productInfo      Json?            @map("product_info") @db.JsonB // brand/item/color/size/retail
+  transcribedAt    DateTime?        @map("transcribed_at") @db.Timestamptz
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime         @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  order        Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([orderId])
+  @@map("receipts")
+}
+
+// ============================================================================
+// 5. PLATFORM ADMIN & AUDIT
+// ============================================================================
+
+model PlatformAdmin {
+  userId    String   @id @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("platform_admins")
+}
+
+model AuditLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String?  @map("organization_id") @db.Uuid
+  userId         String?  @map("user_id") @db.Uuid
+  action         String   @db.VarChar(120) // e.g. "order.synced", "member.invited"
+  targetType     String?  @map("target_type") @db.VarChar(80)
+  targetId       String?  @map("target_id") @db.VarChar(255)
+  metadata       Json?    @db.JsonB
+  ip             String?  @db.VarChar(64)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
