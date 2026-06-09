@@ -176,13 +176,14 @@ model AuthAccount {
   @@map("auth_accounts")
 }
 
-// Web session cookies (NextAuth-style)
+// Web session cookies. Stores only the SHA-256 hash of the session token (never the raw
+// value) — auth code hashes the presented cookie before lookup, like ApiToken.
 model Session {
-  id           String   @id @default(uuid()) @db.Uuid
-  userId       String   @map("user_id") @db.Uuid
-  sessionToken String   @unique @map("session_token") @db.VarChar(255)
-  expiresAt    DateTime @map("expires_at") @db.Timestamptz
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @map("user_id") @db.Uuid
+  sessionTokenHash String   @unique @map("session_token_hash") @db.VarChar(255)
+  expiresAt        DateTime @map("expires_at") @db.Timestamptz
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

@@ -5,6 +5,9 @@
   "description": "SellerFolio Live — standalone multi-tenant backend (Postgres + Prisma). Serves the LIVE LEDGER desktop app and the future web UI.",
   "type": "module",
   "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "bootstrap": "tsx scripts/bootstrap.ts",
     "db:create": "node scripts/create-database.mjs",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
@@ -19,7 +22,9 @@
   "dependencies": {
     "@prisma/adapter-pg": "^7.3.0",
     "@prisma/client": "^7.3.0",
-    "pg": "^8.18.0"
+    "fastify": "^5.2.0",
+    "pg": "^8.18.0",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "dotenv": "^16.4.5",
