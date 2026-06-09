@@ -23,6 +23,13 @@ describe('SaleDeduper', () => {
     d.accept(sale({ source: 'stream', ts: 1000 }))
     expect(d.accept(sale({ source: 'roster', ts: 1000 + 60_001 }))).toBe(true)
   })
+  it('does not roll the window forward when rejecting duplicates', () => {
+    const d = new SaleDeduper(30_000)
+    expect(d.accept(sale({ ts: 0 }))).toBe(true)
+    expect(d.accept(sale({ ts: 20_000 }))).toBe(false) // duplicate within window
+    // 40s after the first ACCEPTED sale (> window) — a genuine re-auction, must pass
+    expect(d.accept(sale({ ts: 40_000 }))).toBe(true)
+  })
   it('treats sold and payment_failed independently', () => {
     const d = new SaleDeduper()
     d.accept(sale({ status: 'sold', ts: 1000 }))

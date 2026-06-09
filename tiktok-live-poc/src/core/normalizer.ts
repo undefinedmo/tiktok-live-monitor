@@ -9,7 +9,8 @@ export class SaleDeduper {
     const key = `${sale.product.auctionConfigId}:${sale.status}`
     const prev = this.lastSeen.get(key)
     if (prev !== undefined && sale.ts - prev < this.windowMs) {
-      this.lastSeen.set(key, sale.ts)
+      // Do NOT update lastSeen here: a run of near-window duplicates must not
+      // roll the window forward and suppress a later legitimate re-auction.
       return false
     }
     this.lastSeen.set(key, sale.ts)

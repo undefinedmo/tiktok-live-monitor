@@ -32,4 +32,12 @@ describe('decodeFrame', () => {
     const buf = bytes(sField(1, 'WebcastChatMessage'), vField(2, 1))
     expect(decodeFrame(buf)).toHaveLength(0)
   })
+  it('does not emit spurious messages from payload contents', () => {
+    // payload embeds "EvilMessage" immediately followed by a 0x12 tag
+    const evilPayload = [...sField(7, 'EvilMessage'), ...mField(2, sField(1, 'x'))]
+    const msg = [...sField(1, 'WebcastOecLiveCreatorMessage'), ...mField(2, evilPayload)]
+    const out = decodeFrame(bytes(mField(1, msg)))
+    expect(out).toHaveLength(1)
+    expect(out[0]!.method).toBe('WebcastOecLiveCreatorMessage')
+  })
 })

@@ -50,6 +50,7 @@ window.ttLive.onEvent((ev: LiveEvent) => {
     case 'state':
       rosterSold = ev.totals.sold
       $('failed').textContent = String(ev.totals.failed)
+      $('paymentFailed').textContent = String(ev.totals.paymentFailed)
       $('pinned').textContent = ev.pinnedAuction
         ? `${ev.pinnedAuction.productName} — ${ev.pinnedAuction.maxBidPrice ?? ev.pinnedAuction.formattedStartingBid ?? ''} · ${ev.pinnedAuction.numBids ?? 0} bids · win @${ev.pinnedAuction.winUsername ?? '—'}`
         : '—'

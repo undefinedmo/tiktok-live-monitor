@@ -86,8 +86,9 @@ export function decodeFrame(b: Uint8Array): StreamMessage[] {
       let len: bigint
       ;[len, q] = readVarint(b, q)
       const L = Number(len)
-      const payload = walk(b, q, Math.min(q + L, b.length), 0)
-      out.push({ method: cur, payload })
+      const end = Math.min(q + L, b.length)
+      out.push({ method: cur, payload: walk(b, q, end, 0) })
+      i = end - 1 // skip the payload bytes we just consumed (the for-loop does i++)
     }
     cur = ''
   }
