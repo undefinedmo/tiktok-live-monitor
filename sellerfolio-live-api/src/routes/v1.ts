@@ -339,16 +339,20 @@ export async function registerRoutes(api: FastifyInstance) {
       return reply.code(400).send({ error: 'parse_failed', reason: (e as Error).message });
     }
 
-    await prisma.auditLog.create({
-      data: {
-        organizationId: orgId,
-        userId: req.ctx!.userId,
-        action: 'settlement.imported',
-        targetType: 'settlement_import',
-        targetId: summary.importId,
-        metadata: { matched: summary.matched, unmatched: summary.unmatched, ...summary.totals } as never,
-      },
-    });
+    try {
+      await prisma.auditLog.create({
+        data: {
+          organizationId: orgId,
+          userId: req.ctx!.userId,
+          action: 'settlement.imported',
+          targetType: 'settlement_import',
+          targetId: summary.importId,
+          metadata: { matched: summary.matched, unmatched: summary.unmatched, ...summary.totals } as never,
+        },
+      });
+    } catch (e) {
+      req.log.warn({ err: e }, 'auditLog write failed after settlement import');
+    }
     return summary;
   });
 
