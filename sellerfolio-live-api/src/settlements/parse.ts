@@ -74,6 +74,18 @@ const MONEY_FIELDS: Record<string, keyof ParsedSettlementRow> = {
   'Adjustment amount': 'adjustmentCents',
 };
 
+// TikTok's exporter writes a corrupted <dimension> (e.g. A1:AO6) that understates the row
+// count. Recompute the true used range from the actual cell addresses so every row is read.
+export function fullRange(ws: XLSX.WorkSheet): string {
+  const cellKeys = Object.keys(ws).filter((k) => !k.startsWith('!'));
+  if (cellKeys.length === 0) return (ws['!ref'] as string) ?? 'A1:A1';
+  const cells = cellKeys.map((k) => XLSX.utils.decode_cell(k));
+  return XLSX.utils.encode_range({
+    s: { r: Math.min(...cells.map((c) => c.r)), c: Math.min(...cells.map((c) => c.c)) },
+    e: { r: Math.max(...cells.map((c) => c.r)), c: Math.max(...cells.map((c) => c.c)) },
+  });
+}
+
 export function toCents(v: unknown): number {
   if (v == null) return 0;
   const s = String(v).trim();
@@ -98,6 +110,7 @@ export function parseSettlementXlsx(buffer: Buffer, filename: string): ParseResu
   const wb = XLSX.read(buffer, { type: 'buffer' });
   const ws = wb.Sheets[SHEET_NAME] ?? wb.Sheets[wb.SheetNames[0]];
   if (!ws) throw new Error('settlement sheet not found');
+  ws['!ref'] = fullRange(ws); // repair understated dimension before extracting the grid
 
   const grid = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null, raw: false, blankrows: true });
 

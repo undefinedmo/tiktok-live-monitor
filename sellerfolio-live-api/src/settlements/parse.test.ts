@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as XLSX from 'xlsx';
-import { parseSettlementXlsx } from './parse';
+import { parseSettlementXlsx, fullRange } from './parse';
 
 // Columns the parser must understand (subset of the real 99 — order is intentionally
 // shuffled to prove mapping is by header NAME, not position).
@@ -108,4 +108,15 @@ describe('parseSettlementXlsx', () => {
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
     expect(() => parseSettlementXlsx(buf, FILENAME)).toThrow(/header/i);
   });
+
+  it('recomputes the true range when the sheet !ref is understated (TikTok dimension quirk)', () => {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['a', 'b'],
+      ['c', 'd'],
+      ['e', 'f'],
+    ]); // 3 rows x 2 cols -> A1:B3
+    ws['!ref'] = 'A1:A1'; // simulate TikTok's corrupted/understated dimension
+    expect(fullRange(ws)).toBe('A1:B3');
+  });
+
 });
