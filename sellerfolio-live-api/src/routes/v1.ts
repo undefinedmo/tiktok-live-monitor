@@ -5,6 +5,7 @@ import { prisma } from '../db';
 import { requirePermission } from '../auth';
 import { recordUsage, checkLimit } from '../usage';
 import { PERMISSIONS } from '../permissions';
+import { importSettlement, applySettlementRollup } from '../settlements/import';
 
 const PlatformEnum = z.enum(['TIKTOK', 'WHATNOT']);
 
@@ -258,6 +259,7 @@ export async function registerRoutes(api: FastifyInstance) {
           });
         }
       }
+      await applySettlementRollup(prisma, orgId, o.platform, o.externalOrderId, order.id);
       upserted++;
     }
     await recordUsage(orgId, 'ORDER_SYNC', upserted);
@@ -314,6 +316,62 @@ export async function registerRoutes(api: FastifyInstance) {
       : await prisma.receipt.create({ data: { organizationId: orgId, orderId: order.id, platform: body.platform, ...data } });
     await recordUsage(orgId, 'RECEIPT_CAPTURE', 1);
     return receipt;
+  });
+
+  // ── settlements: import a TikTok settlement XLSX ──
+  api.post('/settlements/import', async (req, reply) => {
+    if (!requirePermission(req, reply, 'orders.manage')) return;
+    const orgId = req.ctx!.organizationId;
+    const file = await (req as unknown as { file: () => Promise<{ filename: string; toBuffer: () => Promise<Buffer> } | undefined> }).file();
+    if (!file) return reply.code(400).send({ error: 'no_file' });
+    const buffer = await file.toBuffer();
+
+    let summary;
+    try {
+      summary = await importSettlement({
+        organizationId: orgId,
+        platform: 'TIKTOK',
+        filename: file.filename,
+        buffer,
+        uploadedById: req.ctx!.userId,
+      });
+    } catch (e) {
+      return reply.code(400).send({ error: 'parse_failed', reason: (e as Error).message });
+    }
+
+    await prisma.auditLog.create({
+      data: {
+        organizationId: orgId,
+        userId: req.ctx!.userId,
+        action: 'settlement.imported',
+        targetType: 'settlement_import',
+        targetId: summary.importId,
+        metadata: { matched: summary.matched, unmatched: summary.unmatched, ...summary.totals } as never,
+      },
+    });
+    return summary;
+  });
+
+  // ── settlements: list rows ──
+  api.get('/settlements', async (req, reply) => {
+    if (!requirePermission(req, reply, 'orders.view')) return;
+    const settlements = await prisma.orderSettlement.findMany({
+      where: { organizationId: req.ctx!.organizationId },
+      orderBy: [{ creationDate: 'desc' }],
+      take: 2000,
+    });
+    return { settlements };
+  });
+
+  // ── settlements: import batch history ──
+  api.get('/settlements/imports', async (req, reply) => {
+    if (!requirePermission(req, reply, 'orders.view')) return;
+    const imports = await prisma.settlementImport.findMany({
+      where: { organizationId: req.ctx!.organizationId },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 200,
+    });
+    return { imports };
   });
 
   // ── permissions catalog (handy for building UIs) ──

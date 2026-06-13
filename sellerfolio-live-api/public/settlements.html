@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SellerFolio · Settlement import</title>
+  <style>
+    body { font: 15px/1.5 system-ui, sans-serif; max-width: 640px; margin: 48px auto; padding: 0 16px; color: #111; }
+    h1 { font-size: 20px; }
+    label { display: block; margin: 16px 0 4px; font-weight: 600; }
+    input[type=password], input[type=file] { width: 100%; padding: 8px; box-sizing: border-box; }
+    button { margin-top: 20px; padding: 10px 18px; font-weight: 600; cursor: pointer; }
+    pre { background: #f5f5f5; padding: 12px; border-radius: 6px; overflow: auto; white-space: pre-wrap; }
+    .err { color: #b00020; }
+  </style>
+</head>
+<body>
+  <h1>TikTok settlement import</h1>
+  <p>Upload an <code>Onhold-unsettled-orders…xlsx</code> export from TikTok Seller Center.</p>
+  <label for="token">API token</label>
+  <input id="token" type="password" placeholder="Bearer token" autocomplete="off" />
+  <label for="file">Settlement XLSX</label>
+  <input id="file" type="file" accept=".xlsx" />
+  <button id="go">Import</button>
+  <h3>Result</h3>
+  <pre id="out">—</pre>
+  <script>
+    const out = document.getElementById('out');
+    document.getElementById('go').addEventListener('click', async () => {
+      const token = document.getElementById('token').value.trim();
+      const file = document.getElementById('file').files[0];
+      if (!token || !file) { out.textContent = 'Need both a token and a file.'; out.className = 'err'; return; }
+      out.className = ''; out.textContent = 'Uploading…';
+      const fd = new FormData();
+      fd.append('file', file, file.name);
+      try {
+        const res = await fetch('/v1/settlements/import', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: fd });
+        const json = await res.json();
+        out.className = res.ok ? '' : 'err';
+        out.textContent = JSON.stringify(json, null, 2);
+      } catch (e) { out.className = 'err'; out.textContent = String(e); }
+    });
+  </script>
+</body>
+</html>
