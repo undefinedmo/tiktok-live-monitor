@@ -133,6 +133,11 @@ enum RuleLogic {
   OR
 }
 
+enum SettlementStatus {
+  ESTIMATED // on-hold / unsettled reports — amounts subject to change
+  SETTLED   // reserved for the final settled-report flow (not built yet)
+}
+
 // ============================================================================
 // 1. IDENTITY & AUTH
 // ============================================================================
@@ -257,6 +262,8 @@ model Organization {
   auditLogs           AuditLog[]
   costTemplates       CostTemplate[]
   rules               Rule[]
+  settlements         OrderSettlement[]
+  settlementImports   SettlementImport[]
 
   @@index([slug])
   @@map("organizations")
@@ -558,6 +565,7 @@ model Order {
   items              OrderItem[]
   shipments          Shipment[]
   receipts           Receipt[]
+  settlements        OrderSettlement[]
 
   @@unique([organizationId, platform, externalOrderId])
   @@index([organizationId])
@@ -729,4 +737,81 @@ model RuleAction {
 
   @@index([ruleId])
   @@map("rule_actions")
+}
+
+// ============================================================================
+// 7. SETTLEMENTS (TikTok Shop settlement-report ingestion)
+// ============================================================================
+
+// One row per uploaded settlement XLSX — provenance + batch summary.
+model SettlementImport {
+  id                   String       @id @default(uuid()) @db.Uuid
+  organizationId       String       @map("organization_id") @db.Uuid
+  platform             PlatformType
+  filename             String       @db.VarChar(500)
+  rangeStart           DateTime?    @map("range_start") @db.Timestamptz
+  rangeEnd             DateTime?    @map("range_end") @db.Timestamptz
+  downloadedAt         DateTime?    @map("downloaded_at") @db.Timestamptz
+  reportedCount        Int?         @map("reported_count")
+  rowCount             Int          @map("row_count")
+  matchedCount         Int          @default(0) @map("matched_count")
+  unmatchedCount       Int          @default(0) @map("unmatched_count")
+  totalSettlementCents Int          @default(0) @map("total_settlement_cents")
+  totalFeesCents       Int          @default(0) @map("total_fees_cents")
+  uploadedById         String?      @map("uploaded_by") @db.Uuid
+  createdAt            DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  settlements  OrderSettlement[]
+
+  @@index([organizationId])
+  @@map("settlement_imports")
+}
+
+// One settlement transaction. Unique per (org, platform, externalOrderId) so re-imports upsert.
+model OrderSettlement {
+  id              String           @id @default(uuid()) @db.Uuid
+  organizationId  String           @map("organization_id") @db.Uuid
+  importId        String           @map("import_id") @db.Uuid
+  orderId         String?          @map("order_id") @db.Uuid
+  platform        PlatformType
+  type            String           @db.VarChar(20)
+  externalOrderId String           @map("external_order_id") @db.VarChar(255)
+  relatedOrderId  String?          @map("related_order_id") @db.VarChar(255)
+  status          SettlementStatus @default(ESTIMATED)
+
+  // money — integer cents, SIGNED exactly as the report shows
+  netSalesCents             Int @default(0) @map("net_sales_cents")
+  grossSalesCents           Int @default(0) @map("gross_sales_cents")
+  feesCents                 Int @default(0) @map("fees_cents")
+  referralFeeCents          Int @default(0) @map("referral_fee_cents")
+  salesTaxOnReferralCents   Int @default(0) @map("sales_tax_on_referral_cents")
+  tiktokShippingFeeCents    Int @default(0) @map("tiktok_shipping_fee_cents")
+  customerPaidShippingCents Int @default(0) @map("customer_paid_shipping_cents")
+  customerPaymentCents      Int @default(0) @map("customer_payment_cents")
+  salesTaxPaymentCents      Int @default(0) @map("sales_tax_payment_cents")
+  platformDiscountCents     Int @default(0) @map("platform_discount_cents")
+  estimatedSettlementCents  Int @default(0) @map("estimated_settlement_cents")
+
+  // descriptive
+  skuId               String?   @map("sku_id") @db.VarChar(255)
+  skuName             String?   @map("sku_name") @db.VarChar(255)
+  productName         String?   @map("product_name") @db.VarChar(500)
+  quantity            Int       @default(0)
+  estimatedSettleTime String?   @map("estimated_settle_time") @db.VarChar(120)
+  unsettledReason     String?   @map("unsettled_reason") @db.VarChar(255)
+  creationDate        DateTime? @map("creation_date") @db.Timestamptz
+
+  raw       Json     @db.JsonB
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  import       SettlementImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+  order        Order?           @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, platform, externalOrderId])
+  @@index([organizationId])
+  @@index([orderId])
+  @@map("order_settlements")
 }
