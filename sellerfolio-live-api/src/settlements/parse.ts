@@ -26,7 +26,7 @@ export interface ParsedSettlementRow {
   salesTaxPaymentCents: number;
   platformDiscountCents: number;
   estimatedSettlementCents: number;
-  adjustmentCents: number; // used for reconciliation only; not stored as a column
+  adjustmentCents: number; // TikTok 'Adjustment amount' column; used in the reconciliation formula
   skuId: string | null;
   skuName: string | null;
   productName: string | null;
@@ -150,10 +150,10 @@ export function parseSettlementXlsx(buffer: Buffer, filename: string): ParseResu
       if (h in STRING_FIELDS) {
         const field = STRING_FIELDS[h];
         const s = val == null ? '' : String(val).trim();
-        (rec as Record<string, unknown>)[field] =
+        (rec as unknown as Record<string, unknown>)[field] =
           field === 'type' || field === 'externalOrderId' ? s : s === '' || s === '/' ? null : s;
       } else if (h in MONEY_FIELDS) {
-        (rec as Record<string, unknown>)[MONEY_FIELDS[h]] = toCents(val);
+        (rec as unknown as Record<string, unknown>)[MONEY_FIELDS[h]] = toCents(val);
       } else if (h === 'Quantity') {
         rec.quantity = val == null ? 0 : Math.round(Number(String(val).trim()) || 0);
       } else if (h === 'creation date') {
@@ -162,7 +162,7 @@ export function parseSettlementXlsx(buffer: Buffer, filename: string): ParseResu
     });
     rec.raw = raw;
 
-    const dataRow = rows.length + 1;
+    const dataRow = i - headerIdx; // 1-based input data row, stable across skipped rows
     if (!rec.externalOrderId) {
       errors.push({ row: dataRow, reason: 'missing Order/adjustment ID' });
       continue;

@@ -74,6 +74,7 @@ describe('parseSettlementXlsx', () => {
       FILENAME,
     );
     expect(rows[0].platformDiscountCents).toBe(0);
+    expect(rows[0].adjustmentCents).toBe(0);
   });
 
   it('extracts meta and the date range from the filename', () => {
