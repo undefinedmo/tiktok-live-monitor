@@ -8,5 +8,6 @@ export default defineConfig({
     fileParallelism: false, // integration tests share one DB; run files serially
     testTimeout: 30000,
     hookTimeout: 30000,
+    setupFiles: ['src/test-setup.ts'],
   },
 });
