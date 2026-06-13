@@ -80,55 +80,68 @@ export async function importSettlement(opts: {
   const totalSettlementCents = rows.reduce((s, r) => s + r.estimatedSettlementCents, 0);
   const totalFeesCents = rows.reduce((s, r) => s + r.feesCents, 0);
 
-  return prisma.$transaction(async (tx) => {
-    const imp = await tx.settlementImport.create({
-      data: {
-        organizationId, platform, filename,
-        rangeStart: meta.rangeStart ? new Date(meta.rangeStart) : null,
-        rangeEnd: meta.rangeEnd ? new Date(meta.rangeEnd) : null,
-        downloadedAt: meta.downloadedAt ? new Date(meta.downloadedAt) : null,
-        reportedCount: meta.reportedCount,
-        rowCount: rows.length,
-        totalSettlementCents,
-        totalFeesCents,
-        uploadedById: uploadedById ?? null,
-      },
-    });
+  return prisma.$transaction(
+    async (tx) => {
+      const imp = await tx.settlementImport.create({
+        data: {
+          organizationId, platform, filename,
+          rangeStart: meta.rangeStart ? new Date(meta.rangeStart) : null,
+          rangeEnd: meta.rangeEnd ? new Date(meta.rangeEnd) : null,
+          downloadedAt: meta.downloadedAt ? new Date(meta.downloadedAt) : null,
+          reportedCount: meta.reportedCount,
+          rowCount: rows.length,
+          totalSettlementCents,
+          totalFeesCents,
+          uploadedById: uploadedById ?? null,
+        },
+      });
 
-    let matched = 0;
-    let unmatched = 0;
-    for (const r of rows) {
-      const order = await tx.order.findUnique({
-        where: { organizationId_platform_externalOrderId: { organizationId, platform, externalOrderId: r.externalOrderId } },
-        select: { id: true },
+      // Batch-fetch all matching orders in one query, then map by externalOrderId.
+      const externalOrderIds = rows.map((r) => r.externalOrderId);
+      const orders = await tx.order.findMany({
+        where: { organizationId, platform, externalOrderId: { in: externalOrderIds } },
+        select: { id: true, externalOrderId: true },
       });
-      const data = rowData(r);
-      await tx.orderSettlement.upsert({
-        where: { organizationId_platform_externalOrderId: { organizationId, platform, externalOrderId: r.externalOrderId } },
-        update: { importId: imp.id, orderId: order?.id ?? null, ...data },
-        create: { organizationId, platform, externalOrderId: r.externalOrderId, importId: imp.id, orderId: order?.id ?? null, ...data },
-      });
-      if (order) {
-        await applySettlementRollup(tx, organizationId, platform, r.externalOrderId, order.id);
-        matched++;
-      } else {
-        unmatched++;
+      const orderIdByExternal = new Map(orders.map((o) => [o.externalOrderId, o.id]));
+
+      let matched = 0;
+      let unmatched = 0;
+      for (const r of rows) {
+        const orderId = orderIdByExternal.get(r.externalOrderId) ?? null;
+        const data = rowData(r);
+        await tx.orderSettlement.upsert({
+          where: { organizationId_platform_externalOrderId: { organizationId, platform, externalOrderId: r.externalOrderId } },
+          update: { importId: imp.id, orderId, ...data },
+          create: { organizationId, platform, externalOrderId: r.externalOrderId, importId: imp.id, orderId, ...data },
+        });
+        if (orderId) {
+          // Roll fees + net payout onto the order directly from the parsed row (no re-read).
+          // Sign convention: store positive feesCents magnitude; netCents = estimated settlement.
+          await tx.order.update({
+            where: { id: orderId },
+            data: { netCents: r.estimatedSettlementCents, feesCents: -r.feesCents },
+          });
+          matched++;
+        } else {
+          unmatched++;
+        }
       }
-    }
 
-    await tx.settlementImport.update({
-      where: { id: imp.id },
-      data: { matchedCount: matched, unmatchedCount: unmatched },
-    });
+      await tx.settlementImport.update({
+        where: { id: imp.id },
+        data: { matchedCount: matched, unmatchedCount: unmatched },
+      });
 
-    return {
-      importId: imp.id,
-      parsed: rows.length,
-      upserted: rows.length,
-      matched,
-      unmatched,
-      totals: { settlementCents: totalSettlementCents, feesCents: totalFeesCents },
-      rowErrors: errors,
-    };
-  });
+      return {
+        importId: imp.id,
+        parsed: rows.length,
+        upserted: rows.length,
+        matched,
+        unmatched,
+        totals: { settlementCents: totalSettlementCents, feesCents: totalFeesCents },
+        rowErrors: errors,
+      };
+    },
+    { timeout: 120_000, maxWait: 10_000 },
+  );
 }
