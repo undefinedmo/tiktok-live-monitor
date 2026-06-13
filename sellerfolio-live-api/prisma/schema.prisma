@@ -123,6 +123,16 @@ enum TranscriptStatus {
   SKIPPED
 }
 
+enum CostTemplateType {
+  PERCENT
+  FLAT
+}
+
+enum RuleLogic {
+  AND
+  OR
+}
+
 // ============================================================================
 // 1. IDENTITY & AUTH
 // ============================================================================
@@ -245,6 +255,8 @@ model Organization {
   shipments           Shipment[]
   receipts            Receipt[]
   auditLogs           AuditLog[]
+  costTemplates       CostTemplate[]
+  rules               Rule[]
 
   @@index([slug])
   @@map("organizations")
@@ -523,6 +535,16 @@ model Order {
   shippingCents        Int          @default(0) @map("shipping_cents")
   taxCents             Int          @default(0) @map("tax_cents")
   totalCents           Int          @default(0) @map("total_cents")
+  // financials beyond the raw order payload (cost = user/template; net/fees = earnings sync)
+  costCents            Int?         @map("cost_cents")
+  netCents             Int?         @map("net_cents")
+  feesCents            Int?         @map("fees_cents")
+  // classification / curation
+  isGiveaway           Boolean      @default(false) @map("is_giveaway")
+  flag                 String?      @db.VarChar(20) // research | review | restock | note
+  classification       String?      @db.VarChar(20) // sale | giveaway | sample | adjustment | excluded
+  tags                 String[]     @default([])
+  videoSeekSeconds     Int?         @map("video_seek_seconds")
   placedAt             DateTime?    @map("placed_at") @db.Timestamptz
   raw                  Json?        @db.JsonB // full platform payload for re-parsing
   createdAt            DateTime     @default(now()) @map("created_at") @db.Timestamptz
@@ -642,4 +664,69 @@ model AuditLog {
   @@index([userId])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+// ============================================================================
+// 6. COST TEMPLATES & RULES (curation / automation)
+// ============================================================================
+
+model CostTemplate {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  name           String           @db.VarChar(80)
+  type           CostTemplateType
+  value          Decimal          @db.Decimal(10, 2) // percent (e.g. 50) or flat dollars
+  sortOrder      Int              @default(0) @map("sort_order")
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@map("cost_templates")
+}
+
+model Rule {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  name           String    @db.VarChar(120)
+  description    String?   @db.Text
+  priority       Int       @default(0)
+  isEnabled      Boolean   @default(true) @map("is_enabled")
+  isSystem       Boolean   @default(false) @map("is_system")
+  logicType      RuleLogic @default(AND) @map("logic_type")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conditions   RuleCondition[]
+  actions      RuleAction[]
+
+  @@index([organizationId])
+  @@map("rules")
+}
+
+model RuleCondition {
+  id       String  @id @default(uuid()) @db.Uuid
+  ruleId   String  @map("rule_id") @db.Uuid
+  field    String  @db.VarChar(40) // title | brand | buyer | total | status | platform | show
+  operator String  @db.VarChar(20) // contains | equals | greater_than | less_than | between
+  value    String? @db.Text
+  value2   String? @db.Text
+
+  rule Rule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId])
+  @@map("rule_conditions")
+}
+
+model RuleAction {
+  id          String  @id @default(uuid()) @db.Uuid
+  ruleId      String  @map("rule_id") @db.Uuid
+  actionType  String  @map("action_type") @db.VarChar(30) // set_brand | set_classification | set_giveaway | add_tag | set_flag | exclude
+  targetValue String? @map("target_value") @db.Text
+
+  rule Rule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId])
+  @@map("rule_actions")
 }
