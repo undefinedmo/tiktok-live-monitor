@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseItemNumber, labelHtml } from '../label'
+import { parseItemNumber, extractCustom, labelHtml, DEFAULT_TEMPLATE } from '../label'
 
 describe('parseItemNumber', () => {
   it('strips the # from a TikTok sku_desc', () => {
@@ -13,12 +13,37 @@ describe('parseItemNumber', () => {
   })
 })
 
+describe('extractCustom', () => {
+  it('returns the capture group from a title', () => {
+    expect(extractCustom('#141 Bin A - Alo Yoga and More, No Cancels', '(Bin [A-Z])')).toBe('Bin A')
+  })
+  it('returns the whole match when there is no capture group', () => {
+    expect(extractCustom('#141 Bin A - Alo Yoga', 'Bin [A-Z]')).toBe('Bin A')
+  })
+  it('returns empty string on no match or invalid regex', () => {
+    expect(extractCustom('Bin A', 'Zzz')).toBe('')
+    expect(extractCustom('Bin A', '(')).toBe('') // invalid regex, no throw
+  })
+})
+
 describe('labelHtml', () => {
-  it('renders the item number and escapes buyer/product', () => {
-    const html = labelHtml({ itemNumber: '#34', buyer: 'A & B', productName: '<x>', price: '$5.00' })
+  it('renders only the enabled fields (escaped)', () => {
+    const html = labelHtml({ itemNumber: '#34', buyer: 'A & B', productName: '<x>', price: '$5.00' }, {
+      ...DEFAULT_TEMPLATE,
+      buyer: false,
+      productName: false,
+      price: true,
+    })
     expect(html).toContain('#34')
-    expect(html).toContain('A &amp; B')
-    expect(html).toContain('&lt;x&gt;')
-    expect(html).toContain('$5.00')
+    expect(html).not.toContain('A &amp; B') // buyer disabled
+    expect(html).not.toContain('&lt;x&gt;') // product disabled
+    expect(html).toContain('$5.00') // price enabled
+  })
+  it('prints the regex-extracted custom field', () => {
+    const html = labelHtml(
+      { itemNumber: '#54', title: '#54 Bin A - Alo Yoga and More, No Cancels' },
+      { ...DEFAULT_TEMPLATE, custom: { enabled: true, regex: '(Bin [A-Z])', flags: '' } },
+    )
+    expect(html).toContain('Bin A')
   })
 })

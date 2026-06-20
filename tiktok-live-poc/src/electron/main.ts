@@ -6,7 +6,7 @@ import { parsePushFrame } from '../core/pushFrame'
 import { LiveFeed } from '../core/liveFeed'
 import { parseRoster } from '../core/roster'
 import { AuctionResults } from '../core/auctionResults'
-import { labelHtml, LABEL, type LabelData } from './label'
+import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
 import type { LiveEvent, StatusEvent } from '../core/types'
 
 const DASHBOARD = 'https://shop.tiktok.com/streamer/live/event/dashboard'
@@ -195,11 +195,13 @@ ipcMain.handle('save-printer', (_e, name: string) => {
   try { writeFileSync(PRINTER_FILE, JSON.stringify({ printer: name })) } catch { /* ignore */ }
   return true
 })
-ipcMain.handle('print-label', async (_e, args: { labelData: LabelData; printerName: string }) => {
+ipcMain.handle('print-label', async (_e, args: { labelData: LabelData; printerName: string; template?: LabelTemplate }) => {
   let win: BrowserWindow | null = null
   try {
-    win = new BrowserWindow({ width: 220, height: 110, show: false, webPreferences: { contextIsolation: true, nodeIntegration: false } })
-    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(labelHtml(args.labelData)))
+    const template = args.template ?? DEFAULT_TEMPLATE
+    const size = LABEL_SIZES[template.labelSize] ?? LABEL_SIZES['2x1']
+    win = new BrowserWindow({ width: 240, height: 130, show: false, webPreferences: { contextIsolation: true, nodeIntegration: false } })
+    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(labelHtml(args.labelData, template)))
     await new Promise((r) => setTimeout(r, 350))
     await new Promise<void>((resolve, reject) => {
       win!.webContents.print(
@@ -208,7 +210,7 @@ ipcMain.handle('print-label', async (_e, args: { labelData: LabelData; printerNa
           printBackground: true,
           deviceName: args.printerName,
           margins: { marginType: 'none' },
-          pageSize: { width: LABEL.widthMicrons, height: LABEL.heightMicrons },
+          pageSize: { width: size.widthMicrons, height: size.heightMicrons },
         },
         (ok, reason) => (ok ? resolve() : reject(new Error(reason || 'print failed'))),
       )

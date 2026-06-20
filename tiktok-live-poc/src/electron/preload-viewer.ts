@@ -7,5 +7,6 @@ contextBridge.exposeInMainWorld('ttLive', {
 contextBridge.exposeInMainWorld('labelAPI', {
   getPrinters: () => ipcRenderer.invoke('get-printers'),
   savePrinter: (name: string) => ipcRenderer.invoke('save-printer', name),
-  print: (labelData: unknown, printerName: string) => ipcRenderer.invoke('print-label', { labelData, printerName }),
+  print: (labelData: unknown, printerName: string, template?: unknown) =>
+    ipcRenderer.invoke('print-label', { labelData, printerName, template }),
 })

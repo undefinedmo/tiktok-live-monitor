@@ -64,6 +64,21 @@
       footer#printerBar .q.printed { color: var(--green); }
       footer#printerBar .q.error { color: var(--red); }
       footer#printerBar .q.printing { color: var(--amber); }
+      .modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 100; }
+      .modal.hidden { display: none; }
+      .modal-box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; width: 440px; max-width: 92%; }
+      .modal-box h3 { margin: 0 0 14px; font-size: 15px; color: var(--txt); border: none; padding: 0; text-transform: none; letter-spacing: 0; }
+      .modal-box label { display: block; margin: 8px 0; color: var(--txt); }
+      .modal-box .fields { margin: 10px 0; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; }
+      .modal-box .fields label { display: flex; gap: 7px; align-items: center; margin: 3px 0; }
+      .modal-box select, .modal-box input[type=text] { background: var(--panel2); color: var(--txt); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: inherit; }
+      .modal-box .custom-row { display: flex; gap: 8px; margin: 8px 0; }
+      .modal-box .custom-row #setRegex { flex: 1; }
+      .modal-box .custom-row #setFlags { width: 70px; }
+      .modal-box .preview { background: var(--panel2); border-radius: 6px; padding: 9px 11px; font-size: 12px; color: var(--dim); margin: 10px 0 4px; }
+      .modal-box .preview b { color: var(--accent); }
+      .modal-actions { text-align: right; margin-top: 14px; }
+      .modal-actions button { background: var(--accent); color: #00171c; border: none; border-radius: 6px; padding: 6px 16px; font-weight: 600; cursor: pointer; }
     </style>
   </head>
   <body>
@@ -124,6 +139,7 @@
     <footer id="printerBar">
       <span>🖨</span>
       <select id="printerSel" title="Label printer"><option value="">No printer</option></select>
+      <button id="labelSettings" title="Label settings">⚙ Label</button>
       <label><input type="checkbox" id="autoPrint" /> Auto-print sales</label>
       <button id="printNext" disabled>Print Next</button>
       <input id="customNum" placeholder="#" /><button id="printCustom">Print #</button>
@@ -131,6 +147,31 @@
       <input id="rangeFrom" placeholder="from" /><input id="rangeTo" placeholder="to" /><button id="printRange">Print range</button>
       <span class="queue" id="printQueue"></span>
     </footer>
+    <div id="settingsModal" class="modal hidden">
+      <div class="modal-box">
+        <h3>Label Settings</h3>
+        <label>Label size
+          <select id="setSize">
+            <option value="1x1">1 × 1 in</option>
+            <option value="2x1">2 × 1 in</option>
+            <option value="2.25x1.25">2.25 × 1.25 in</option>
+          </select>
+        </label>
+        <div class="fields">
+          <label><input type="checkbox" id="setItemNumber" /> Item number (#)</label>
+          <label><input type="checkbox" id="setBuyer" /> Buyer</label>
+          <label><input type="checkbox" id="setProductName" /> Product name (full)</label>
+          <label><input type="checkbox" id="setPrice" /> Price</label>
+          <label><input type="checkbox" id="setCustom" /> Custom (regex extract)</label>
+        </div>
+        <div class="custom-row">
+          <input type="text" id="setRegex" placeholder="regex, e.g. (Bin [A-Z])" />
+          <input type="text" id="setFlags" placeholder="flags" title="regex flags e.g. i" />
+        </div>
+        <div class="preview">Sample: <span id="sampleTitle"></span> → extracts <b id="extractPreview">—</b></div>
+        <div class="modal-actions"><button id="closeSettings">Done</button></div>
+      </div>
+    </div>
     <script src="./renderer.js"></script>
   </body>
 </html>

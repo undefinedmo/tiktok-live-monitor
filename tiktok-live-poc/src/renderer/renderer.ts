@@ -1,17 +1,34 @@
 import flvjs from 'flv.js'
 import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuction } from '../core/types'
 
-interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string }
+interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string; title?: string }
+interface LabelTemplate {
+  labelSize: '1x1' | '2x1' | '2.25x1.25'
+  itemNumber: boolean
+  buyer: boolean
+  productName: boolean
+  price: boolean
+  custom: { enabled: boolean; regex: string; flags: string }
+}
 declare global {
   interface Window {
     ttLive: { onEvent: (cb: (ev: LiveEvent) => void) => void }
     labelAPI: {
       getPrinters: () => Promise<{ printers: { name: string; displayName: string; isDefault: boolean }[]; saved: string }>
       savePrinter: (name: string) => Promise<boolean>
-      print: (labelData: LabelData, printerName: string) => Promise<{ success: boolean; error?: string }>
+      print: (labelData: LabelData, printerName: string, template: LabelTemplate) => Promise<{ success: boolean; error?: string }>
     }
   }
 }
+
+const DEFAULT_TEMPLATE: LabelTemplate = {
+  labelSize: '2x1', itemNumber: true, buyer: true, productName: true, price: false,
+  custom: { enabled: false, regex: '', flags: '' },
+}
+let labelTemplate: LabelTemplate = (() => {
+  try { return { ...DEFAULT_TEMPLATE, ...JSON.parse(localStorage.getItem('tt-label-template') || '{}') } } catch { return DEFAULT_TEMPLATE }
+})()
+const saveTemplate = () => localStorage.setItem('tt-label-template', JSON.stringify(labelTemplate))
 
 const $ = (id: string) => document.getElementById(id)!
 const txt = (s: string) => document.createTextNode(s)
@@ -206,7 +223,7 @@ async function printLabel(data: LabelData) {
   if (printQueue.length > 30) printQueue.pop()
   renderQueue()
   try {
-    const res = await window.labelAPI.print(data, selectedPrinter)
+    const res = await window.labelAPI.print(data, selectedPrinter, labelTemplate)
     entry.status = res.success ? 'printed' : 'error'
     const n = Number(data.itemNumber)
     if (res.success && Number.isFinite(n)) { lastPrintedNumber = n; updatePrintNext() }
@@ -218,7 +235,8 @@ async function printLabel(data: LabelData) {
 
 function printSale(s: Sale) {
   const num = (s.skuDesc ?? '').replace(/^#/, '')
-  printLabel({ itemNumber: num, buyer: s.buyer.username || s.buyer.handle, productName: s.productName, price: s.price.formatted })
+  const title = `${s.skuDesc ? s.skuDesc + ' ' : ''}${s.productName}` // for the regex extractor
+  printLabel({ itemNumber: num, buyer: s.buyer.username || s.buyer.handle, productName: s.productName, price: s.price.formatted, title })
 }
 
 function updatePrintNext() {
@@ -261,6 +279,55 @@ async function setupPrinting() {
   })
 }
 void setupPrinting()
+
+// ── Label settings modal (field toggles + regex extractor) ──────────────────
+function setupSettings() {
+  const inp = (id: string) => document.getElementById(id) as HTMLInputElement
+  const sel = (id: string) => document.getElementById(id) as HTMLSelectElement
+  const sample = '#141 Bin A - Alo Yoga and More, No Cancels'
+  const sampleEl = document.getElementById('sampleTitle')
+  if (sampleEl) sampleEl.textContent = `"${sample}"`
+
+  sel('setSize').value = labelTemplate.labelSize
+  inp('setItemNumber').checked = labelTemplate.itemNumber
+  inp('setBuyer').checked = labelTemplate.buyer
+  inp('setProductName').checked = labelTemplate.productName
+  inp('setPrice').checked = labelTemplate.price
+  inp('setCustom').checked = labelTemplate.custom.enabled
+  inp('setRegex').value = labelTemplate.custom.regex
+  inp('setFlags').value = labelTemplate.custom.flags
+
+  const preview = () => {
+    const out = document.getElementById('extractPreview')!
+    if (!labelTemplate.custom.regex) { out.textContent = '—'; return }
+    try {
+      const m = sample.match(new RegExp(labelTemplate.custom.regex, labelTemplate.custom.flags))
+      out.textContent = m ? (m[1] ?? m[0]) || '(empty)' : '(no match)'
+    } catch {
+      out.textContent = '(invalid regex)'
+    }
+  }
+  const apply = () => {
+    labelTemplate = {
+      labelSize: sel('setSize').value as LabelTemplate['labelSize'],
+      itemNumber: inp('setItemNumber').checked,
+      buyer: inp('setBuyer').checked,
+      productName: inp('setProductName').checked,
+      price: inp('setPrice').checked,
+      custom: { enabled: inp('setCustom').checked, regex: inp('setRegex').value, flags: inp('setFlags').value },
+    }
+    saveTemplate()
+    preview()
+  }
+  for (const id of ['setSize', 'setItemNumber', 'setBuyer', 'setProductName', 'setPrice', 'setCustom', 'setRegex', 'setFlags']) {
+    document.getElementById(id)?.addEventListener('input', apply)
+    document.getElementById(id)?.addEventListener('change', apply)
+  }
+  preview()
+  document.getElementById('labelSettings')?.addEventListener('click', () => document.getElementById('settingsModal')?.classList.remove('hidden'))
+  document.getElementById('closeSettings')?.addEventListener('click', () => document.getElementById('settingsModal')?.classList.add('hidden'))
+}
+setupSettings()
 
 window.ttLive.onEvent((ev: LiveEvent) => {
   switch (ev.kind) {
