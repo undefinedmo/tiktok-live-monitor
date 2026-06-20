@@ -49,6 +49,18 @@
       .auction .meta { color: var(--dim); font-size: 12px; }
       .rank { color: var(--dim); width: 18px; text-align: right; }
       .empty { color: var(--dim); padding: 14px 12px; font-style: italic; }
+      .printbtn { background: var(--panel2); color: var(--accent); border: 1px solid var(--line); border-radius: 5px; cursor: pointer; font-size: 12px; padding: 2px 7px; flex: none; }
+      footer#printerBar { display: flex; align-items: center; gap: 10px; padding: 7px 14px; background: #0b0f14; border-top: 1px solid var(--line); font-size: 12px; flex-wrap: wrap; }
+      footer#printerBar select, footer#printerBar input, footer#printerBar button { background: var(--panel2); color: var(--txt); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font: inherit; }
+      footer#printerBar input { width: 56px; }
+      footer#printerBar button { cursor: pointer; }
+      footer#printerBar button:disabled { opacity: .45; cursor: default; }
+      footer#printerBar .sep { color: var(--dim); }
+      footer#printerBar .queue { margin-left: auto; color: var(--dim); display: flex; gap: 10px; overflow: hidden; }
+      footer#printerBar .q { white-space: nowrap; }
+      footer#printerBar .q.printed { color: var(--green); }
+      footer#printerBar .q.error { color: var(--red); }
+      footer#printerBar .q.printing { color: var(--amber); }
     </style>
   </head>
   <body>
@@ -98,6 +110,16 @@
         </div>
       </div>
     </main>
+    <footer id="printerBar">
+      <span>🖨</span>
+      <select id="printerSel" title="Label printer"><option value="">No printer</option></select>
+      <label><input type="checkbox" id="autoPrint" /> Auto-print sales</label>
+      <button id="printNext" disabled>Print Next</button>
+      <input id="customNum" placeholder="#" /><button id="printCustom">Print #</button>
+      <span class="sep">Range</span>
+      <input id="rangeFrom" placeholder="from" /><input id="rangeTo" placeholder="to" /><button id="printRange">Print range</button>
+      <span class="queue" id="printQueue"></span>
+    </footer>
     <script src="./renderer.js"></script>
   </body>
 </html>

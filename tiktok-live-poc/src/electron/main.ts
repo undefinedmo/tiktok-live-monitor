@@ -1,11 +1,12 @@
 import { app, BrowserWindow, ipcMain, session } from 'electron'
 import { join } from 'node:path'
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { gunzipSync } from 'node:zlib'
 import { parsePushFrame } from '../core/pushFrame'
 import { LiveFeed } from '../core/liveFeed'
 import { parseRoster } from '../core/roster'
 import { AuctionResults } from '../core/auctionResults'
+import { labelHtml, LABEL, type LabelData } from './label'
 import type { LiveEvent, StatusEvent } from '../core/types'
 
 const DASHBOARD = 'https://shop.tiktok.com/streamer/live/event/dashboard'
@@ -165,6 +166,49 @@ function replayFixtures() {
     console.error('replay failed:', (e as Error).message)
   }
 }
+
+// ── Label printing (mirrors the desktop app: webContents.print of HTML) ──────
+const PRINTER_FILE = join(app.getPath('userData'), 'tt-printer.json')
+function loadPrinter(): string {
+  try { return JSON.parse(readFileSync(PRINTER_FILE, 'utf8')).printer ?? '' } catch { return '' }
+}
+
+ipcMain.handle('get-printers', async () => {
+  const printers = (await viewer?.webContents.getPrintersAsync()) ?? []
+  return {
+    printers: printers.map((p) => ({ name: p.name, displayName: p.displayName, isDefault: p.isDefault })),
+    saved: loadPrinter(),
+  }
+})
+ipcMain.handle('save-printer', (_e, name: string) => {
+  try { writeFileSync(PRINTER_FILE, JSON.stringify({ printer: name })) } catch { /* ignore */ }
+  return true
+})
+ipcMain.handle('print-label', async (_e, args: { labelData: LabelData; printerName: string }) => {
+  let win: BrowserWindow | null = null
+  try {
+    win = new BrowserWindow({ width: 220, height: 110, show: false, webPreferences: { contextIsolation: true, nodeIntegration: false } })
+    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(labelHtml(args.labelData)))
+    await new Promise((r) => setTimeout(r, 350))
+    await new Promise<void>((resolve, reject) => {
+      win!.webContents.print(
+        {
+          silent: true,
+          printBackground: true,
+          deviceName: args.printerName,
+          margins: { marginType: 'none' },
+          pageSize: { width: LABEL.widthMicrons, height: LABEL.heightMicrons },
+        },
+        (ok, reason) => (ok ? resolve() : reject(new Error(reason || 'print failed'))),
+      )
+    })
+    return { success: true }
+  } catch (e) {
+    return { success: false, error: (e as Error).message }
+  } finally {
+    win?.close()
+  }
+})
 
 app.whenReady().then(() => {
   app.userAgentFallback = CHROME_UA

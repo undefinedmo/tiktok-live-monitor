@@ -1,8 +1,14 @@
 import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuction } from '../core/types'
 
+interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string }
 declare global {
   interface Window {
     ttLive: { onEvent: (cb: (ev: LiveEvent) => void) => void }
+    labelAPI: {
+      getPrinters: () => Promise<{ printers: { name: string; displayName: string; isDefault: boolean }[]; saved: string }>
+      savePrinter: (name: string) => Promise<boolean>
+      print: (labelData: LabelData, printerName: string) => Promise<{ success: boolean; error?: string }>
+    }
   }
 }
 
@@ -80,6 +86,10 @@ function renderFeed(sales: Sale[]) {
     row.appendChild(who)
     row.appendChild(el('div', 'price' + (s.paymentStatus === 'failed' ? ' failed' : ''), s.price.formatted))
     row.appendChild(el('div', 'time', ago(s.createdAt)))
+    const pb = el('button', 'printbtn', '🖨') as HTMLButtonElement
+    pb.title = 'Print label'
+    pb.addEventListener('click', () => printSale(s))
+    row.appendChild(pb)
     feed.appendChild(row)
   }
 }
@@ -152,6 +162,88 @@ function renderAuction(p?: PinnedAuction) {
   tickCountdown()
 }
 
+// ── Label printing (mirrors the desktop Live Monitor) ───────────────────────
+let selectedPrinter = ''
+let autoPrint = false
+let lastPrintedNumber: number | null = null
+let seedMaxCreatedAt: number | null = null
+const printQueue: { label: string; status: 'printing' | 'printed' | 'error' }[] = []
+
+function renderQueue() {
+  const q = $('printQueue')
+  q.replaceChildren()
+  for (const item of printQueue.slice(0, 6)) {
+    const icon = item.status === 'printed' ? '✓' : item.status === 'error' ? '✗' : '…'
+    q.appendChild(el('span', 'q ' + item.status, `${icon} ${item.label}`))
+  }
+}
+
+async function printLabel(data: LabelData) {
+  if (!selectedPrinter) return
+  const entry: { label: string; status: 'printing' | 'printed' | 'error' } = {
+    label: `#${data.itemNumber}${data.buyer ? ' ' + data.buyer : ''}`,
+    status: 'printing',
+  }
+  printQueue.unshift(entry)
+  if (printQueue.length > 30) printQueue.pop()
+  renderQueue()
+  try {
+    const res = await window.labelAPI.print(data, selectedPrinter)
+    entry.status = res.success ? 'printed' : 'error'
+    const n = Number(data.itemNumber)
+    if (res.success && Number.isFinite(n)) { lastPrintedNumber = n; updatePrintNext() }
+  } catch {
+    entry.status = 'error'
+  }
+  renderQueue()
+}
+
+function printSale(s: Sale) {
+  const num = (s.skuDesc ?? '').replace(/^#/, '')
+  printLabel({ itemNumber: num, buyer: s.buyer.username || s.buyer.handle, productName: s.productName, price: s.price.formatted })
+}
+
+function updatePrintNext() {
+  const btn = $('printNext') as HTMLButtonElement
+  btn.textContent = lastPrintedNumber !== null ? `Print Next (#${lastPrintedNumber + 1})` : 'Print Next'
+  btn.disabled = lastPrintedNumber === null || !selectedPrinter
+}
+
+async function setupPrinting() {
+  const { printers, saved } = await window.labelAPI.getPrinters()
+  console.log(`[render] printers: [${printers.map((p) => p.name).join(', ')}] saved="${saved}"`)
+  const sel = $('printerSel') as HTMLSelectElement
+  for (const p of printers) {
+    const opt = document.createElement('option')
+    opt.value = p.name
+    opt.textContent = p.displayName + (p.isDefault ? ' (default)' : '')
+    sel.appendChild(opt)
+  }
+  selectedPrinter = saved || printers.find((p) => p.isDefault)?.name || ''
+  sel.value = selectedPrinter
+  autoPrint = localStorage.getItem('tt-autoprint') === '1'
+  ;($('autoPrint') as HTMLInputElement).checked = autoPrint
+  updatePrintNext()
+
+  sel.addEventListener('change', () => { selectedPrinter = sel.value; void window.labelAPI.savePrinter(selectedPrinter); updatePrintNext() })
+  ;($('autoPrint') as HTMLInputElement).addEventListener('change', (e) => {
+    autoPrint = (e.target as HTMLInputElement).checked
+    localStorage.setItem('tt-autoprint', autoPrint ? '1' : '0')
+  })
+  $('printNext').addEventListener('click', () => { if (lastPrintedNumber !== null) void printLabel({ itemNumber: String(lastPrintedNumber + 1) }) })
+  $('printCustom').addEventListener('click', () => {
+    const v = ($('customNum') as HTMLInputElement).value.replace(/^#/, '').trim()
+    if (v) void printLabel({ itemNumber: v })
+  })
+  $('printRange').addEventListener('click', async () => {
+    const from = parseInt(($('rangeFrom') as HTMLInputElement).value, 10)
+    const to = parseInt(($('rangeTo') as HTMLInputElement).value, 10)
+    if (!Number.isFinite(from) || !Number.isFinite(to) || from > to || to - from > 500) return
+    for (let n = from; n <= to; n++) await printLabel({ itemNumber: String(n) })
+  })
+}
+void setupPrinting()
+
 window.ttLive.onEvent((ev: LiveEvent) => {
   switch (ev.kind) {
     case 'status':
@@ -190,7 +282,7 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       $('itemsSold').textContent = String(ev.totalSold) // REST fallback when no WS
       console.log(`[render] roster: products=${ev.products.length} sold=${ev.totalSold} auction="${$('currentAuction').textContent?.slice(0, 40)}"`)
       break
-    case 'sales':
+    case 'sales': {
       lastByProduct = ev.byProduct
       renderProductsTable()
       renderFeed(ev.recentSales)
@@ -200,7 +292,19 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       // Failed-Payments card = sum of the per-product failed column (one source).
       $('failed').textContent = String(ev.failedPayments.length)
       if (!gmvFromWs) $('gmv').textContent = `$${(ev.totalCents / 100).toFixed(2)}`
+      // Auto-print: skip the initial backfill (seed on the first poll), then
+      // print labels for genuinely-new, non-failed sales as they arrive.
+      const maxCreated = ev.recentSales.reduce((m, s) => Math.max(m, s.createdAt), 0)
+      if (seedMaxCreatedAt === null) {
+        seedMaxCreatedAt = maxCreated
+      } else if (autoPrint && selectedPrinter) {
+        for (const s of ev.newSales) {
+          if (s.paymentStatus !== 'failed' && s.createdAt > seedMaxCreatedAt) printSale(s)
+        }
+        seedMaxCreatedAt = Math.max(seedMaxCreatedAt, maxCreated)
+      }
       console.log(`[render] sales: feed=${ev.recentSales.length} buyers=${ev.uniqueBuyers} failed=${ev.failedPayments.length} byProduct=${JSON.stringify(ev.byProduct.map((p) => [p.productName.slice(-6), p.paid, p.failed, p.pending]))}`)
       break
+    }
   }
 })
