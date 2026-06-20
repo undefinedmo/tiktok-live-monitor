@@ -72,6 +72,13 @@ export interface RoomEvent {
   ts: number
 }
 
+/** The live HTTP-FLV pull URL (signed, expiring) from insights room/status. */
+export interface StreamEvent {
+  kind: 'stream'
+  url: string
+  ts: number
+}
+
 // ─── Source 2: auction roster (added_auction_product/list) ───────────────────
 
 export interface RosterProduct {
@@ -180,6 +187,7 @@ export type LiveEvent =
   | CoreStatsEvent
   | SessionEvent
   | RoomEvent
+  | StreamEvent
   | RosterSnapshot
   | SalesUpdate
   | StatusEvent

@@ -34,6 +34,7 @@ window.WebSocket = function (this: unknown, url: string | URL, protocols?: strin
 function endpointOf(url: string): string | null {
   if (/live_auction\/auction_result\/get/.test(url)) return 'auction_result'
   if (/added_auction_product\/list/.test(url)) return 'roster'
+  if (/live\/detail\/room\/status/.test(url)) return 'room_status'
   return null
 }
 
@@ -84,8 +85,17 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
   // per-product / per-buyer / failed-payment rollups are complete on long shows.
   // Each page's response is forwarded to main by the fetch hook above; the core
   // dedupes by order_id, so re-fetched pages are harmless.
+  // insights/room/status is a DIFFERENT app than the streamer_desktop endpoints
+  // (aid=4068 i18n_ecom_shop, vertical=3) — using the alliance aid errors 98001xxx.
+  const qStatus = `?user_language=en&locale=en&aid=4068&app_name=i18n_ecom_shop&device_platform=web&cookie_enabled=true&timezone_name=America/Chicago&vertical=3&carrier_region=us`
+  const statusUrl = `https://shop.tiktok.com/api/v1/insights/workbench/live/detail/room/status${qStatus}`
+  let statusTick = 0
   const cycle = async () => {
     void window.fetch(`${base}/added_auction_product/list${q}`, post({ room_id: cfg.roomId, session_id: cfg.sessionId, page_scene: 1, offset: 0, count: 100, auction_page_type: 0 })).catch(() => {})
+    // refresh the live video URL every ~5 cycles (~15s) — it is signed/expiring.
+    if (statusTick++ % 5 === 0) {
+      void window.fetch(statusUrl, post({ request: { room_filter: { room_id: cfg.roomId } } })).catch(() => {})
+    }
     let offset = 0
     for (let guard = 0; guard < 30; guard++) {
       let res: Response

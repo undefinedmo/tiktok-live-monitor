@@ -1,3 +1,4 @@
+import flvjs from 'flv.js'
 import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuction } from '../core/types'
 
 interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string }
@@ -162,6 +163,23 @@ function renderAuction(p?: PinnedAuction) {
   tickCountdown()
 }
 
+// ── Live video (HTTP-FLV via flv.js) ────────────────────────────────────────
+let flvPlayer: flvjs.Player | null = null
+let lastStreamUrl = ''
+function loadStream(url: string) {
+  lastStreamUrl = url
+  const video = document.getElementById('live') as HTMLVideoElement | null
+  if (!video || !flvjs.isSupported()) return
+  if (flvPlayer) { try { flvPlayer.destroy() } catch { /* ignore */ } flvPlayer = null }
+  console.log(`[render] flv loading ${url.slice(0, 60)} supported=${flvjs.isSupported()}`)
+  flvPlayer = flvjs.createPlayer({ type: 'flv', url, isLive: true, cors: true }, { enableStashBuffer: false })
+  flvPlayer.attachMediaElement(video)
+  flvPlayer.on(flvjs.Events.ERROR, (a: string, b: string) => { console.log(`[render] flv error ${a} ${b}`); window.setTimeout(() => loadStream(lastStreamUrl), 2500) })
+  video.addEventListener('playing', () => console.log('[render] flv PLAYING'), { once: true })
+  flvPlayer.load()
+  void video.play().catch(() => {})
+}
+
 // ── Label printing (mirrors the desktop Live Monitor) ───────────────────────
 let selectedPrinter = ''
 let autoPrint = false
@@ -252,6 +270,10 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       break
     case 'room':
       $('room').textContent = ev.roomId
+      break
+    case 'stream':
+      if (!flvPlayer) loadStream(ev.url) // load once; keep latest URL for reload-on-error
+      else lastStreamUrl = ev.url
       break
     case 'session':
       sessionName = ev.name ?? '—'

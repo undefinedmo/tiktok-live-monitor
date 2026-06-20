@@ -54,7 +54,12 @@ function createViewer() {
   viewer = new BrowserWindow({
     width: 1200,
     height: 900,
-    webPreferences: { preload: join(__dirname, 'preload-viewer.cjs') },
+    webPreferences: {
+      preload: join(__dirname, 'preload-viewer.cjs'),
+      // Lets flv.js fetch the cross-origin, http:// live FLV from the file://
+      // viewer page. PoC-only — a production app would proxy the stream.
+      webSecurity: false,
+    },
   })
   if (process.env.TT_DEBUG) {
     viewer.webContents.on('console-message', (_e, _level, message) => {
@@ -150,6 +155,12 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
     const update = auctionResults.ingest(json, now)
     debug(`[tt] sales: +${update.newSales.length} new, ${update.totalSales} total, ${update.uniqueBuyers} buyers, ${update.failedPayments.length} failed`)
     send(update)
+  } else if (msg?.endpoint === 'room_status') {
+    const url = (json as { data?: { live_stream_url?: string } })?.data?.live_stream_url
+    if (url) {
+      debug(`[tt] stream ${url.slice(0, 70)}`)
+      send({ kind: 'stream', url, ts: now })
+    }
   }
 })
 
