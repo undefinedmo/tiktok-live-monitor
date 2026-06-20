@@ -24,8 +24,9 @@
       .card.alert .val { color: var(--red); }
       main { flex: 1; display: grid; grid-template-columns: 1.6fr 1fr; gap: 12px; padding: 0 14px 12px; min-height: 0; }
       .col { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
-      #productsRow { padding: 0 14px 12px; height: 200px; display: flex; }
+      #productsRow { padding: 0 14px 12px; height: 190px; display: flex; }
       #productsRow .panel { flex: 1; }
+      #rightCol { overflow-y: auto; }
       .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; min-height: 0; }
       .panel > h3 { margin: 0; padding: 9px 12px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; }
       .panel > .body { overflow: auto; padding: 4px 0; }
@@ -94,10 +95,10 @@
           <div class="body" id="feed"><div class="empty">Waiting for sales… (open the live/auction view in the monitor window)</div></div>
         </div>
       </div>
-      <div class="col">
+      <div class="col" id="rightCol">
         <div class="panel" style="flex:none">
           <h3>Live</h3>
-          <div style="height:200px; background:#000; overflow:hidden;">
+          <div style="height:160px; background:#000; overflow:hidden;">
             <video id="live" muted autoplay playsinline controls style="width:100%; height:100%; object-fit:contain; display:block;"></video>
           </div>
         </div>
@@ -105,9 +106,9 @@
           <h3>Current Auction</h3>
           <div class="auction" id="currentAuction"><div class="empty">No active auction</div></div>
         </div>
-        <div class="panel" style="flex:1; min-height:160px">
+        <div class="panel" style="flex:none">
           <h3>Top Buyers</h3>
-          <div class="body"><table><tbody id="topBuyers"></tbody></table></div>
+          <div class="body" style="max-height:320px"><table><tbody id="topBuyers"></tbody></table></div>
         </div>
       </div>
     </main>
