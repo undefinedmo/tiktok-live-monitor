@@ -1,28 +1,49 @@
 import { app, BrowserWindow, ipcMain, session } from 'electron'
 import { join } from 'node:path'
-import { decodeFrame } from '../core/decoder'
-import { mapCreatorMessage, parseManagerEnrichment } from '../core/mapper'
-import { RosterDiffer } from '../core/rosterDiffer'
-import { SaleDeduper } from '../core/normalizer'
+import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
+import { gunzipSync } from 'node:zlib'
+import { parsePushFrame } from '../core/pushFrame'
+import { LiveFeed } from '../core/liveFeed'
+import { parseRoster } from '../core/roster'
+import { AuctionResults } from '../core/auctionResults'
 import type { LiveEvent, StatusEvent } from '../core/types'
 
 const DASHBOARD = 'https://shop.tiktok.com/streamer/live/event/dashboard'
-// Where the monitor window first opens. Set TT_START_URL to log in via Seller
-// Center (https://seller-us.tiktok.com/) — its TikTok SSO session also covers the
-// streamer dashboard, so a later launch onto DASHBOARD is already authenticated.
+// Set TT_START_URL to log in via Seller Center (https://seller-us.tiktok.com/) —
+// its TikTok SSO session also covers the streamer dashboard.
 const START_URL = process.env.TT_START_URL || DASHBOARD
 const LOGIN_RE = /\/(login|passport|account\/login)/
-
-// TikTok's login/anti-bot keys off the User-Agent; the default Electron UA
-// (which contains "Electron/…") triggers ticket-expired/refusal flows. Present
-// as a normal Chrome-on-Windows browser (matches what real captures showed).
 const CHROME_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36'
 
 let viewer: BrowserWindow | null = null
 let monitor: BrowserWindow | null = null
-const differ = new RosterDiffer()
-const deduper = new SaleDeduper()
+const feed = new LiveFeed()
+const auctionResults = new AuctionResults()
+let connected = false
+
+// Once the WS stream yields room_id + session_id, tell the preload to start
+// polling the roster + sale-history REST endpoints itself.
+let pollRoomId: string | undefined
+let pollSessionId: string | undefined
+let pollSent = false
+function maybeStartPolling() {
+  if (pollSent || !pollRoomId || !pollSessionId || !monitor) return
+  pollSent = true
+  debug(`[tt] start polling room=${pollRoomId} session=${pollSessionId}`)
+  monitor.webContents.send('tt-poll-config', { roomId: pollRoomId, sessionId: pollSessionId })
+}
+
+// Optional raw capture for offline analysis (TT_CAPTURE=1).
+const CAP_DIR = join(__dirname, '..', 'capture')
+const CAP_WS = process.env.TT_CAPTURE ? join(CAP_DIR, 'ws-raw.ndjson') : null
+const CAP_REST = process.env.TT_CAPTURE ? join(CAP_DIR, 'rest.ndjson') : null
+if (process.env.TT_CAPTURE) { try { mkdirSync(CAP_DIR, { recursive: true }) } catch { /* ignore */ } }
+function capture(file: string | null, rec: unknown) {
+  if (!file) return
+  try { appendFileSync(file, JSON.stringify(rec) + '\n') } catch { /* ignore */ }
+}
+const debug = (line: string) => { if (process.env.TT_DEBUG) console.log(line) }
 
 function send(ev: LiveEvent) {
   viewer?.webContents.send('tt-live-event', ev)
@@ -30,10 +51,15 @@ function send(ev: LiveEvent) {
 
 function createViewer() {
   viewer = new BrowserWindow({
-    width: 1100,
-    height: 800,
+    width: 1200,
+    height: 900,
     webPreferences: { preload: join(__dirname, 'preload-viewer.cjs') },
   })
+  if (process.env.TT_DEBUG) {
+    viewer.webContents.on('console-message', (_e, _level, message) => {
+      if (message.startsWith('[render]')) console.log('[viewer]', message)
+    })
+  }
   void viewer.loadFile(join(__dirname, 'index.html'))
 }
 
@@ -44,30 +70,18 @@ function createMonitor() {
     height: 860,
     webPreferences: {
       session: part,
-      // The preload must share the page's main world to observe the page's own
-      // XMLHttpRequest (signed by TikTok's SDK). Production should instead inject
-      // a main-world script (like desktop/electron/whatnot-monitor-preload.ts).
+      // Preload must share the page's main world to wrap its WebSocket + XHR/fetch.
       contextIsolation: false,
       sandbox: false,
       preload: join(__dirname, 'preload.cjs'),
     },
   })
-  // Let TikTok's login/captcha popups open as child windows that share this
-  // partition (so the auth ticket round-trips in the same session). Restrict to
-  // TikTok origins and keep popups at secure defaults — only the main monitor
-  // window needs the relaxed isolation (for the XHR hook).
   monitor.webContents.setWindowOpenHandler(({ url }) => {
     let host = ''
-    try {
-      host = new URL(url).hostname.toLowerCase()
-    } catch {
-      return { action: 'deny' }
-    }
+    try { host = new URL(url).hostname.toLowerCase() } catch { return { action: 'deny' } }
     const allowed =
-      host === 'tiktok.com' ||
-      host.endsWith('.tiktok.com') ||
-      host === 'tiktokv.com' ||
-      host.endsWith('.tiktokv.com')
+      host === 'tiktok.com' || host.endsWith('.tiktok.com') ||
+      host === 'tiktokv.com' || host.endsWith('.tiktokv.com')
     if (!allowed) return { action: 'deny' }
     return {
       action: 'allow',
@@ -78,42 +92,87 @@ function createMonitor() {
   })
   void monitor.loadURL(START_URL)
   monitor.webContents.on('did-navigate', (_e, url) => {
+    debug(`[tt] nav ${url}`)
     if (LOGIN_RE.test(url)) {
+      connected = false
       send({ kind: 'status', status: 'needs-login', detail: 'Log in to TikTok in the monitor window' })
     }
   })
+  monitor.webContents.on('did-navigate-in-page', (_e, url) => debug(`[tt] nav-in-page ${url}`))
+  monitor.webContents.on('did-finish-load', () => debug(`[tt] loaded ${monitor?.webContents.getURL() ?? ''}`))
 }
 
 ipcMain.on('tt-status', (_e, s: { status: StatusEvent['status']; detail?: string }) => {
   send({ kind: 'status', status: s.status, detail: s.detail })
 })
 
-ipcMain.on('tt-stream-frame', (_e, bytes: Uint8Array) => {
-  for (const msg of decodeFrame(bytes)) {
-    if (msg.method === 'WebcastOecLiveCreatorMessage') {
-      const ev = mapCreatorMessage(msg.payload)
-      if (ev) {
-        if (ev.kind === 'sale' && !deduper.accept(ev)) continue
-        send(ev)
+// Source 1: frontier WebSocket → aggregate live stats.
+ipcMain.on('tt-ws-frame', (_e, msg: { url?: string; data?: Uint8Array }) => {
+  const raw = msg?.data instanceof Uint8Array ? msg.data : new Uint8Array(msg?.data ?? [])
+  capture(CAP_WS, { url: msg?.url ?? '', bytes: raw.byteLength, b64: Buffer.from(raw).toString('base64') })
+  const frame = parsePushFrame(raw)
+  if (!frame) return
+  let buf = Buffer.from(frame.payload)
+  if (frame.payloadEncoding === 'gzip' || (buf[0] === 0x1f && buf[1] === 0x8b)) {
+    try { buf = gunzipSync(buf) } catch { return }
+  }
+  let payload: unknown
+  try { payload = JSON.parse(buf.toString('utf8')) } catch { return }
+  for (const ev of feed.ingest(payload, Date.now())) {
+    if (ev.kind === 'room') {
+      pollRoomId = ev.roomId
+      if (!connected) {
+        connected = true
+        send({ kind: 'status', status: 'connected', detail: `room ${ev.roomId}` })
       }
-    } else if (msg.method === 'WebcastOecLiveManagerMessage') {
-      const enrich = parseManagerEnrichment(msg.payload)
-      if (enrich.buyer) {
-        send({ kind: 'status', status: 'connected', detail: `high bidder: @${enrich.buyer.username}` })
-      }
+      maybeStartPolling()
+    } else if (ev.kind === 'session' && ev.id) {
+      pollSessionId = ev.id
+      maybeStartPolling()
     }
+    send(ev)
   }
 })
 
-ipcMain.on('tt-roster', (_e, raw: unknown) => {
-  const { snapshot, sales } = differ.ingest(raw as Parameters<RosterDiffer['ingest']>[0], Date.now())
-  send(snapshot)
-  for (const s of sales) if (deduper.accept(s)) send(s)
+// Sources 2 & 3: REST poll responses → roster + per-sale history.
+ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
+  capture(CAP_REST, { endpoint: msg?.endpoint, body: msg?.body })
+  let json: unknown
+  try { json = JSON.parse(msg?.body ?? '') } catch { return }
+  const now = Date.now()
+  debug(`[tt] rest ${msg?.endpoint} code=${(json as { code?: unknown })?.code} len=${msg?.body?.length ?? 0}`)
+  if (msg?.endpoint === 'roster') {
+    const snap = parseRoster(json, now)
+    debug(`[tt] roster: ${snap.products.length} products, sold ${snap.totalSold}, pinned @${snap.pinned?.winUsername ?? '—'}`)
+    send(snap)
+  } else if (msg?.endpoint === 'auction_result') {
+    const update = auctionResults.ingest(json, now)
+    debug(`[tt] sales: +${update.newSales.length} new, ${update.totalSales} total, ${update.uniqueBuyers} buyers, ${update.failedPayments.length} failed`)
+    send(update)
+  }
 })
+
+// TT_REPLAY=1 — feed the bundled real fixtures into the viewer (no live needed),
+// to see/verify the full Live Monitor render without a running show.
+function replayFixtures() {
+  try {
+    const rest = JSON.parse(readFileSync(join(__dirname, '..', 'fixtures', 'rest-samples.json'), 'utf8'))
+    send({ kind: 'status', status: 'connected', detail: 'REPLAY (HAR fixture)' })
+    send({ kind: 'session', name: 'Alo Yoga & More — No Cancels (replay)', id: '4384835334', ts: Date.now() })
+    send(parseRoster(rest.roster, Date.now()))
+    send(auctionResults.ingest({ auction_result_data: rest.auctionResultRows }, Date.now()))
+  } catch (e) {
+    console.error('replay failed:', (e as Error).message)
+  }
+}
 
 app.whenReady().then(() => {
   app.userAgentFallback = CHROME_UA
   createViewer()
-  createMonitor()
+  if (process.env.TT_REPLAY) {
+    setTimeout(replayFixtures, 1200)
+  } else {
+    createMonitor()
+  }
 })
 app.on('window-all-closed', () => app.quit())

@@ -1,4 +1,4 @@
-import type { LiveEvent } from '../core/types'
+import type { LiveEvent, Sale, BuyerAgg, RosterProduct, PinnedAuction } from '../core/types'
 
 declare global {
   interface Window {
@@ -7,54 +7,128 @@ declare global {
 }
 
 const $ = (id: string) => document.getElementById(id)!
-let derivedSold = 0
-let rosterSold = 0
-
-function addFeed(text: string) {
-  const div = document.createElement('div')
-  div.className = 'row'
-  div.textContent = text
-  $('events').prepend(div)
+const txt = (s: string) => document.createTextNode(s)
+function el(tag: string, className?: string, text?: string): HTMLElement {
+  const e = document.createElement(tag)
+  if (className) e.className = className
+  if (text !== undefined) e.textContent = text
+  return e
+}
+function avatar(url?: string): HTMLImageElement {
+  const img = document.createElement('img')
+  img.className = 'avatar'
+  img.referrerPolicy = 'no-referrer'
+  if (url) img.src = url
+  img.addEventListener('error', () => { img.style.visibility = 'hidden' })
+  return img
+}
+function ago(ms: number): string {
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000))
+  if (s < 60) return `${s}s`
+  if (s < 3600) return `${Math.floor(s / 60)}m`
+  return `${Math.floor(s / 3600)}h`
 }
 
-function refreshTotals() {
-  $('derivedSold').textContent = String(derivedSold)
-  $('rosterSold').textContent = String(rosterSold)
-  const m = $('match')
-  const ok = derivedSold === rosterSold
-  m.textContent = ok ? 'match' : `MISMATCH (Δ ${derivedSold - rosterSold})`
-  m.className = ok ? 'ok' : 'bad'
+let failedFromSales: number | null = null
+let gmvFromWs = false
+
+function renderFeed(sales: Sale[]) {
+  const feed = $('feed')
+  feed.replaceChildren()
+  if (!sales.length) { feed.appendChild(el('div', 'empty', 'Waiting for sales…')); return }
+  for (const s of sales) {
+    const row = el('div', 'feed-row' + (s.paymentSuccessful ? '' : ' failed'))
+    row.appendChild(avatar(s.buyer.avatarUrl))
+    const who = el('div', 'who')
+    const name = el('div', 'name')
+    name.appendChild(txt(s.buyer.username || s.buyer.handle || '—'))
+    if (!s.paymentSuccessful) name.appendChild(el('span', 'badge', ' FAILED'))
+    who.appendChild(name)
+    who.appendChild(el('div', 'item', `${s.skuDesc ? s.skuDesc + ' · ' : ''}${s.productName}`))
+    row.appendChild(who)
+    row.appendChild(el('div', 'price' + (s.paymentSuccessful ? '' : ' failed'), s.price.formatted))
+    row.appendChild(el('div', 'time', ago(s.createdAt)))
+    feed.appendChild(row)
+  }
+}
+
+function renderTopBuyers(buyers: BuyerAgg[]) {
+  const tb = $('topBuyers')
+  tb.replaceChildren()
+  buyers.slice(0, 8).forEach((b, i) => {
+    const tr = document.createElement('tr')
+    tr.appendChild(el('td', 'rank', String(i + 1)))
+    const td = el('td')
+    td.appendChild(avatar(b.avatarUrl))
+    td.style.display = 'flex'
+    td.style.alignItems = 'center'
+    td.style.gap = '8px'
+    td.appendChild(txt(b.username || b.handle || '—'))
+    tr.appendChild(td)
+    tr.appendChild(el('td', 'n', String(b.itemCount)))
+    tr.appendChild(el('td', 'n', `$${(b.totalCents / 100).toFixed(2)}`))
+    tb.appendChild(tr)
+  })
+}
+
+function renderProducts(products: RosterProduct[]) {
+  const pt = $('products')
+  pt.replaceChildren()
+  for (const p of [...products].sort((a, b) => b.numSold - a.numSold)) {
+    const tr = document.createElement('tr')
+    tr.appendChild(el('td', undefined, p.name))
+    tr.appendChild(el('td', 'n', String(p.numSold)))
+    tr.appendChild(el('td', 'n', String(p.numFailed)))
+    pt.appendChild(tr)
+  }
+}
+
+function renderAuction(p?: PinnedAuction) {
+  const box = $('currentAuction')
+  box.replaceChildren()
+  if (!p || !p.winUsername) { box.appendChild(el('div', 'empty', 'No active auction')); return }
+  box.appendChild(el('div', 'pname', p.productName))
+  box.appendChild(el('div', 'bid', p.maxBiddingPrice ?? '—'))
+  box.appendChild(el('div', 'meta', `high bidder @${p.winUsername} · ${p.numBids ?? 0} bids`))
+  $('topBid').textContent = p.maxBiddingPrice ?? '—'
 }
 
 window.ttLive.onEvent((ev: LiveEvent) => {
   switch (ev.kind) {
     case 'status':
       $('status').textContent = `${ev.status}${ev.detail ? ' — ' + ev.detail : ''}`
+      $('dot').className = 'dot' + (ev.status === 'connected' ? ' on' : '')
       break
-    case 'auction_started':
-      addFeed(`▶ started: ${ev.product.name} ${ev.price?.formatted ?? ''}`)
+    case 'room':
+      $('room').textContent = ev.roomId
       break
-    case 'auction_ended':
-      addFeed(`⏹ ended: ${ev.product.name} ${ev.price?.formatted ?? ''}`)
+    case 'session':
+      $('session').textContent = `${ev.name ?? '—'}  ·  session ${ev.id ?? '—'}`
       break
-    case 'bid':
-      addFeed(`· bid ${ev.price.formatted} on ${ev.auctionConfigId}`)
+    case 'core_stats':
+      if (ev.viewers !== undefined) $('viewers').textContent = String(ev.viewers)
+      if (ev.gmv) { $('gmv').textContent = ev.gmv.formatted; gmvFromWs = true }
+      if (ev.sales !== undefined) $('itemsSold').textContent = String(ev.sales)
       break
-    case 'sale':
-      derivedSold += ev.status === 'sold' ? 1 : 0
-      addFeed(
-        `${ev.status === 'sold' ? '✓ SOLD' : '✗ FAILED'} ${ev.product.name} ${ev.price.formatted} ${ev.buyer ? '@' + ev.buyer.username : ''} [${ev.source}]`,
-      )
-      refreshTotals()
+    case 'product_stats':
+      $('itemsSold').textContent = String(ev.totalSold)
       break
-    case 'state':
-      rosterSold = ev.totals.sold
-      $('failed').textContent = String(ev.totals.failed)
-      $('paymentFailed').textContent = String(ev.totals.paymentFailed)
-      $('pinned').textContent = ev.pinnedAuction
-        ? `${ev.pinnedAuction.productName} — ${ev.pinnedAuction.maxBidPrice ?? ev.pinnedAuction.formattedStartingBid ?? ''} · ${ev.pinnedAuction.numBids ?? 0} bids · win @${ev.pinnedAuction.winUsername ?? '—'}`
-        : '—'
-      refreshTotals()
+    case 'roster':
+      renderProducts(ev.products)
+      renderAuction(ev.pinned)
+      $('itemsSold').textContent = String(ev.totalSold) // REST fallback when no WS
+      if (failedFromSales === null) $('failed').textContent = String(ev.paymentFailed)
+      console.log(`[render] roster: products=${$('products').childElementCount} itemsSold=${$('itemsSold').textContent} auction="${$('currentAuction').textContent?.slice(0, 50)}"`)
+      break
+    case 'sales':
+      renderFeed(ev.recentSales)
+      renderTopBuyers(ev.topBuyers)
+      $('uniqueBuyers').textContent = String(ev.uniqueBuyers)
+      $('feedCount').textContent = `${ev.totalSales} sold · $${(ev.totalCents / 100).toFixed(2)}`
+      if (!gmvFromWs) $('gmv').textContent = `$${(ev.totalCents / 100).toFixed(2)}` // REST fallback
+      failedFromSales = ev.failedPayments.length
+      $('failed').textContent = String(failedFromSales)
+      console.log(`[render] sales: feed=${$('feed').childElementCount} topBuyers=${$('topBuyers').childElementCount} unique=${$('uniqueBuyers').textContent} gmv=${$('gmv').textContent} failed=${$('failed').textContent}`)
       break
   }
 })

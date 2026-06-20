@@ -1,0 +1,366 @@
+{
+  "productStats": {
+    "b64": "CNSQgvgIEPCehK714tMfGKSAgCggAioLCgZpc19hY2sSATEqCQoEY29kZRIBMCoWChI6eF9mcm9udGllcl9tc2dfaWQSACopChk6eF9mcm9udGllcl9tc2dfc2VuZF90aW1lEgxkamU2N2o4NG5kdnIqRgoLdHJhY2VwYXJlbnQSNzAwLWZiODQxMzVmMTMyMDkxMTY1ZWJlMWM0NjZkZTEzZWU1LWI3MzM2MDdjYjliYTE2YzMtMDEyADoAQsIKeyJsaXZlX3Jvb21faW5mbyI6eyJyb29tX2lkIjoiNzY1MzU3MTM1MzkzNjc1OTU2NiIsImNyZWF0ZV90aW1lc3RhbXAiOiIxNzgxOTg2MDI2In0sImxpdmVfY29yZV9zdGF0cyI6eyJjdXJyZW50X3ZpZXdlcnMiOjM3MiwiYXZnX3ZpZXdfZHVyYXRpb24iOiIyOC4wMDAwMDAiLCJpbXByZXNzaW9ucyI6MTgzOTE4LCJwcm9kdWN0X2NsaWNrcyI6MTAyMiwic2hvd19ncG1fbG9jYWwiOnsiYW1vdW50X2Zvcm1hdHRlZCI6IiQxMC45OSIsImFtb3VudF9kZWxpbWl0ZWQiOiIxMC45OSIsImFtb3VudCI6IjEwLjk5IiwiY3VycmVuY3lfY29kZSI6IlVTRCIsImN1cnJlbmN5X3N5bWJvbCI6IiQiLCJhbW91bnRfa21iX2Zvcm1hdHRlZCI6IiQxMSJ9LCJlbnRlcl9yb29tX3JhdGUiOiIwLjAzNjAxMSIsImdtdl9sb2NhbCI6eyJhbW91bnRfZm9ybWF0dGVkIjoiJDIsMDIxLjc2IiwiYW1vdW50X2RlbGltaXRlZCI6IjIsMDIxLjc2IiwiYW1vdW50IjoiMjAyMS43NiIsImN1cnJlbmN5X2NvZGUiOiJVU0QiLCJjdXJyZW5jeV9zeW1ib2wiOiIkIiwiYW1vdW50X2ttYl9mb3JtYXR0ZWQiOiIkMksifSwic2FsZXMiOjM0LCJnbXZfbG9jYWxfcGVyX2hvdXIiOnsiYW1vdW50X2Zvcm1hdHRlZCI6IiQyLDkyMi4xNiIsImFtb3VudF9kZWxpbWl0ZWQiOiIyLDkyMi4xNiIsImFtb3VudCI6IjI5MjIuMTYiLCJjdXJyZW5jeV9jb2RlIjoiVVNEIiwiY3VycmVuY3lfc3ltYm9sIjoiJCIsImFtb3VudF9rbWJfZm9ybWF0dGVkIjoiJDIuOUsifSwiYXVjdGlvbl9nbXZfbG9jYWwiOnsiYW1vdW50X2Zvcm1hdHRlZCI6IiQyLDAyMS43NiIsImFtb3VudF9kZWxpbWl0ZWQiOiIyLDAyMS43NiIsImFtb3VudCI6IjIwMjEuNzYiLCJjdXJyZW5jeV9jb2RlIjoiVVNEIiwiY3VycmVuY3lfc3ltYm9sIjoiJCIsImFtb3VudF9rbWJfZm9ybWF0dGVkIjoiJDJLIn0sImF1Y3Rpb25fc2FsZXMiOjM0LCJub25fYXVjdGlvbl9nbXZfbG9jYWwiOnsiYW1vdW50X2Zvcm1hdHRlZCI6IiQwLjAwIiwiYW1vdW50X2RlbGltaXRlZCI6IjAuMDAiLCJhbW91bnQiOiIwIiwiY3VycmVuY3lfY29kZSI6IlVTRCIsImN1cnJlbmN5X3N5bWJvbCI6IiQiLCJhbW91bnRfa21iX2Zvcm1hdHRlZCI6IiQwLjAwIn0sInN0YXRzX2JlbmNobWFya19kYXRhIjp7Im1hcmtldF9jbXBfZGF0YSI6W3sic3RhdHNfdHlwZSI6MzMwLCJjbXAiOiItMC42MjkwMDQifV19fSwibGl2ZV9wcm9kdWN0X3N0YXRzIjp7InByb2R1Y3Rfc3RhdHMiOnsiMTczMjQ1MTYzMjYwMjcxNTEwNyI6eyJwcm9kdWN0X2NsaWNrcyI6MjYxLCJzYWxlcyI6MTJ9LCIxNzMyNDUxNjMyNjAzNDM2MDAzIjp7InByb2R1Y3RfY2xpY2tzIjo3NTMsInNhbGVzIjoyMn19fX1KNTAyMTc4MTk4ODUxNjcwMTAwMDAwMDAwMDAwMDAwMDAwMDAwZmZmZjBhNzEwNzIxNTA4NTFkUhpmcm9udGllcjtzdGE9MTc4MTk4ODUxNjc2M1pKMzI2NjM2NjE2MzM3MzMzMjM3MzI2NjY0NjIzNDM5NjMzMTMxMzAzMjM4Mzk3YzM0MzYzNTM3MzA3YzAxOWVlNmNhZTM5YjAwMDBgAGgAcgA=",
+    "bytes": 1703,
+    "payload": {
+      "live_room_info": {
+        "room_id": "7653571353936759566",
+        "create_timestamp": "1781986026"
+      },
+      "live_core_stats": {
+        "current_viewers": 372,
+        "avg_view_duration": "28.000000",
+        "impressions": 183918,
+        "product_clicks": 1022,
+        "show_gpm_local": {
+          "amount_formatted": "$10.99",
+          "amount_delimited": "10.99",
+          "amount": "10.99",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$11"
+        },
+        "enter_room_rate": "0.036011",
+        "gmv_local": {
+          "amount_formatted": "$2,021.76",
+          "amount_delimited": "2,021.76",
+          "amount": "2021.76",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$2K"
+        },
+        "sales": 34,
+        "gmv_local_per_hour": {
+          "amount_formatted": "$2,922.16",
+          "amount_delimited": "2,922.16",
+          "amount": "2922.16",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$2.9K"
+        },
+        "auction_gmv_local": {
+          "amount_formatted": "$2,021.76",
+          "amount_delimited": "2,021.76",
+          "amount": "2021.76",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$2K"
+        },
+        "auction_sales": 34,
+        "non_auction_gmv_local": {
+          "amount_formatted": "$0.00",
+          "amount_delimited": "0.00",
+          "amount": "0",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$0.00"
+        },
+        "stats_benchmark_data": {
+          "market_cmp_data": [
+            {
+              "stats_type": 330,
+              "cmp": "-0.629004"
+            }
+          ]
+        }
+      },
+      "live_product_stats": {
+        "product_stats": {
+          "1732451632602715107": {
+            "product_clicks": 261,
+            "sales": 12
+          },
+          "1732451632603436003": {
+            "product_clicks": 753,
+            "sales": 22
+          }
+        }
+      }
+    }
+  },
+  "coreStats": {
+    "b64": "CNSQgvgIEPCehK714tMfGKSAgCggAioLCgZpc19hY2sSATEqCQoEY29kZRIBMCoWChI6eF9mcm9udGllcl9tc2dfaWQSACopChk6eF9mcm9udGllcl9tc2dfc2VuZF90aW1lEgxkamU2N2o4NG5kdnIqRgoLdHJhY2VwYXJlbnQSNzAwLWZiODQxMzVmMTMyMDkxMTY1ZWJlMWM0NjZkZTEzZWU1LWI3MzM2MDdjYjliYTE2YzMtMDEyADoAQsIKeyJsaXZlX3Jvb21faW5mbyI6eyJyb29tX2lkIjoiNzY1MzU3MTM1MzkzNjc1OTU2NiIsImNyZWF0ZV90aW1lc3RhbXAiOiIxNzgxOTg2MDI2In0sImxpdmVfY29yZV9zdGF0cyI6eyJjdXJyZW50X3ZpZXdlcnMiOjM3MiwiYXZnX3ZpZXdfZHVyYXRpb24iOiIyOC4wMDAwMDAiLCJpbXByZXNzaW9ucyI6MTgzOTE4LCJwcm9kdWN0X2NsaWNrcyI6MTAyMiwic2hvd19ncG1fbG9jYWwiOnsiYW1vdW50X2Zvcm1hdHRlZCI6IiQxMC45OSIsImFtb3VudF9kZWxpbWl0ZWQiOiIxMC45OSIsImFtb3VudCI6IjEwLjk5IiwiY3VycmVuY3lfY29kZSI6IlVTRCIsImN1cnJlbmN5X3N5bWJvbCI6IiQiLCJhbW91bnRfa21iX2Zvcm1hdHRlZCI6IiQxMSJ9LCJlbnRlcl9yb29tX3JhdGUiOiIwLjAzNjAxMSIsImdtdl9sb2NhbCI6eyJhbW91bnRfZm9ybWF0dGVkIjoiJDIsMDIxLjc2IiwiYW1vdW50X2RlbGltaXRlZCI6IjIsMDIxLjc2IiwiYW1vdW50IjoiMjAyMS43NiIsImN1cnJlbmN5X2NvZGUiOiJVU0QiLCJjdXJyZW5jeV9zeW1ib2wiOiIkIiwiYW1vdW50X2ttYl9mb3JtYXR0ZWQiOiIkMksifSwic2FsZXMiOjM0LCJnbXZfbG9jYWxfcGVyX2hvdXIiOnsiYW1vdW50X2Zvcm1hdHRlZCI6IiQyLDkyMi4xNiIsImFtb3VudF9kZWxpbWl0ZWQiOiIyLDkyMi4xNiIsImFtb3VudCI6IjI5MjIuMTYiLCJjdXJyZW5jeV9jb2RlIjoiVVNEIiwiY3VycmVuY3lfc3ltYm9sIjoiJCIsImFtb3VudF9rbWJfZm9ybWF0dGVkIjoiJDIuOUsifSwiYXVjdGlvbl9nbXZfbG9jYWwiOnsiYW1vdW50X2Zvcm1hdHRlZCI6IiQyLDAyMS43NiIsImFtb3VudF9kZWxpbWl0ZWQiOiIyLDAyMS43NiIsImFtb3VudCI6IjIwMjEuNzYiLCJjdXJyZW5jeV9jb2RlIjoiVVNEIiwiY3VycmVuY3lfc3ltYm9sIjoiJCIsImFtb3VudF9rbWJfZm9ybWF0dGVkIjoiJDJLIn0sImF1Y3Rpb25fc2FsZXMiOjM0LCJub25fYXVjdGlvbl9nbXZfbG9jYWwiOnsiYW1vdW50X2Zvcm1hdHRlZCI6IiQwLjAwIiwiYW1vdW50X2RlbGltaXRlZCI6IjAuMDAiLCJhbW91bnQiOiIwIiwiY3VycmVuY3lfY29kZSI6IlVTRCIsImN1cnJlbmN5X3N5bWJvbCI6IiQiLCJhbW91bnRfa21iX2Zvcm1hdHRlZCI6IiQwLjAwIn0sInN0YXRzX2JlbmNobWFya19kYXRhIjp7Im1hcmtldF9jbXBfZGF0YSI6W3sic3RhdHNfdHlwZSI6MzMwLCJjbXAiOiItMC42MjkwMDQifV19fSwibGl2ZV9wcm9kdWN0X3N0YXRzIjp7InByb2R1Y3Rfc3RhdHMiOnsiMTczMjQ1MTYzMjYwMjcxNTEwNyI6eyJwcm9kdWN0X2NsaWNrcyI6MjYxLCJzYWxlcyI6MTJ9LCIxNzMyNDUxNjMyNjAzNDM2MDAzIjp7InByb2R1Y3RfY2xpY2tzIjo3NTMsInNhbGVzIjoyMn19fX1KNTAyMTc4MTk4ODUxNjcwMTAwMDAwMDAwMDAwMDAwMDAwMDAwZmZmZjBhNzEwNzIxNTA4NTFkUhpmcm9udGllcjtzdGE9MTc4MTk4ODUxNjc2M1pKMzI2NjM2NjE2MzM3MzMzMjM3MzI2NjY0NjIzNDM5NjMzMTMxMzAzMjM4Mzk3YzM0MzYzNTM3MzA3YzAxOWVlNmNhZTM5YjAwMDBgAGgAcgA=",
+    "bytes": 1703,
+    "payload": {
+      "live_room_info": {
+        "room_id": "7653571353936759566",
+        "create_timestamp": "1781986026"
+      },
+      "live_core_stats": {
+        "current_viewers": 372,
+        "avg_view_duration": "28.000000",
+        "impressions": 183918,
+        "product_clicks": 1022,
+        "show_gpm_local": {
+          "amount_formatted": "$10.99",
+          "amount_delimited": "10.99",
+          "amount": "10.99",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$11"
+        },
+        "enter_room_rate": "0.036011",
+        "gmv_local": {
+          "amount_formatted": "$2,021.76",
+          "amount_delimited": "2,021.76",
+          "amount": "2021.76",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$2K"
+        },
+        "sales": 34,
+        "gmv_local_per_hour": {
+          "amount_formatted": "$2,922.16",
+          "amount_delimited": "2,922.16",
+          "amount": "2922.16",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$2.9K"
+        },
+        "auction_gmv_local": {
+          "amount_formatted": "$2,021.76",
+          "amount_delimited": "2,021.76",
+          "amount": "2021.76",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$2K"
+        },
+        "auction_sales": 34,
+        "non_auction_gmv_local": {
+          "amount_formatted": "$0.00",
+          "amount_delimited": "0.00",
+          "amount": "0",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$0.00"
+        },
+        "stats_benchmark_data": {
+          "market_cmp_data": [
+            {
+              "stats_type": 330,
+              "cmp": "-0.629004"
+            }
+          ]
+        }
+      },
+      "live_product_stats": {
+        "product_stats": {
+          "1732451632602715107": {
+            "product_clicks": 261,
+            "sales": 12
+          },
+          "1732451632603436003": {
+            "product_clicks": 753,
+            "sales": 22
+          }
+        }
+      }
+    }
+  },
+  "room": {
+    "b64": "CNSQgvgIEPCehK714tMfGKSAgCggAioLCgZpc19hY2sSATEqCQoEY29kZRIBMCoWChI6eF9mcm9udGllcl9tc2dfaWQSACopChk6eF9mcm9udGllcl9tc2dfc2VuZF90aW1lEgxkamU2N2o4NG5kdnIqRgoLdHJhY2VwYXJlbnQSNzAwLWZiODQxMzVmMTMyMDkxMTY1ZWJlMWM0NjZkZTEzZWU1LWI3MzM2MDdjYjliYTE2YzMtMDEyADoAQsIKeyJsaXZlX3Jvb21faW5mbyI6eyJyb29tX2lkIjoiNzY1MzU3MTM1MzkzNjc1OTU2NiIsImNyZWF0ZV90aW1lc3RhbXAiOiIxNzgxOTg2MDI2In0sImxpdmVfY29yZV9zdGF0cyI6eyJjdXJyZW50X3ZpZXdlcnMiOjM3MiwiYXZnX3ZpZXdfZHVyYXRpb24iOiIyOC4wMDAwMDAiLCJpbXByZXNzaW9ucyI6MTgzOTE4LCJwcm9kdWN0X2NsaWNrcyI6MTAyMiwic2hvd19ncG1fbG9jYWwiOnsiYW1vdW50X2Zvcm1hdHRlZCI6IiQxMC45OSIsImFtb3VudF9kZWxpbWl0ZWQiOiIxMC45OSIsImFtb3VudCI6IjEwLjk5IiwiY3VycmVuY3lfY29kZSI6IlVTRCIsImN1cnJlbmN5X3N5bWJvbCI6IiQiLCJhbW91bnRfa21iX2Zvcm1hdHRlZCI6IiQxMSJ9LCJlbnRlcl9yb29tX3JhdGUiOiIwLjAzNjAxMSIsImdtdl9sb2NhbCI6eyJhbW91bnRfZm9ybWF0dGVkIjoiJDIsMDIxLjc2IiwiYW1vdW50X2RlbGltaXRlZCI6IjIsMDIxLjc2IiwiYW1vdW50IjoiMjAyMS43NiIsImN1cnJlbmN5X2NvZGUiOiJVU0QiLCJjdXJyZW5jeV9zeW1ib2wiOiIkIiwiYW1vdW50X2ttYl9mb3JtYXR0ZWQiOiIkMksifSwic2FsZXMiOjM0LCJnbXZfbG9jYWxfcGVyX2hvdXIiOnsiYW1vdW50X2Zvcm1hdHRlZCI6IiQyLDkyMi4xNiIsImFtb3VudF9kZWxpbWl0ZWQiOiIyLDkyMi4xNiIsImFtb3VudCI6IjI5MjIuMTYiLCJjdXJyZW5jeV9jb2RlIjoiVVNEIiwiY3VycmVuY3lfc3ltYm9sIjoiJCIsImFtb3VudF9rbWJfZm9ybWF0dGVkIjoiJDIuOUsifSwiYXVjdGlvbl9nbXZfbG9jYWwiOnsiYW1vdW50X2Zvcm1hdHRlZCI6IiQyLDAyMS43NiIsImFtb3VudF9kZWxpbWl0ZWQiOiIyLDAyMS43NiIsImFtb3VudCI6IjIwMjEuNzYiLCJjdXJyZW5jeV9jb2RlIjoiVVNEIiwiY3VycmVuY3lfc3ltYm9sIjoiJCIsImFtb3VudF9rbWJfZm9ybWF0dGVkIjoiJDJLIn0sImF1Y3Rpb25fc2FsZXMiOjM0LCJub25fYXVjdGlvbl9nbXZfbG9jYWwiOnsiYW1vdW50X2Zvcm1hdHRlZCI6IiQwLjAwIiwiYW1vdW50X2RlbGltaXRlZCI6IjAuMDAiLCJhbW91bnQiOiIwIiwiY3VycmVuY3lfY29kZSI6IlVTRCIsImN1cnJlbmN5X3N5bWJvbCI6IiQiLCJhbW91bnRfa21iX2Zvcm1hdHRlZCI6IiQwLjAwIn0sInN0YXRzX2JlbmNobWFya19kYXRhIjp7Im1hcmtldF9jbXBfZGF0YSI6W3sic3RhdHNfdHlwZSI6MzMwLCJjbXAiOiItMC42MjkwMDQifV19fSwibGl2ZV9wcm9kdWN0X3N0YXRzIjp7InByb2R1Y3Rfc3RhdHMiOnsiMTczMjQ1MTYzMjYwMjcxNTEwNyI6eyJwcm9kdWN0X2NsaWNrcyI6MjYxLCJzYWxlcyI6MTJ9LCIxNzMyNDUxNjMyNjAzNDM2MDAzIjp7InByb2R1Y3RfY2xpY2tzIjo3NTMsInNhbGVzIjoyMn19fX1KNTAyMTc4MTk4ODUxNjcwMTAwMDAwMDAwMDAwMDAwMDAwMDAwZmZmZjBhNzEwNzIxNTA4NTFkUhpmcm9udGllcjtzdGE9MTc4MTk4ODUxNjc2M1pKMzI2NjM2NjE2MzM3MzMzMjM3MzI2NjY0NjIzNDM5NjMzMTMxMzAzMjM4Mzk3YzM0MzYzNTM3MzA3YzAxOWVlNmNhZTM5YjAwMDBgAGgAcgA=",
+    "bytes": 1703,
+    "payload": {
+      "live_room_info": {
+        "room_id": "7653571353936759566",
+        "create_timestamp": "1781986026"
+      },
+      "live_core_stats": {
+        "current_viewers": 372,
+        "avg_view_duration": "28.000000",
+        "impressions": 183918,
+        "product_clicks": 1022,
+        "show_gpm_local": {
+          "amount_formatted": "$10.99",
+          "amount_delimited": "10.99",
+          "amount": "10.99",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$11"
+        },
+        "enter_room_rate": "0.036011",
+        "gmv_local": {
+          "amount_formatted": "$2,021.76",
+          "amount_delimited": "2,021.76",
+          "amount": "2021.76",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$2K"
+        },
+        "sales": 34,
+        "gmv_local_per_hour": {
+          "amount_formatted": "$2,922.16",
+          "amount_delimited": "2,922.16",
+          "amount": "2922.16",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$2.9K"
+        },
+        "auction_gmv_local": {
+          "amount_formatted": "$2,021.76",
+          "amount_delimited": "2,021.76",
+          "amount": "2021.76",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$2K"
+        },
+        "auction_sales": 34,
+        "non_auction_gmv_local": {
+          "amount_formatted": "$0.00",
+          "amount_delimited": "0.00",
+          "amount": "0",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$0.00"
+        },
+        "stats_benchmark_data": {
+          "market_cmp_data": [
+            {
+              "stats_type": 330,
+              "cmp": "-0.629004"
+            }
+          ]
+        }
+      },
+      "live_product_stats": {
+        "product_stats": {
+          "1732451632602715107": {
+            "product_clicks": 261,
+            "sales": 12
+          },
+          "1732451632603436003": {
+            "product_clicks": 753,
+            "sales": 22
+          }
+        }
+      }
+    }
+  },
+  "session": {
+    "b64": "CNDGhfgIEJel8eLEpLndGBilgIAoIGUqSwoSeF9mcm9udGllcl90cmFjZWlkEjUwMjE3ODE5ODg1NDY2NDAwMDAwMDAwMDAwMDAwMDAwMDAwMGZmZmYwYTcxODY3NjZhYTlmZCoaChV4X2Zyb250aWVyX2Fycml2ZXJhdGUSATEqKAoYeF9mcm9udGllcl9yZWNpZXZlZF90aW1lEgxkamU2N3d5OG5iMTcqNgoSOnhfZnJvbnRpZXJfbXNnX2lkEiBtc2dfZGplNjd3eThtenU4MDAwM3U3ZmUxOHZreWN2ZiopChk6eF9mcm9udGllcl9tc2dfc2VuZF90aW1lEgxkamU2N3d5OWJscWYqRgoLdHJhY2VwYXJlbnQSNzAwLWZiODQxMzVmMTMyMDkxMTY1ZWJlMWM0NjZkZTEzZWU1LTJhYTcxYWIxNjVjMTE1NTQtMDEyADoAQrYBeyJjdXJyZW50X3Nlc3Npb24iOnsiaWQiOiI0Mzg0ODM1MzM0IiwibmFtZSI6IkFsbyBZb2dhICYgTW9yZSAtIE5vIENhbmNlbHMiLCJzdGFydF90aW1lIjoiMTc4MTk4NTYwMCIsImR1cmluZ190aW1lIjoiNzIwMCIsImV2ZW50X2lkIjoiNzY1MzUwMjg2MzMxMzczMTU5OCIsImxpdmVfc2Vzc2lvbl9zdGF0dXMiOjExfX1KNTAyMTc4MTk4ODU0NjY0MDAwMDAwMDAwMDAwMDAwMDAwMDAwZmZmZjBhNzE4Njc2NmFhOWZkUhpiYWNrYm9uZTtzdGE9MTc4MTk4ODU0NjY0MFogbXNnX2RqZTY3d3k4bXp1ODAwMDN1N2ZlMTh2a3ljdmZgAGgAcgA=",
+    "bytes": 653,
+    "payload": {
+      "current_session": {
+        "id": "4384835334",
+        "name": "Alo Yoga & More - No Cancels",
+        "start_time": "1781985600",
+        "during_time": "7200",
+        "event_id": "7653502863313731598",
+        "live_session_status": 11
+      }
+    }
+  },
+  "productStatsSeries": [
+    {
+      "live_room_info": {
+        "room_id": "7653571353936759566",
+        "create_timestamp": "1781986026"
+      },
+      "live_core_stats": {
+        "current_viewers": 372,
+        "avg_view_duration": "28.000000",
+        "impressions": 183918,
+        "product_clicks": 1022,
+        "show_gpm_local": {
+          "amount_formatted": "$10.99",
+          "amount_delimited": "10.99",
+          "amount": "10.99",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$11"
+        },
+        "enter_room_rate": "0.036011",
+        "gmv_local": {
+          "amount_formatted": "$2,021.76",
+          "amount_delimited": "2,021.76",
+          "amount": "2021.76",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$2K"
+        },
+        "sales": 34,
+        "gmv_local_per_hour": {
+          "amount_formatted": "$2,922.16",
+          "amount_delimited": "2,922.16",
+          "amount": "2922.16",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$2.9K"
+        },
+        "auction_gmv_local": {
+          "amount_formatted": "$2,021.76",
+          "amount_delimited": "2,021.76",
+          "amount": "2021.76",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$2K"
+        },
+        "auction_sales": 34,
+        "non_auction_gmv_local": {
+          "amount_formatted": "$0.00",
+          "amount_delimited": "0.00",
+          "amount": "0",
+          "currency_code": "USD",
+          "currency_symbol": "$",
+          "amount_kmb_formatted": "$0.00"
+        },
+        "stats_benchmark_data": {
+          "market_cmp_data": [
+            {
+              "stats_type": 330,
+              "cmp": "-0.629004"
+            }
+          ]
+        }
+      },
+      "live_product_stats": {
+        "product_stats": {
+          "1732451632602715107": {
+            "product_clicks": 261,
+            "sales": 12
+          },
+          "1732451632603436003": {
+            "product_clicks": 753,
+            "sales": 22
+          }
+        }
+      }
+    },
+    {
+      "product_stats": {
+        "1732451632602715107": {
+          "product_clicks": 261,
+          "sales": 12
+        },
+        "1732451632603436003": {
+          "product_clicks": 761,
+          "sales": 22
+        }
+      }
+    },
+    {
+      "product_stats": {
+        "1732451632603436003": {
+          "product_clicks": 761,
+          "sales": 23
+        },
+        "1732451632602715107": {
+          "product_clicks": 261,
+          "sales": 12
+        }
+      }
+    },
+    {
+      "product_stats": {
+        "1732451632602715107": {
+          "product_clicks": 261,
+          "sales": 12
+        },
+        "1732451632603436003": {
+          "product_clicks": 779,
+          "sales": 23
+        }
+      }
+    }
+  ]
+}

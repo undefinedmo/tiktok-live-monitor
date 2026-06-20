@@ -1,0 +1,289 @@
+{
+  "roster": {
+    "code": 0,
+    "msg": "success",
+    "auction_payment_failure_info": {
+      "num_auction_payment_failed": 2
+    },
+    "auction_config_list": [
+      {
+        "auction_config_id": "1047740030982",
+        "product_id": "1732451632603436003",
+        "sku_id": "1732451642461557731",
+        "product_name": "#35 Bin B - Alo Yoga and More, No Cancels",
+        "variant_desc": "#35",
+        "cover": {
+          "url_list": [
+            "https://p16-oec-general.ttcdn-us.com/tos-maliva-i-o3syd03w52-us/6994de25fd2c479ea619a446a01720f7~tplv-fhlh96nyum-resize-image:640:640.image?dr=12187&t=555f072d&ps=933b5bde&shp=f6dc9f09&shcp=5aca9457&idc=useast5&from=4141653769"
+          ]
+        },
+        "stock_num": 266,
+        "duration": 10,
+        "starting_bid_price": "15",
+        "formatted_starting_bid_price": "$15.00",
+        "auction_mode": 1,
+        "num_sold": 33,
+        "num_failed": 1,
+        "auction_config_type": 1,
+        "productStatus": 2,
+        "auction_card_type": 0,
+        "extended_auction_duration": 5,
+        "auction_product_status_error_message": ""
+      },
+      {
+        "auction_config_id": "1048649545222",
+        "product_id": "1732451632602715107",
+        "sku_id": "1732451641500799971",
+        "product_name": "#55 Bin A - Alo Yoga and More, No Cancels",
+        "variant_desc": "#55",
+        "cover": {
+          "url_list": [
+            "https://p16-oec-general.ttcdn-us.com/tos-maliva-i-o3syd03w52-us/6994de25fd2c479ea619a446a01720f7~tplv-fhlh96nyum-resize-image:640:640.image?dr=12187&t=555f072d&ps=933b5bde&shp=f6dc9f09&shcp=5aca9457&idc=useast5&from=4141653769"
+          ]
+        },
+        "stock_num": 246,
+        "duration": 10,
+        "starting_bid_price": "15",
+        "formatted_starting_bid_price": "$15.00",
+        "auction_mode": 0,
+        "num_sold": 50,
+        "num_failed": 4,
+        "auction_config_type": 1,
+        "productStatus": 2,
+        "auction_card_type": 0,
+        "extended_auction_duration": 5,
+        "auction_product_status_error_message": ""
+      }
+    ],
+    "pinned_auction_config": {
+      "auction_config_id": "1047740030982",
+      "product_id": "1732451632603436003",
+      "sku_id": "1732451642461557731",
+      "product_name": "#35 Bin B - Alo Yoga and More, No Cancels",
+      "variant_desc": "#35",
+      "cover": {
+        "url_list": [
+          "https://p16-oec-general.ttcdn-us.com/tos-maliva-i-o3syd03w52-us/6994de25fd2c479ea619a446a01720f7~tplv-fhlh96nyum-resize-image:640:640.image?dr=12187&t=555f072d&ps=933b5bde&shp=f6dc9f09&shcp=5aca9457&idc=useast5&from=4141653769"
+        ]
+      },
+      "stock_num": 266,
+      "duration": 10,
+      "starting_bid_price": "15",
+      "formatted_starting_bid_price": "$15.00",
+      "auction_mode": 1,
+      "num_sold": 0,
+      "num_failed": 0,
+      "latest_auction_item": {
+        "auction_config_id": "1047740030982",
+        "status": 1,
+        "actual_start_time": 0,
+        "actual_end_time": 1781991035,
+        "actual_formatted_starting_bid_price": "",
+        "num_of_bids": 20,
+        "win_username": "Sarah Dukofsky",
+        "max_bidding_price": "$61.00",
+        "win_user_profile_image_url": "https://p16-common-sign.tiktokcdn-us.com/tos-useast5-avt-0068-tx/222e075bc8eb1f769213480fb6d51dfe~tplv-tiktokx-cropcenter:48:48.jpeg?dr=9638&refresh_token=eba325e2&x-expires=1782248400&x-signature=ZyqvcVr1Ha6%2BtKm1W2DPTBiz6Yo%3D&t=4d5b0474&ps=13740610&shp=f6dc9f09&shcp=5aca9457&idc=useast5",
+        "expected_end_time_ms": "1781991035496",
+        "auction_bid_timestamp": "1781991030496"
+      },
+      "auction_config_type": 1,
+      "productStatus": 2,
+      "auction_card_type": 2,
+      "extended_auction_duration": 5,
+      "auction_product_status_error_message": ""
+    },
+    "has_more": false
+  },
+  "pin": {
+    "code": 0,
+    "message": "success",
+    "card_type": 4,
+    "product_id": "0",
+    "auction_config": {
+      "auction_config_id": "1047740030982",
+      "product_id": "1732451632603436003",
+      "sku_id": "1732451642461557731",
+      "product_name": "#35 Bin B - Alo Yoga and More, No Cancels",
+      "variant_desc": "#35",
+      "cover": {
+        "url_list": [
+          "https://p16-oec-general.ttcdn-us.com/tos-maliva-i-o3syd03w52-us/6994de25fd2c479ea619a446a01720f7~tplv-fhlh96nyum-resize-image:640:640.image?dr=12187&t=555f072d&ps=933b5bde&shp=f6dc9f09&shcp=5aca9457&idc=useast5&from=4141653769"
+        ]
+      },
+      "stock_num": 266,
+      "duration": 10,
+      "starting_bid_price": "15",
+      "formatted_starting_bid_price": "$15.00",
+      "auction_mode": 1,
+      "num_sold": 0,
+      "num_failed": 0,
+      "latest_auction_item": {
+        "auction_config_id": "1047740030982",
+        "status": 1,
+        "actual_start_time": 0,
+        "actual_end_time": 1781991037,
+        "actual_formatted_starting_bid_price": "",
+        "num_of_bids": 21,
+        "win_username": "Kristine",
+        "max_bidding_price": "$64.00",
+        "win_user_profile_image_url": "https://p16-common-sign.tiktokcdn-us.com/tos-useast8-avt-0068-tx2/951a7784bad3918a2f92be5f0528e3e4~tplv-tiktokx-cropcenter:48:48.jpeg?dr=9638&refresh_token=87dc9121&x-expires=1782248400&x-signature=oW0oc%2FQosqkJLEdluQEMUAJZN%2F8%3D&t=4d5b0474&ps=13740610&shp=f6dc9f09&shcp=5aca9457&idc=useast5",
+        "expected_end_time_ms": "1781991037590",
+        "auction_bid_timestamp": "1781991032590"
+      },
+      "auction_config_type": 1,
+      "productStatus": 2,
+      "auction_card_type": 2,
+      "extended_auction_duration": 5,
+      "auction_product_status_error_message": ""
+    },
+    "pin_card_config": {
+      "display_duration_ms": 0,
+      "show_repin": false,
+      "photo_text": "",
+      "toast_text": ""
+    },
+    "resp_meta_data": {
+      "req_server_time": "1781991033444",
+      "resp_server_time": "1781991033508"
+    }
+  },
+  "auctionResultRows": [
+    {
+      "ttuid": "6745304592617112582",
+      "user_name": "Cristina 🌺",
+      "selling_price": "$82.00",
+      "is_payment_successful": true,
+      "auction_end_timestamp": 0,
+      "product_id": "1732451632603436003",
+      "user_profile_image_url": "https://p19-common-sign.tiktokcdn-us.com/tos-useast5-avt-0068-tx/cb175795c1a1a5208db9e868fabcee29~tplv-tiktokx-cropcenter:48:48.jpeg?dr=9638&refresh_token=1f7d1cc7&x-expires=1782248400&x-signature=CUrx67EzBOAixF8Zoafst4U1EHc%3D&t=4d5b0474&ps=13740610&shp=f6dc9f09&shcp=5aca9457&idc=useast5",
+      "product_name": "Bin B - Alo Yoga and More, No Cancels",
+      "product_image_url": "https://p16-oec-general.ttcdn-us.com/tos-maliva-i-o3syd03w52-us/6994de25fd2c479ea619a446a01720f7~tplv-fhlh96nyum-resize-image:640:640.image?dr=12187&t=555f072d&ps=933b5bde&shp=f6dc9f09&shcp=5aca9457&idc=useast5&from=4141653769",
+      "order_id": "577442704719844041",
+      "sku_id": "1732451642461426659",
+      "sku_desc": "#33",
+      "order_create_time": 1781990964921,
+      "user_display_id": "cristinas.diary",
+      "order_status": 3
+    },
+    {
+      "ttuid": "6895915971581838342",
+      "user_name": "Nancy Duran",
+      "selling_price": "$80.00",
+      "is_payment_successful": true,
+      "auction_end_timestamp": 0,
+      "product_id": "1732451632603436003",
+      "user_profile_image_url": "https://p16-common-sign.tiktokcdn-us.com/tos-useast5-avt-0068-tx/6b22981b95a192bebae6e8ca0c028cd2~tplv-tiktokx-cropcenter:48:48.jpeg?dr=9638&refresh_token=6117a098&x-expires=1782248400&x-signature=pj6hvvQ%2FUAh7Z%2FmvS3DoCUM6oHA%3D&t=4d5b0474&ps=13740610&shp=f6dc9f09&shcp=5aca9457&idc=useast5",
+      "product_name": "Bin B - Alo Yoga and More, No Cancels",
+      "product_image_url": "https://p16-oec-general.ttcdn-us.com/tos-maliva-i-o3syd03w52-us/6994de25fd2c479ea619a446a01720f7~tplv-fhlh96nyum-resize-image:640:640.image?dr=12187&t=555f072d&ps=933b5bde&shp=f6dc9f09&shcp=5aca9457&idc=useast5&from=4141653769",
+      "order_id": "577442705077539594",
+      "sku_id": "1732451642461361123",
+      "sku_desc": "#32",
+      "order_create_time": 1781990921827,
+      "user_display_id": "nancyduran153",
+      "order_status": 3
+    },
+    {
+      "ttuid": "6807451575909925894",
+      "user_name": "BK",
+      "selling_price": "$68.00",
+      "is_payment_successful": true,
+      "auction_end_timestamp": 0,
+      "product_id": "1732451632603436003",
+      "user_profile_image_url": "https://p16-common-sign.tiktokcdn-us.com/tos-maliva-avt-0068/7331798426135068678~tplv-tiktokx-cropcenter:48:48.jpeg?dr=9638&refresh_token=2a457750&x-expires=1782248400&x-signature=M4NAV77IOmF%2BBe1V4Muxt3eNAuQ%3D&t=4d5b0474&ps=13740610&shp=f6dc9f09&shcp=5aca9457&idc=useast5",
+      "product_name": "Bin B - Alo Yoga and More, No Cancels",
+      "product_image_url": "https://p16-oec-general.ttcdn-us.com/tos-maliva-i-o3syd03w52-us/6994de25fd2c479ea619a446a01720f7~tplv-fhlh96nyum-resize-image:640:640.image?dr=12187&t=555f072d&ps=933b5bde&shp=f6dc9f09&shcp=5aca9457&idc=useast5&from=4141653769",
+      "order_id": "577442703618314532",
+      "sku_id": "1732451642461295587",
+      "sku_desc": "#31",
+      "order_create_time": 1781990869301,
+      "user_display_id": "yourstruly_0188",
+      "order_status": 3
+    },
+    {
+      "ttuid": "7217650193893917738",
+      "user_name": "EG 🧸🌸",
+      "selling_price": "$62.00",
+      "is_payment_successful": true,
+      "auction_end_timestamp": 0,
+      "product_id": "1732451632602715107",
+      "user_profile_image_url": "https://p16-common-sign.tiktokcdn-us.com/tos-useast5-avt-0068-tx/7dfcb2224ac885c66eb8b6b61801854a~tplv-tiktokx-cropcenter:48:48.jpeg?dr=9638&refresh_token=a92ee104&x-expires=1782248400&x-signature=bpP5M%2FDNGoPHAFokBhYpY0NrOuw%3D&t=4d5b0474&ps=13740610&shp=f6dc9f09&shcp=5aca9457&idc=useast5",
+      "product_name": "Bin A - Alo Yoga and More, No Cancels",
+      "product_image_url": "https://p16-oec-general.ttcdn-us.com/tos-maliva-i-o3syd03w52-us/6994de25fd2c479ea619a446a01720f7~tplv-fhlh96nyum-resize-image:640:640.image?dr=12187&t=555f072d&ps=933b5bde&shp=f6dc9f09&shcp=5aca9457&idc=useast5&from=4141653769",
+      "order_id": "577442700888347292",
+      "sku_id": "1732451641500799971",
+      "sku_desc": "#54",
+      "order_create_time": 1781990742493,
+      "user_display_id": "70mendoza_",
+      "order_status": 3
+    },
+    {
+      "ttuid": "6832471554854552582",
+      "user_name": "DKP💗",
+      "selling_price": "$27.00",
+      "is_payment_successful": true,
+      "auction_end_timestamp": 0,
+      "product_id": "1732451632602715107",
+      "user_profile_image_url": "https://p16-common-sign.tiktokcdn-us.com/tos-useast5-avt-0068-tx/6b066dab7b3aca8d7ddf13056977d5bd~tplv-tiktokx-cropcenter:48:48.jpeg?dr=9638&refresh_token=f1bec7f1&x-expires=1782248400&x-signature=RJfSe5Sn%2FhYUvBywdJEtlj2im%2Fs%3D&t=4d5b0474&ps=13740610&shp=f6dc9f09&shcp=5aca9457&idc=useast5",
+      "product_name": "Bin A - Alo Yoga and More, No Cancels",
+      "product_image_url": "https://p16-oec-general.ttcdn-us.com/tos-maliva-i-o3syd03w52-us/6994de25fd2c479ea619a446a01720f7~tplv-fhlh96nyum-resize-image:640:640.image?dr=12187&t=555f072d&ps=933b5bde&shp=f6dc9f09&shcp=5aca9457&idc=useast5&from=4141653769",
+      "order_id": "577442699228319917",
+      "sku_id": "1732451641500734435",
+      "sku_desc": "#53",
+      "order_create_time": 1781990698917,
+      "user_display_id": "dkp0303",
+      "order_status": 3
+    },
+    {
+      "ttuid": "6767522675054789637",
+      "user_name": "Ylannasev",
+      "selling_price": "$47.00",
+      "is_payment_successful": true,
+      "auction_end_timestamp": 0,
+      "product_id": "1732451632602715107",
+      "user_profile_image_url": "https://p16-common-sign.tiktokcdn-us.com/tos-useast5-avt-0068-tx/23c8a0c8d6427c155faaa1e7711bc09c~tplv-tiktokx-cropcenter:48:48.jpeg?dr=9638&refresh_token=2a9b5c0b&x-expires=1782248400&x-signature=Dy0PosijyxRFJ42SG4rapYjK47U%3D&t=4d5b0474&ps=13740610&shp=f6dc9f09&shcp=5aca9457&idc=useast5",
+      "product_name": "Bin A - Alo Yoga and More, No Cancels",
+      "product_image_url": "https://p16-oec-general.ttcdn-us.com/tos-maliva-i-o3syd03w52-us/6994de25fd2c479ea619a446a01720f7~tplv-fhlh96nyum-resize-image:640:640.image?dr=12187&t=555f072d&ps=933b5bde&shp=f6dc9f09&shcp=5aca9457&idc=useast5&from=4141653769",
+      "order_id": "577442698761048580",
+      "sku_id": "1732451641500668899",
+      "sku_desc": "#52",
+      "order_create_time": 1781990656927,
+      "user_display_id": "ylannasev",
+      "order_status": 3
+    },
+    {
+      "ttuid": "6884060262062064642",
+      "user_name": "Queen 🐝  🐝",
+      "selling_price": "$64.00",
+      "is_payment_successful": true,
+      "auction_end_timestamp": 0,
+      "product_id": "1732451632602715107",
+      "user_profile_image_url": "https://p16-common-sign.tiktokcdn-us.com/tos-useast5-avt-0068-tx/65f766d9c5464bb3553810c30daca4f3~tplv-tiktokx-cropcenter:48:48.jpeg?dr=9638&refresh_token=b3e2d978&x-expires=1782248400&x-signature=TLyWBXi3SdvAzlK5A1hwgchAdHA%3D&t=4d5b0474&ps=13740610&shp=f6dc9f09&shcp=5aca9457&idc=useast5",
+      "product_name": "Bin A - Alo Yoga and More, No Cancels",
+      "product_image_url": "https://p16-oec-general.ttcdn-us.com/tos-maliva-i-o3syd03w52-us/6994de25fd2c479ea619a446a01720f7~tplv-fhlh96nyum-resize-image:640:640.image?dr=12187&t=555f072d&ps=933b5bde&shp=f6dc9f09&shcp=5aca9457&idc=useast5&from=4141653769",
+      "order_id": "577442697879064661",
+      "sku_id": "1732451641500537827",
+      "sku_desc": "#50",
+      "order_create_time": 1781990544807,
+      "user_display_id": "perfecteverytime1",
+      "order_status": 3
+    },
+    {
+      "ttuid": "6638186827424874501",
+      "user_name": "Taralynn0216",
+      "selling_price": "$102.00",
+      "is_payment_successful": false,
+      "auction_end_timestamp": 1781991300607,
+      "product_id": "1732451632603436003",
+      "user_profile_image_url": "https://p16-common-sign.tiktokcdn-us.com/tos-useast5-avt-0068-tx/1517b3b52a275b4f885ce78b131e2d9b~tplv-tiktokx-cropcenter:48:48.jpeg?dr=9638&refresh_token=ca89b6b5&x-expires=1782248400&x-signature=rjWT9IuPj1oCRcy6zkGmwc6962Q%3D&t=4d5b0474&ps=13740610&shp=f6dc9f09&shcp=5aca9457&idc=useast5",
+      "product_name": "Bin B - Alo Yoga and More, No Cancels",
+      "product_image_url": "https://p16-oec-general.ttcdn-us.com/tos-maliva-i-o3syd03w52-us/6994de25fd2c479ea619a446a01720f7~tplv-fhlh96nyum-resize-image:640:640.image?dr=12187&t=555f072d&ps=933b5bde&shp=f6dc9f09&shcp=5aca9457&idc=useast5&from=4141653769",
+      "order_id": "577442705728508863",
+      "sku_id": "1732451642461492195",
+      "sku_desc": "#34",
+      "order_create_time": 1781991000687,
+      "user_display_id": "tlc0216",
+      "order_status": 2
+    }
+  ],
+  "auctionResultTotal": 88
+}
