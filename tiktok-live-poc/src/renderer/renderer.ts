@@ -79,10 +79,13 @@ setInterval(() => { if (sessionStart) renderSession() }, 1000)
 // ── Auction countdown ───────────────────────────────────────────────────────
 function tickCountdown() {
   const cd = document.getElementById('countdown')
+  const bar = document.getElementById('auctionBar') as HTMLElement | null
   if (!cd) return
-  if (!pinnedEndMs) { cd.textContent = ''; return }
-  const left = Math.round((pinnedEndMs - Date.now()) / 1000)
-  cd.textContent = left > 0 ? `⏱ ${left}s left` : '⏱ ended'
+  if (!pinnedEndMs) { cd.textContent = '—'; if (bar) bar.style.width = '0%'; return }
+  const leftMs = pinnedEndMs - Date.now()
+  const left = Math.max(0, Math.round(leftMs / 1000))
+  cd.textContent = left > 0 ? `${left}s` : 'ended'
+  if (bar) bar.style.width = Math.max(0, Math.min(100, (leftMs / 1000 / 15) * 100)) + '%' // ~15s window
 }
 setInterval(tickCountdown, 250)
 
@@ -91,16 +94,17 @@ function renderFeed(sales: Sale[]) {
   const feed = $('feed')
   feed.replaceChildren()
   if (!sales.length) { feed.appendChild(el('div', 'empty', 'Waiting for sales…')); return }
-  for (const s of sales) {
-    const row = el('div', 'feed-row' + (s.paymentStatus === 'paid' ? '' : ' ' + s.paymentStatus))
+  sales.forEach((s, i) => {
+    const status = s.paymentStatus === 'paid' ? '' : ' ' + s.paymentStatus
+    const row = el('div', 'feed-row' + status + (i === 0 ? ' fresh' : ''))
     row.appendChild(avatar(s.buyer.avatarUrl))
     const who = el('div', 'who')
-    const name = el('div', 'name')
-    name.appendChild(txt(s.buyer.username || s.buyer.handle || '—'))
-    if (s.paymentStatus === 'failed') name.appendChild(el('span', 'badge', ' FAILED'))
-    else if (s.paymentStatus === 'pending') name.appendChild(el('span', 'badge pending', ' PENDING'))
-    who.appendChild(name)
-    who.appendChild(el('div', 'item', `${s.skuDesc ? s.skuDesc + ' · ' : ''}${s.productName}`))
+    who.appendChild(el('div', 'name', s.buyer.username || s.buyer.handle || '—'))
+    const item = el('div', 'item')
+    if (s.paymentStatus === 'failed') item.appendChild(el('span', 'badge failed', 'FAILED'))
+    else if (s.paymentStatus === 'pending') item.appendChild(el('span', 'badge pending', 'PENDING'))
+    item.appendChild(txt(`${item.childElementCount ? ' ' : ''}${s.skuDesc ? s.skuDesc + ' · ' : ''}${s.productName}`))
+    who.appendChild(item)
     row.appendChild(who)
     row.appendChild(el('div', 'price' + (s.paymentStatus === 'failed' ? ' failed' : ''), s.price.formatted))
     row.appendChild(el('div', 'time', ago(s.createdAt)))
@@ -109,7 +113,7 @@ function renderFeed(sales: Sale[]) {
     pb.addEventListener('click', () => printSale(s))
     row.appendChild(pb)
     feed.appendChild(row)
-  }
+  })
 }
 
 function renderTopBuyers(buyers: BuyerAgg[]) {
@@ -172,11 +176,26 @@ function renderAuction(p?: PinnedAuction) {
   }
   pinnedEndMs = p.expectedEndMs
   box.appendChild(el('div', 'pname', p.productName))
-  box.appendChild(el('div', 'bid', p.maxBiddingPrice ?? '—'))
-  box.appendChild(el('div', 'meta', `high bidder @${p.winUsername} · ${p.numBids ?? 0} bids`))
-  const cd = el('div', 'countdown')
-  cd.id = 'countdown'
-  box.appendChild(cd)
+  const cell = (label: string, valueEl: HTMLElement, right = false) => {
+    const d = el('div')
+    if (right) d.style.textAlign = 'right'
+    d.appendChild(el('div', 'lbl', label))
+    d.appendChild(valueEl)
+    return d
+  }
+  const grid = el('div', 'grid3')
+  grid.appendChild(cell('Current Bid', el('div', 'bignum bid', p.maxBiddingPrice ?? '—')))
+  grid.appendChild(cell('Bids', el('div', 'bignum', String(p.numBids ?? 0))))
+  const ends = el('div', 'bignum ends')
+  ends.id = 'countdown'
+  grid.appendChild(cell('Ends in', ends, true))
+  box.appendChild(grid)
+  box.appendChild(el('div', 'meta-line', `high bidder @${p.winUsername}`))
+  const bar = el('div', 'bar')
+  const fill = el('i')
+  fill.id = 'auctionBar'
+  bar.appendChild(fill)
+  box.appendChild(bar)
   tickCountdown()
 }
 
@@ -324,7 +343,9 @@ function setupSettings() {
     document.getElementById(id)?.addEventListener('change', apply)
   }
   preview()
-  document.getElementById('labelSettings')?.addEventListener('click', () => document.getElementById('settingsModal')?.classList.remove('hidden'))
+  const openModal = () => document.getElementById('settingsModal')?.classList.remove('hidden')
+  document.getElementById('labelSettings')?.addEventListener('click', openModal)
+  document.getElementById('labelSettingsFooter')?.addEventListener('click', openModal)
   document.getElementById('closeSettings')?.addEventListener('click', () => document.getElementById('settingsModal')?.classList.add('hidden'))
 }
 setupSettings()
