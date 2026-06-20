@@ -29,7 +29,6 @@ function ago(ms: number): string {
   return `${Math.floor(s / 3600)}h`
 }
 
-let failedFromSales: number | null = null
 let gmvFromWs = false
 
 function renderFeed(sales: Sale[]) {
@@ -37,16 +36,17 @@ function renderFeed(sales: Sale[]) {
   feed.replaceChildren()
   if (!sales.length) { feed.appendChild(el('div', 'empty', 'Waiting for sales…')); return }
   for (const s of sales) {
-    const row = el('div', 'feed-row' + (s.paymentSuccessful ? '' : ' failed'))
+    const row = el('div', 'feed-row' + (s.paymentStatus === 'paid' ? '' : ' ' + s.paymentStatus))
     row.appendChild(avatar(s.buyer.avatarUrl))
     const who = el('div', 'who')
     const name = el('div', 'name')
     name.appendChild(txt(s.buyer.username || s.buyer.handle || '—'))
-    if (!s.paymentSuccessful) name.appendChild(el('span', 'badge', ' FAILED'))
+    if (s.paymentStatus === 'failed') name.appendChild(el('span', 'badge', ' FAILED'))
+    else if (s.paymentStatus === 'pending') name.appendChild(el('span', 'badge pending', ' PENDING'))
     who.appendChild(name)
     who.appendChild(el('div', 'item', `${s.skuDesc ? s.skuDesc + ' · ' : ''}${s.productName}`))
     row.appendChild(who)
-    row.appendChild(el('div', 'price' + (s.paymentSuccessful ? '' : ' failed'), s.price.formatted))
+    row.appendChild(el('div', 'price' + (s.paymentStatus === 'failed' ? ' failed' : ''), s.price.formatted))
     row.appendChild(el('div', 'time', ago(s.createdAt)))
     feed.appendChild(row)
   }
@@ -117,8 +117,9 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       renderProducts(ev.products)
       renderAuction(ev.pinned)
       $('itemsSold').textContent = String(ev.totalSold) // REST fallback when no WS
-      if (failedFromSales === null) $('failed').textContent = String(ev.paymentFailed)
-      console.log(`[render] roster: products=${$('products').childElementCount} itemsSold=${$('itemsSold').textContent} auction="${$('currentAuction').textContent?.slice(0, 50)}"`)
+      // Authoritative payment-failure count (complete; the sale feed is paginated).
+      $('failed').textContent = String(ev.paymentFailed)
+      console.log(`[render] roster: products=${$('products').childElementCount} itemsSold=${$('itemsSold').textContent} failed=${$('failed').textContent} auction="${$('currentAuction').textContent?.slice(0, 50)}"`)
       break
     case 'sales':
       renderFeed(ev.recentSales)
@@ -126,9 +127,7 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       $('uniqueBuyers').textContent = String(ev.uniqueBuyers)
       $('feedCount').textContent = `${ev.totalSales} sold · $${(ev.totalCents / 100).toFixed(2)}`
       if (!gmvFromWs) $('gmv').textContent = `$${(ev.totalCents / 100).toFixed(2)}` // REST fallback
-      failedFromSales = ev.failedPayments.length
-      $('failed').textContent = String(failedFromSales)
-      console.log(`[render] sales: feed=${$('feed').childElementCount} topBuyers=${$('topBuyers').childElementCount} unique=${$('uniqueBuyers').textContent} gmv=${$('gmv').textContent} failed=${$('failed').textContent}`)
+      console.log(`[render] sales: feed=${$('feed').childElementCount} topBuyers=${$('topBuyers').childElementCount} unique=${$('uniqueBuyers').textContent} gmv=${$('gmv').textContent} failedInWindow=${ev.failedPayments.length}`)
       break
   }
 })

@@ -38,5 +38,5 @@ if (last) {
   console.log('  top buyers:')
   for (const b of last.topBuyers.slice(0, 5)) console.log(`    @${b.handle ?? b.username}  ${b.itemCount} items  $${(b.totalCents / 100).toFixed(2)}`)
   console.log('  newest sales:')
-  for (const s of last.recentSales.slice(0, 6)) console.log(`    ${s.buyer.username}  ${s.skuDesc} ${s.productName.slice(0, 28)}  ${s.price.formatted}  ${s.paymentSuccessful ? '✓' : '✗ FAILED'}`)
+  for (const s of last.recentSales.slice(0, 6)) console.log(`    ${s.buyer.username}  ${s.skuDesc} ${s.productName.slice(0, 28)}  ${s.price.formatted}  ${s.paymentStatus}`)
 }

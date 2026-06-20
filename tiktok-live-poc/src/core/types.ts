@@ -115,7 +115,9 @@ export interface Sale {
   productImageUrl?: string
   skuDesc?: string
   price: Money
-  paymentSuccessful: boolean
+  // paid = is_payment_successful; failed = order_status 2 (matches the roster's
+  // num_auction_payment_failed); pending = won but not yet paid (e.g. status 4).
+  paymentStatus: 'paid' | 'failed' | 'pending'
   orderStatus?: number
   createdAt: number // order_create_time (ms)
 }

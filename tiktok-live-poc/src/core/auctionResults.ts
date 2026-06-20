@@ -13,6 +13,15 @@ const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
 const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined)
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
 
+// order_status 2 = payment failed (matches roster.num_auction_payment_failed);
+// is_payment_successful true (status 3) = paid; anything else (e.g. status 4) is
+// a win awaiting payment → pending, NOT a failure.
+function paymentStatusOf(r: Json): Sale['paymentStatus'] {
+  if (r['is_payment_successful'] === true) return 'paid'
+  if (num(r['order_status']) === 2) return 'failed'
+  return 'pending'
+}
+
 function toSale(r: Json): Sale | null {
   const orderId = str(r['order_id'])
   if (!orderId) return null
@@ -30,7 +39,7 @@ function toSale(r: Json): Sale | null {
     productImageUrl: str(r['product_image_url']),
     skuDesc: str(r['sku_desc']),
     price: parseMoney(str(r['selling_price']) ?? ''),
-    paymentSuccessful: r['is_payment_successful'] === true,
+    paymentStatus: paymentStatusOf(r),
     orderStatus: num(r['order_status']),
     createdAt: num(r['order_create_time']) ?? 0,
   }
@@ -46,13 +55,22 @@ export class AuctionResults {
     const newSales: Sale[] = []
     for (const row of rows) {
       const sale = toSale(obj(row) ?? {})
-      if (!sale || this.byOrder.has(sale.orderId)) continue
-      this.byOrder.set(sale.orderId, sale)
-      newSales.push(sale)
+      if (!sale) continue
+      const prev = this.byOrder.get(sale.orderId)
+      if (!prev) {
+        // genuinely new order
+        this.byOrder.set(sale.orderId, sale)
+        newSales.push(sale)
+      } else if (prev.paymentStatus !== sale.paymentStatus) {
+        // a previously-seen order changed status (e.g. pending → paid/failed):
+        // refresh the stored record so totals/buyers re-aggregate, but it is not
+        // a NEW sale. (auction_result/get re-returns it while it's in the window.)
+        this.byOrder.set(sale.orderId, sale)
+      }
     }
 
     const all = [...this.byOrder.values()]
-    const successful = all.filter((s) => s.paymentSuccessful)
+    const successful = all.filter((s) => s.paymentStatus === 'paid')
 
     // Aggregate buyers by stable id (ttuid → username) over successful sales.
     const aggs = new Map<string, BuyerAgg>()
@@ -83,7 +101,7 @@ export class AuctionResults {
       uniqueBuyers: aggs.size,
       totalSales: successful.length,
       totalCents: successful.reduce((n, s) => n + s.price.cents, 0),
-      failedPayments: all.filter((s) => !s.paymentSuccessful),
+      failedPayments: all.filter((s) => s.paymentStatus === 'failed'),
       ts,
     }
   }
