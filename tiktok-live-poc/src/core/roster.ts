@@ -40,6 +40,7 @@ function toPinned(p: Json): PinnedAuction {
     maxBiddingPrice: str(item['max_bidding_price']),
     numBids: num(item['num_of_bids']),
     status: num(item['status']),
+    expectedEndMs: Number(str(item['expected_end_time_ms'])) || undefined,
   }
 }
 

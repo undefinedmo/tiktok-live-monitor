@@ -3,7 +3,7 @@
 // and aggregates buyers (Top/Unique) + failed payments. Stateful — one instance
 // per session. Portable: no electron/DOM.
 
-import type { Buyer, BuyerAgg, Sale, SalesUpdate } from './types'
+import type { Buyer, BuyerAgg, ProductRollup, Sale, SalesUpdate } from './types'
 import { parseMoney } from './money'
 
 type Json = Record<string, unknown>
@@ -93,11 +93,27 @@ export class AuctionResults {
     }
     const topBuyers = [...aggs.values()].sort((a, b) => b.totalCents - a.totalCents)
 
+    // Per-product rollup — same source as failedPayments, so the Products table
+    // and the Failed-Payments total are guaranteed consistent.
+    const rollups = new Map<string, ProductRollup>()
+    for (const s of all) {
+      let p = rollups.get(s.productId)
+      if (!p) {
+        p = { productId: s.productId, productName: s.productName, paid: 0, failed: 0, pending: 0, cents: 0 }
+        rollups.set(s.productId, p)
+      }
+      if (s.paymentStatus === 'paid') { p.paid += 1; p.cents += s.price.cents }
+      else if (s.paymentStatus === 'failed') p.failed += 1
+      else p.pending += 1
+    }
+    const byProduct = [...rollups.values()].sort((a, b) => b.paid - a.paid)
+
     return {
       kind: 'sales',
       newSales,
       recentSales: [...all].sort((a, b) => b.createdAt - a.createdAt).slice(0, RECENT_CAP),
       topBuyers,
+      byProduct,
       uniqueBuyers: aggs.size,
       totalSales: successful.length,
       totalCents: successful.reduce((n, s) => n + s.price.cents, 0),

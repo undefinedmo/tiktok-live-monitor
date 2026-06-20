@@ -19,6 +19,10 @@ const obj = (v: unknown): Json | undefined =>
   v && typeof v === 'object' && !Array.isArray(v) ? (v as Json) : undefined
 const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined)
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
+const numStr = (v: unknown): number | undefined => {
+  const n = Number(str(v))
+  return Number.isFinite(n) ? n : undefined
+}
 
 function money(v: unknown): Money | undefined {
   const m = obj(v)
@@ -51,6 +55,8 @@ export class LiveFeed {
         id: str(session['id']),
         name: str(session['name']),
         status: num(session['live_session_status']),
+        startTime: Number(str(session['start_time'])) || undefined,
+        durationSeconds: Number(str(session['during_time'])) || undefined,
         ts,
       } satisfies SessionEvent)
     }
@@ -63,6 +69,8 @@ export class LiveFeed {
   }
 
   private mapCore(core: Json, ts: number): CoreStatsEvent {
+    const cmpList = obj(core['stats_benchmark_data'])?.['market_cmp_data']
+    const firstCmp = Array.isArray(cmpList) ? obj(cmpList[0]) : undefined
     return {
       kind: 'core_stats',
       viewers: num(core['current_viewers']),
@@ -71,6 +79,13 @@ export class LiveFeed {
       sales: num(core['sales']),
       gmv: money(core['gmv_local']),
       gpm: money(core['show_gpm_local']),
+      avgViewDuration: numStr(core['avg_view_duration']),
+      enterRoomRate: numStr(core['enter_room_rate']),
+      gmvPerHour: money(core['gmv_local_per_hour']),
+      auctionGmv: money(core['auction_gmv_local']),
+      nonAuctionGmv: money(core['non_auction_gmv_local']),
+      auctionSales: num(core['auction_sales']),
+      marketCmp: firstCmp ? numStr(firstCmp['cmp']) : undefined,
       ts,
     }
   }

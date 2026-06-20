@@ -41,6 +41,7 @@ describe('parseRoster', () => {
       numBids: 20,
     })
     expect(snap.pinned!.winAvatarUrl).toContain('tiktokcdn-us.com')
+    expect(snap.pinned!.expectedEndMs).toBe(1781991035496) // for the countdown timer
   })
 
   it('returns an empty snapshot for a missing/garbage payload', () => {

@@ -18,8 +18,17 @@ describe('LiveFeed', () => {
   it('maps wrapped live_core_stats to a core_stats event with gmv cents and sales', () => {
     const ev = new LiveFeed().ingest(frames.coreStats.payload, 1000)
     const core = ev.find((e) => e.kind === 'core_stats') as CoreStatsEvent
-    expect(core).toMatchObject({ kind: 'core_stats', viewers: 372, sales: 34 })
+    expect(core).toMatchObject({ kind: 'core_stats', viewers: 372, sales: 34, impressions: 183918, productClicks: 1022, auctionSales: 34 })
     expect(core.gmv?.cents).toBe(202176) // "$2,021.76"
+  })
+
+  it('maps the full set of engagement KPIs from live_core_stats', () => {
+    const core = new LiveFeed().ingest(frames.coreStats.payload, 1000).find((e) => e.kind === 'core_stats') as CoreStatsEvent
+    expect(core.gpm?.cents).toBe(1099) // show_gpm_local "$10.99"
+    expect(core.gmvPerHour?.cents).toBe(292216) // "$2,922.16"
+    expect(core.avgViewDuration).toBe(28) // "28.000000"
+    expect(core.enterRoomRate).toBeCloseTo(0.036011, 5)
+    expect(core.marketCmp).toBeCloseTo(-0.629004, 5) // stats_benchmark_data.market_cmp_data[0].cmp
   })
 
   it('maps a bare top-level stats frame (no wrapper) to a core_stats event', () => {

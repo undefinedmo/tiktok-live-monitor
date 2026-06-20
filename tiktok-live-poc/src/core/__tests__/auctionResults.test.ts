@@ -90,6 +90,18 @@ describe('AuctionResults', () => {
     expect(failed.failedPayments.map((s) => s.buyer.username)).toContain('Nope Nora')
   })
 
+  it('rolls up per-product paid/failed/pending consistently with the failed total', () => {
+    const pending = { ...rows[3], order_id: 'pp', order_status: 4, is_payment_successful: false } // product B
+    const u = new AuctionResults().ingest(wrap([...rows, pending]), 1000)
+    const byId = Object.fromEntries(u.byProduct.map((p) => [p.productId, p]))
+    // product A (…436003): 3 paid (Cristina, Nancy, BK) + 1 failed (Taralynn)
+    expect(byId['1732451632603436003']).toMatchObject({ paid: 3, failed: 1, pending: 0 })
+    // product B (…715107): 4 paid + 1 pending (the synthetic), 0 failed
+    expect(byId['1732451632602715107']).toMatchObject({ paid: 4, failed: 0, pending: 1 })
+    // the Failed-Payments total equals the sum of the per-product failed column
+    expect(u.failedPayments.length).toBe(u.byProduct.reduce((n, p) => n + p.failed, 0))
+  })
+
   it('keeps recentSales newest-first by order_create_time', () => {
     const u = new AuctionResults().ingest(wrap(rows), 1000)
     const times = u.recentSales.map((s) => s.createdAt)

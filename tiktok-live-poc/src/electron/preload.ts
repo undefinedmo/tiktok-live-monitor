@@ -80,12 +80,28 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
     headers: { 'content-type': 'application/json', 'x-tt-store-region': 'us' },
     body: JSON.stringify(body),
   })
-  const poll = () => {
-    void window.fetch(`${base}/auction_result/get${q}`, post({ room_id: cfg.roomId, session_id: cfg.sessionId, auction_page_type: 0, offset: 0, count: 100 })).catch(() => {})
+  // auction_result/get is paginated (count:100); page through `has_more` so the
+  // per-product / per-buyer / failed-payment rollups are complete on long shows.
+  // Each page's response is forwarded to main by the fetch hook above; the core
+  // dedupes by order_id, so re-fetched pages are harmless.
+  const cycle = async () => {
     void window.fetch(`${base}/added_auction_product/list${q}`, post({ room_id: cfg.roomId, session_id: cfg.sessionId, page_scene: 1, offset: 0, count: 100, auction_page_type: 0 })).catch(() => {})
+    let offset = 0
+    for (let guard = 0; guard < 30; guard++) {
+      let res: Response
+      try {
+        res = await window.fetch(`${base}/auction_result/get${q}`, post({ room_id: cfg.roomId, session_id: cfg.sessionId, auction_page_type: 0, offset, count: 100 }))
+      } catch {
+        break
+      }
+      let more = false
+      try { more = ((await res.clone().json()) as { has_more?: boolean }).has_more === true } catch { /* ignore */ }
+      if (!more) break
+      offset += 100
+    }
   }
-  poll()
-  setInterval(poll, 3000)
+  void cycle()
+  setInterval(() => void cycle(), 3000)
 })
 
 ipcRenderer.send('tt-status', { status: 'connecting' })

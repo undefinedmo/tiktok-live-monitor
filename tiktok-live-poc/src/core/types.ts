@@ -45,7 +45,14 @@ export interface CoreStatsEvent {
   productClicks?: number
   sales?: number
   gmv?: Money
-  gpm?: Money
+  gpm?: Money // show_gpm_local — GMV per 1,000 views
+  avgViewDuration?: number // seconds
+  enterRoomRate?: number // impressions → viewers (fraction)
+  gmvPerHour?: Money
+  auctionGmv?: Money
+  nonAuctionGmv?: Money
+  auctionSales?: number
+  marketCmp?: number // stats_benchmark_data vs market (fraction, +/-)
   ts: number
 }
 
@@ -54,6 +61,8 @@ export interface SessionEvent {
   id?: string
   name?: string
   status?: number
+  startTime?: number // current_session.start_time (unix seconds)
+  durationSeconds?: number // current_session.during_time (scheduled length)
   ts: number
 }
 
@@ -86,6 +95,7 @@ export interface PinnedAuction {
   maxBiddingPrice?: string
   numBids?: number
   status?: number
+  expectedEndMs?: number // latest_auction_item.expected_end_time_ms — for a countdown
 }
 
 export interface RosterSnapshot {
@@ -131,12 +141,24 @@ export interface BuyerAgg {
   totalCents: number
 }
 
+/** Per-product rollup derived from the sale history (so the Products table and
+ *  the Failed-Payments total come from one consistent source). */
+export interface ProductRollup {
+  productId: string
+  productName: string
+  paid: number // paid sales
+  failed: number // payment failures (order_status 2)
+  pending: number
+  cents: number // paid GMV
+}
+
 /** Result of ingesting one auction_result/get poll. */
 export interface SalesUpdate {
   kind: 'sales'
   newSales: Sale[] // sales whose orderId was not seen before this poll
   recentSales: Sale[] // all sales seen, newest first (capped)
   topBuyers: BuyerAgg[] // aggregated by buyer, desc by totalCents
+  byProduct: ProductRollup[] // per-product paid/failed/pending, desc by paid
   uniqueBuyers: number
   totalSales: number
   totalCents: number

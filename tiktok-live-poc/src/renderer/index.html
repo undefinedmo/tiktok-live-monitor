@@ -13,7 +13,11 @@
       header .sp { margin-left: auto; color: var(--dim); }
       header b { color: var(--txt); }
       #session { padding: 4px 14px; background: #11161d; color: var(--dim); font-size: 12px; border-bottom: 1px solid var(--line); }
-      .cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; padding: 12px 14px; }
+      .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 12px 14px 6px; }
+      .kpis { display: flex; flex-wrap: wrap; gap: 18px; padding: 0 16px 10px; color: var(--dim); font-size: 12px; }
+      .kpis b { color: var(--txt); font-variant-numeric: tabular-nums; }
+      .kpis b.up { color: var(--green); } .kpis b.down { color: var(--red); }
+      .countdown { font-variant-numeric: tabular-nums; color: var(--amber); font-weight: 600; }
       .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
       .card .lbl { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
       .card .val { font-size: 26px; font-weight: 700; margin-top: 2px; }
@@ -58,8 +62,16 @@
       <div class="card"><div class="lbl">Items Sold</div><div class="val" id="itemsSold">0</div></div>
       <div class="card"><div class="lbl">GMV</div><div class="val" id="gmv">$0.00</div></div>
       <div class="card"><div class="lbl">Unique Buyers</div><div class="val" id="uniqueBuyers">0</div></div>
-      <div class="card"><div class="lbl">Top Bid</div><div class="val" id="topBid">—</div></div>
       <div class="card alert"><div class="lbl">Failed Payments</div><div class="val" id="failed">0</div></div>
+    </div>
+    <div class="kpis" id="kpis">
+      <span>GPM <b id="gpm">—</b></span>
+      <span>GMV/hr <b id="gmvHr">—</b></span>
+      <span>Impressions <b id="impr">—</b></span>
+      <span>Product clicks <b id="clicks">—</b></span>
+      <span>Avg view <b id="avgView">—</b></span>
+      <span>Enter rate <b id="enterRate">—</b></span>
+      <span>vs Market <b id="mktCmp">—</b></span>
     </div>
     <main>
       <div class="col">
@@ -80,7 +92,7 @@
         <div class="panel" style="flex:1">
           <h3>Products</h3>
           <div class="body"><table>
-            <thead><tr><th>Product</th><th class="n">Sold</th><th class="n">Failed</th></tr></thead>
+            <thead><tr><th>Product</th><th class="n">Sold</th><th class="n">Failed</th><th class="n">Pending</th><th class="n">Stock</th></tr></thead>
             <tbody id="products"></tbody>
           </table></div>
         </div>
