@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session } from 'electron'
+import { app, BrowserWindow, ipcMain, session, Menu, nativeTheme } from 'electron'
 import { join } from 'node:path'
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { gunzipSync } from 'node:zlib'
@@ -21,6 +21,7 @@ const CHROME_UA =
 
 let viewer: BrowserWindow | null = null
 let monitor: BrowserWindow | null = null
+let seller: BrowserWindow | null = null // Seller-Center login window for order Sync (independent of the Live Monitor)
 const feed = new LiveFeed()
 const auctionResults = new AuctionResults()
 let connected = false
@@ -77,6 +78,8 @@ function createViewer() {
   viewer = new BrowserWindow({
     width: 1200,
     height: 900,
+    backgroundColor: '#07080b', // match the body so the frame/title bar reads dark
+    autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, 'preload-viewer.cjs'),
       // Lets flv.js fetch the cross-origin, http:// live FLV from the file://
@@ -97,6 +100,8 @@ function createMonitor() {
   monitor = new BrowserWindow({
     width: 1280,
     height: 860,
+    backgroundColor: '#07080b',
+    autoHideMenuBar: true,
     webPreferences: {
       session: part,
       // Preload must share the page's main world to wrap its WebSocket + XHR/fetch.
@@ -129,6 +134,19 @@ function createMonitor() {
   })
   monitor.webContents.on('did-navigate-in-page', (_e, url) => debug(`[tt] nav-in-page ${url}`))
   monitor.webContents.on('did-finish-load', () => debug(`[tt] loaded ${monitor?.webContents.getURL() ?? ''}`))
+}
+
+// Open TikTok Seller Center in its own window so the user can log in for order Sync.
+// Shares the persisted session (so cookies/auth are reused) but is NOT the Live Monitor.
+function openSellerLogin() {
+  if (seller && !seller.isDestroyed()) { seller.show(); seller.focus(); return }
+  seller = new BrowserWindow({
+    width: 1100, height: 820, backgroundColor: '#07080b', autoHideMenuBar: true,
+    title: 'TikTok Seller Center — log in for Sync',
+    webPreferences: { session: session.fromPartition(TT_PARTITION) },
+  })
+  seller.on('closed', () => { seller = null })
+  void seller.loadURL('https://seller-us.tiktok.com/order')
 }
 
 ipcMain.on('tt-status', (_e, s: { status: StatusEvent['status']; detail?: string }) => {
@@ -248,28 +266,28 @@ ipcMain.handle('tt-open-monitor', () => {
 })
 
 // "Sync orders" → pull the Seller-Center order book via the persisted session cookies.
-// Cookie auth only (no request signing) — works whenever logged in, independent of any
-// live stream. (The live feed/poll is a separate Monitor-only concern.)
+// Cookie auth only (no request signing). Entirely independent of the Live Monitor: if the
+// user isn't logged in, we open the Seller-Center window (NOT the monitor) to log in.
 let orderSyncing = false
 ipcMain.handle('tt-sync', async () => {
   if (orderSyncing) return { ok: false, reason: 'Sync already running' }
   if (!(await tiktokLoggedIn())) {
-    monitor?.show()
-    monitor?.focus()
-    return { ok: false, reason: 'Log in to TikTok in the monitor window' }
+    openSellerLogin()
+    return { ok: false, reason: 'Log into TikTok Seller Center (window opened), then Sync again' }
   }
   orderSyncing = true
   try {
     const cookieHeader = await tiktokCookieHeader()
-    const { orders, total } = await pullTiktokOrders(cookieHeader, (pulled, tot) =>
-      send({ kind: 'status', status: 'connected', detail: `syncing orders ${pulled}/${tot}` }),
-    )
+    const { orders, total } = await pullTiktokOrders(cookieHeader)
     const sales = orders.map(orderToSale)
     send({ kind: 'orders', orders: sales, total, ts: Date.now() })
     debug(`[tt] synced ${sales.length}/${total} orders`)
     return { ok: true, count: sales.length }
   } catch (e) {
-    return { ok: false, reason: (e as Error).message.slice(0, 160) }
+    const msg = (e as Error).message
+    // an auth/session failure on the order endpoint → prompt a Seller-Center re-login
+    if (/code\s|HTTP 401|session may be expired/i.test(msg)) openSellerLogin()
+    return { ok: false, reason: msg.slice(0, 160) }
   } finally {
     orderSyncing = false
   }
@@ -373,6 +391,8 @@ ipcMain.handle('print-label', async (_e, args: { labelData: LabelData; printerNa
 
 app.whenReady().then(() => {
   app.userAgentFallback = CHROME_UA
+  Menu.setApplicationMenu(null) // remove the native File/Edit/View/Window/Help menu bar
+  nativeTheme.themeSource = 'dark' // dark native title bar (min/max/close) to match the body
   createViewer()
   if (process.env.TT_REPLAY) {
     setTimeout(replayFixtures, 1200)

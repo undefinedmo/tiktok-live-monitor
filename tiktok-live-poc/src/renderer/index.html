@@ -2,7 +2,7 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>SellerFolio Live — Operations Terminal</title>
+    <title>SellerFolio TikTok — Operations Terminal</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -37,7 +37,7 @@
       .rail-logo{position:relative;width:40px;height:40px;border-radius:9px;background:linear-gradient(135deg,#1a2740,#241d44);border:1px solid #33405c;display:flex;align-items:center;justify-content:center;}
       .rail-logo img{width:24px;height:24px;display:block;}
       .monitor{flex:1;display:flex;min-width:0;}
-      .video-col{flex:1.65;min-width:0;display:flex;flex-direction:column;padding:14px;gap:12px;}
+      .video-col{flex:0 1 420px;min-width:300px;max-width:460px;display:flex;flex-direction:column;padding:14px;gap:12px;}
       .stream-card{flex:1;position:relative;border-radius:10px;border:1px solid #1b1f28;overflow:hidden;background:radial-gradient(120% 90% at 30% 20%,#15202e 0%,#0a0d13 55%,#070809 100%);min-height:0;}
       .stream-card::before{content:'';position:absolute;inset:0;background-image:repeating-linear-gradient(135deg,rgba(255,255,255,.018) 0 2px,transparent 2px 9px);pointer-events:none;z-index:1;}
       #live{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:transparent;z-index:0;}
@@ -49,13 +49,13 @@
       .lot-card{position:absolute;left:16px;right:16px;bottom:16px;display:flex;align-items:center;gap:14px;background:rgba(10,12,17,.84);border:1px solid #262c38;border-radius:10px;padding:13px 16px;backdrop-filter:blur(10px);z-index:2;}
       .lot-thumb{width:56px;height:76px;border-radius:6px;background:repeating-linear-gradient(45deg,#243049 0 6px,#1c2740 6px 12px);border:1px solid #34405c;flex:none;}
       .bid-cta{flex:none;height:62px;border:none;border-radius:10px;cursor:pointer;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:18px;letter-spacing:1px;color:#fff;background:linear-gradient(110deg,#3fa0ff,#6b56f0 55%,#8a5cf6);box-shadow:0 8px 24px rgba(86,80,240,.4),inset 0 1px 0 rgba(255,255,255,.25);}
-      .chat-col{width:296px;flex:none;border-left:1px solid #15181f;border-right:1px solid #15181f;display:flex;flex-direction:column;background:#08090d;}
+      .chat-col{flex:1 1 360px;min-width:280px;max-width:700px;border-left:1px solid #15181f;border-right:1px solid #15181f;display:flex;flex-direction:column;background:#08090d;}
       .section-head{height:50px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid #15181f;}
       .section-title{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:1.5px;color:#8b93a3;}
       .chat-input{flex:none;padding:12px 14px;border-top:1px solid #15181f;display:flex;align-items:center;gap:8px;}
       .chat-placeholder{flex:1;height:36px;border:1px solid #20242e;border-radius:8px;background:#0c0e13;display:flex;align-items:center;padding:0 12px;font-size:13px;color:#5c6473;}
       .chat-send{width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#3fa0ff,#8a5cf6);display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;}
-      .rightpanel{width:496px;flex:none;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;background:#070809;}
+      .rightpanel{flex:2 1 480px;min-width:360px;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;background:#070809;}
       .panel{background:#0f131a;border:1px solid #1d212b;border-radius:9px;overflow:hidden;}
       .panel.pad{padding:14px;}
       .panel-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #1a1e27;}
@@ -72,10 +72,9 @@
       /* large screens: TikTok live is 9:16 portrait, so cap the video and give the freed
          width to a larger chat + a wider ops panel (multi-column feed). Smaller screens
          keep the default proportions. */
+      /* the column flex above already keeps the video small + chat large at every size;
+         on wide screens, flow the feed into multiple columns to use the extra width */
       @media (min-width:1700px){
-        .video-col{flex:0 1 460px;max-width:480px;}
-        .chat-col{width:660px;}
-        .rightpanel{flex:1 1 520px;width:auto;}
         .bidfeed{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:8px;padding:8px;max-height:600px;}
         .bidfeed .bidrow{border-bottom:none;border:1px solid #1a1e27;border-radius:9px;}
       }
@@ -190,7 +189,7 @@
   </head>
   <body>
     <div class="topbar">
-      <div class="brand"><img src="./sf-logo.png" alt="SellerFolio" /><span>SellerFolio Live</span></div>
+      <div class="brand"><img src="./sf-logo.png" alt="SellerFolio" /><span>SellerFolio TikTok</span></div>
       <div class="livepill"><span id="status">connecting…</span><span class="sep">&middot;</span><span id="sessionName">—</span></div>
       <div style="flex:1;"></div>
       <div id="liveMeters" style="display:flex;align-items:center;gap:18px;">
