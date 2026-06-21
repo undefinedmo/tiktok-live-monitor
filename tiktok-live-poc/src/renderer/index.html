@@ -24,6 +24,13 @@
       .stat .v.red{color:#ff5c5c;}
       .stat .s{font-size:11px;color:#8b93a3;margin-top:2px;}
       .rightpanel > div{flex:0 0 auto;}
+      .bidfeed{max-height:360px;overflow-y:auto;}
+      /* ultra-wide: flow the live sales feed into multiple columns so the freed width is used */
+      @media (min-width:2000px){
+        .bidfeed{display:grid;grid-template-columns:repeat(auto-fill,minmax(500px,1fr));gap:8px;padding:8px;max-height:560px;}
+        .bidfeed .bidrow{border-bottom:none;border:1px solid #1a1e27;border-radius:9px;}
+        .bidfeed > .mono{grid-column:1/-1;}
+      }
       .chatrow{font-size:13px;line-height:1.45;}
       .chatname{font-weight:600;}
       .chattext{color:#cdd4e0;}
@@ -148,7 +155,7 @@
       </div>
 
       <!-- ============ MONITOR SCREEN ============ -->
-      <div id="monitorScreen" style="flex:1;display:flex;min-width:0;justify-content:center;">
+      <div id="monitorScreen" style="flex:1;display:flex;min-width:0;">
       <!-- VIDEO column (capped — TikTok live is 9:16 portrait, so a wide box is mostly black) -->
       <div style="flex:0 1 420px;min-width:300px;max-width:440px;display:flex;flex-direction:column;padding:14px;gap:12px;">
         <!-- live status header (monitor only) -->
@@ -181,7 +188,7 @@
       </div>
 
       <!-- CHAT column (placeholder — chat not captured) -->
-      <div style="flex:1 1 300px;min-width:200px;max-width:440px;border-left:1px solid #15181f;border-right:1px solid #15181f;display:flex;flex-direction:column;background:#08090d;">
+      <div style="flex:0 1 320px;min-width:220px;max-width:360px;border-left:1px solid #15181f;border-right:1px solid #15181f;display:flex;flex-direction:column;background:#08090d;">
         <div style="height:50px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid #15181f;">
           <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#8b93a3;">LIVE CHAT</span>
           <span class="mono" style="display:flex;align-items:center;gap:6px;font-size:11px;color:#36d9a4;"><span style="width:6px;height:6px;border-radius:50%;background:#36d9a4;"></span><span id="chatViewers">—</span></span>
@@ -192,9 +199,9 @@
       </div>
 
       <!-- RIGHT panel (absorbs the freed width on large screens — the ops core) -->
-      <div class="sf-scroll rightpanel" style="flex:2 1 540px;min-width:360px;max-width:920px;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;background:#070809;">
+      <div class="sf-scroll rightpanel" style="flex:1 1 640px;min-width:360px;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;background:#070809;">
         <!-- stats -->
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;" id="statsGrid"></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;" id="statsGrid"></div>
         <!-- live bid feed -->
         <div style="background:#0f131a;border:1px solid #1d212b;border-radius:9px;overflow:hidden;">
           <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #1a1e27;">
@@ -205,7 +212,7 @@
             <span id="feedPage" class="mono" style="font-size:10px;color:#5c6473;min-width:34px;text-align:center;">1/1</span>
             <button id="feedNext" class="qbtn void" style="height:24px;padding:0 8px;">▶</button>
           </div>
-          <div id="bidFeed" style="max-height:360px;overflow-y:auto;" class="sf-scroll"><div class="mono" style="padding:18px 14px;color:#3a4150;font-size:11px;">Waiting for sales…</div></div>
+          <div id="bidFeed" class="sf-scroll bidfeed"><div class="mono" style="padding:18px 14px;color:#3a4150;font-size:11px;">Waiting for sales…</div></div>
         </div>
         <!-- buyer intel -->
         <div style="background:#0f131a;border:1px solid #1d212b;border-radius:9px;padding:14px;">
