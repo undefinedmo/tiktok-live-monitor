@@ -111,7 +111,12 @@
       .ledger-detail{padding:14px 16px;background:#0a0d13;border-bottom:1px solid #1a1e27;display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:18px;}
       .ledger-detail h5{margin:0 0 8px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1px;color:#707a8c;font-weight:500;}
       .ledger-detail .kv{font-size:12px;color:#cdd4e0;line-height:1.7;} .ledger-detail .kv b{color:#8b93a3;font-weight:500;}
-      .ledger-detail .txbox{background:#0f131a;border:1px solid #1d212b;border-radius:7px;padding:10px;font-size:12px;color:#cdd4e0;line-height:1.5;}
+      .ledger-detail .txbox{background:#0f131a;border:1px solid #1d212b;border-radius:7px;padding:10px;font-size:12px;color:#cdd4e0;line-height:1.5;margin-top:6px;}
+      .ledger-detail .aival{border-bottom:1px dashed #2a3140;cursor:text;}
+      .ledger-detail .aival.empty{color:#4a525f;}
+      .ledger-detail .txbox.aival{border-bottom:1px solid #1d212b;}
+      .ai-edit{width:100%;max-width:300px;background:#0c0e13;color:#eef1f7;border:1px solid #4a5b86;border-radius:5px;padding:3px 6px;font:inherit;font-size:12px;}
+      textarea.ai-edit{max-width:none;resize:vertical;line-height:1.5;}
       .videocol{flex:1.6;min-width:0;display:flex;flex-direction:column;padding:14px;}
       /* dynamic bid-feed rows */
       .bidrow{position:relative;display:flex;align-items:center;gap:12px;padding:13px 14px;border-bottom:1px solid #1a1e27;}

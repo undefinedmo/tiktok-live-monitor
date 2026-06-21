@@ -745,16 +745,55 @@ function ledgerDetailEl(r: LedgerRow): HTMLElement {
   const t = r.transcript
   const tx = el('div')
   tx.appendChild(el('h5', undefined, '✦ AI PRODUCT DETAILS'))
-  const structured = t && (t.brand || t.item || t.color || t.size || t.retailPrice)
-  if (structured) {
-    const kv = (k: string, v?: string) => { if (!v) return; const line = el('div', 'kv'); line.appendChild(el('b', undefined, k + ': ')); line.appendChild(txt(v)); tx.appendChild(line) }
-    kv('Brand', t!.brand); kv('Item', t!.item); kv('Color', t!.color); kv('Size', t!.size); kv('Retail', t!.retailPrice)
-    if (t!.summary) tx.appendChild(el('div', 'txbox', t!.summary))
-  } else {
-    tx.appendChild(el('div', 'txbox', t?.summary ?? '(no transcript — capture per bin via ✦ in the Products panel)'))
+  // always show every field (incl. Brand); double-click any value to edit it
+  const fields: [keyof LedgerTranscript, string][] = [
+    ['brand', 'Brand'], ['item', 'Item'], ['color', 'Color'], ['size', 'Size'], ['retailPrice', 'Retail'],
+  ]
+  for (const [key, label] of fields) {
+    const line = el('div', 'kv')
+    line.appendChild(el('b', undefined, label + ': '))
+    const v = (t?.[key] as string | undefined) ?? ''
+    const span = el('span', 'aival' + (v ? '' : ' empty'), v || '—')
+    span.title = 'double-click to edit'
+    span.addEventListener('dblclick', (e) => { e.stopPropagation(); editAiField(r, key, span) })
+    line.appendChild(span)
+    tx.appendChild(line)
   }
+  const sum = el('div', 'txbox aival' + (t?.summary ? '' : ' empty'), t?.summary || '(double-click to add a summary)')
+  sum.title = 'double-click to edit'
+  sum.addEventListener('dblclick', (e) => { e.stopPropagation(); editAiField(r, 'summary', sum, true) })
+  tx.appendChild(sum)
   d.appendChild(tx)
   return d
+}
+
+// double-click an AI field → edit it; the edit is saved per ORDER (overrides the AI/bin value)
+function editAiField(r: LedgerRow, key: keyof LedgerTranscript, node: HTMLElement, multiline = false) {
+  const input = document.createElement(multiline ? 'textarea' : 'input') as HTMLInputElement
+  input.className = 'ai-edit'
+  input.value = (r.transcript?.[key] as string | undefined) ?? ''
+  if (multiline) (input as unknown as HTMLTextAreaElement).rows = 3
+  node.replaceWith(input)
+  input.focus()
+  input.select?.()
+  let done = false
+  const commit = () => {
+    if (done) return
+    done = true
+    const v = input.value.trim()
+    const next: LedgerTranscript = { ...(orderTx[r.orderId] ?? r.transcript ?? {}) }
+    if (v) next[key] = v
+    else delete next[key]
+    orderTx[r.orderId] = next
+    saveOrderTx()
+    renderLedger()
+  }
+  input.addEventListener('blur', commit)
+  input.addEventListener('keydown', (e) => {
+    const ke = e as KeyboardEvent
+    if (ke.key === 'Enter' && !(multiline && ke.shiftKey)) { e.preventDefault(); input.blur() }
+    else if (ke.key === 'Escape') { done = true; renderLedger() }
+  })
 }
 
 function renderLedger() {

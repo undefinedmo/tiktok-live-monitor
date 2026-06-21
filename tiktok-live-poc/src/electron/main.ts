@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, session, Menu, nativeTheme } from 'electron'
 import { join } from 'node:path'
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { gunzipSync } from 'node:zlib'
 import { parsePushFrame } from '../core/pushFrame'
 import { LiveFeed } from '../core/liveFeed'
@@ -248,7 +248,14 @@ ipcMain.handle('save-printer', (_e, name: string) => {
   return true
 })
 // ── AI transcription (Gemini, mirrors sellerfolio-live's enrichment) ─────────
-const GEMINI_KEY = process.env.GEMINI_API_KEY || ''
+// Key resolution: env var wins, else a local gitignored `gemini.key` file in the PoC root
+// (same convention as live-ledger). __dirname is dist/, so '..' is the project root.
+function readGeminiKey(): string {
+  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY
+  const f = join(__dirname, '..', 'gemini.key')
+  try { return existsSync(f) ? readFileSync(f, 'utf8').trim() : '' } catch { return '' }
+}
+const GEMINI_KEY = readGeminiKey()
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
 
 // Connection state for the UI: are we logged in, is a live show captured, are we polling?
