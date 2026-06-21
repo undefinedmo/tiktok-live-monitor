@@ -78,6 +78,8 @@ XMLHttpRequest.prototype.open = function (this: XMLHttpRequest, method: string, 
 // window.fetch to add the request signing (X-Bogus/msToken/X-Gnarly), and our
 // fetch hook above forwards the responses to main like any dashboard-issued poll.
 let polling = false
+let runCycle: (() => Promise<void>) | null = null // set once polling starts; lets a manual Sync force a cycle
+ipcRenderer.on('tt-poll-now', () => { void runCycle?.() })
 ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string }) => {
   if (polling || !cfg?.roomId || !cfg?.sessionId) return
   polling = true
@@ -119,6 +121,7 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
       offset += 100
     }
   }
+  runCycle = cycle
   void cycle()
   setInterval(() => void cycle(), 3000)
 })

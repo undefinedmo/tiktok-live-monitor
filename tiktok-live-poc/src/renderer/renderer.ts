@@ -1,6 +1,7 @@
 import flvjs from 'flv.js'
 import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuction, ChatMessage } from '../core/types'
 import { computeKpis, filterRows, sortRows, profitCents, marginPct, statusLabel, applyCost, toCsv, parseRetailCents, groupForPicklist, type LedgerRow, type LedgerFilters, type LedgerTranscript, type SortKey, type CostApply, type PickGroup } from '../core/ledger'
+import { loadShows, upsertShow, listShows, salesForShow, type ShowMeta, type ShowStore } from '../core/shows'
 
 interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string; title?: string }
 interface LabelTemplate {
@@ -22,6 +23,9 @@ declare global {
     recapAPI?: {
       enabled: () => Promise<{ enabled: boolean; model: string }>
       transcribe: (payload: { audio: Uint8Array; productName?: string; structured?: boolean }) => Promise<{ text?: string; fields?: LedgerTranscript; error?: string }>
+    }
+    syncAPI?: {
+      now: () => Promise<{ ok: boolean; reason?: string }>
     }
   }
 }
@@ -87,6 +91,11 @@ function renderStats() {
     grid.appendChild(tile)
   }
 }
+
+// ── per-show persistence + show filter ──────────────────────────────────────
+let showStore: ShowStore = loadShows(localStorage.getItem('tt-shows'))
+let currentShow: ShowMeta | null = null
+let selectedShowId = 'live'
 
 // ── live sales feed (comp "bid feed") — paginated ───────────────────────────
 let allSales: Sale[] = []
@@ -579,8 +588,41 @@ function applyBulkCost(apply: CostApply) {
   renderLedger()
 }
 
+// the ledger/picklist data source respects the show filter; 'live' = the current capture
+function sourceSales(): Sale[] {
+  return selectedShowId === 'live' ? allSales : salesForShow(showStore, selectedShowId)
+}
+
+// rebuild the Ledger + Picklist show-pickers from the persisted store; keep the current selection
+function refreshShowOptions() {
+  const shows = listShows(showStore)
+  const fmtShowDate = (sec?: number) =>
+    sec ? new Date(sec * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
+  for (const id of ['ledgerShow', 'pickShow']) {
+    const sel = document.getElementById(id) as HTMLSelectElement | null
+    if (!sel) continue
+    sel.replaceChildren()
+    const liveOpt = document.createElement('option')
+    liveOpt.value = 'live'
+    liveOpt.textContent = 'Live (current)'
+    sel.appendChild(liveOpt)
+    for (const s of shows) {
+      const opt = document.createElement('option')
+      opt.value = s.id
+      const date = fmtShowDate(s.startTime)
+      opt.textContent = date ? `${s.name} — ${date}` : s.name
+      sel.appendChild(opt)
+    }
+    const allOpt = document.createElement('option')
+    allOpt.value = 'all'
+    allOpt.textContent = 'All shows'
+    sel.appendChild(allOpt)
+    sel.value = selectedShowId
+  }
+}
+
 function ledgerRows(): LedgerRow[] {
-  return allSales.map((s) => ({
+  return sourceSales().map((s) => ({
     ...s,
     // order-level cost overrides the product/bin template
     costCents: costMap[s.orderId] ?? productCostMap[s.productId],
@@ -731,6 +773,8 @@ function showScreen(s: 'monitor' | 'ledger' | 'picklist') {
   $('navMonitor').classList.toggle('active', s === 'monitor')
   $('navLedger').classList.toggle('active', s === 'ledger')
   $('navPicklist').classList.toggle('active', s === 'picklist')
+  // live room/viewers/elapsed only make sense on the monitor
+  $('liveStats').style.display = s === 'monitor' ? 'flex' : 'none'
   if (s === 'ledger') renderLedger()
   if (s === 'picklist') renderPicklist()
 }
@@ -793,6 +837,57 @@ function renderPicklist() {
     }
     host.appendChild(card)
   }
+}
+
+// ── "Filter by Show" — keep the Ledger + Picklist pickers in sync ────────────
+function onShowChange(value: string) {
+  selectedShowId = value
+  const lSel = document.getElementById('ledgerShow') as HTMLSelectElement | null
+  const pSel = document.getElementById('pickShow') as HTMLSelectElement | null
+  if (lSel && lSel.value !== value) lSel.value = value
+  if (pSel && pSel.value !== value) pSel.value = value
+  renderLedger()
+  renderPicklist()
+}
+
+function setupShowFilter() {
+  refreshShowOptions()
+  ;(document.getElementById('ledgerShow') as HTMLSelectElement | null)
+    ?.addEventListener('change', (e) => onShowChange((e.target as HTMLSelectElement).value))
+  ;(document.getElementById('pickShow') as HTMLSelectElement | null)
+    ?.addEventListener('change', (e) => onShowChange((e.target as HTMLSelectElement).value))
+}
+
+// ── "Sync orders" — pull the latest orders now ───────────────────────────────
+let syncing = false
+async function runSync() {
+  if (syncing) return
+  syncing = true
+  const navSync = document.getElementById('navSync')
+  navSync?.classList.add('syncing')
+  try {
+    if (window.syncAPI) {
+      const res = await window.syncAPI.now()
+      if (res.ok === false) {
+        const reason = res.reason ?? 'sync failed'
+        console.warn('sync failed:', reason)
+        // surface the reason in #status; the next live event will overwrite it shortly
+        const st = document.getElementById('status')
+        if (st) st.textContent = reason
+      }
+    } else {
+      // static demo — give the control feedback without a backend
+      await new Promise((r) => window.setTimeout(r, 900))
+    }
+  } finally {
+    navSync?.classList.remove('syncing')
+    syncing = false
+  }
+}
+
+function setupSync() {
+  document.getElementById('navSync')?.addEventListener('click', () => void runSync())
+  document.getElementById('ledgerSync')?.addEventListener('click', () => void runSync())
 }
 
 function setupPicklist() {
@@ -915,6 +1010,8 @@ function setupLedger() {
 }
 setupLedger()
 setupPicklist()
+setupSync()
+setupShowFilter()
 
 // ── event loop ──────────────────────────────────────────────────────────────
 window.ttLive.onEvent((ev: LiveEvent) => {
@@ -931,6 +1028,7 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       $('sessionName').textContent = ev.name ?? '—'
       if (ev.startTime) sessionStart = ev.startTime
       if (ev.startTime) $('sessionName').title = `started ${fmtClock(ev.startTime)}`
+      currentShow = { id: ev.id ?? 'live', name: ev.name ?? 'Live show', startTime: ev.startTime }
       break
     case 'core_stats':
       if (ev.viewers !== undefined) { $('viewers').textContent = String(ev.viewers); $('chatViewers').textContent = String(ev.viewers) }
@@ -956,6 +1054,12 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       lastByProduct = ev.byProduct
       renderProductsTable()
       allSales = ev.recentSales
+      // persist this show's sales so it can be re-selected in the Ledger/Picklist filter later
+      if (currentShow) {
+        showStore = upsertShow(showStore, currentShow, ev.recentSales, Date.now())
+        localStorage.setItem('tt-shows', JSON.stringify(showStore))
+        refreshShowOptions()
+      }
       currentTopSet = new Set(ev.topBuyers.slice(0, 5).map((b) => b.ttuid || b.username))
       renderFeed()
       renderTopBuyer(ev.topBuyers)

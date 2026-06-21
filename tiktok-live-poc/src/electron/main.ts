@@ -210,6 +210,15 @@ ipcMain.handle('save-printer', (_e, name: string) => {
 const GEMINI_KEY = process.env.GEMINI_API_KEY || ''
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
 
+// Manual "Sync orders" from the UI → force an immediate REST poll cycle.
+ipcMain.handle('tt-sync', () => {
+  if (!pollRoomId || !pollSessionId) return { ok: false, reason: 'Not connected to a live show yet' }
+  if (!monitor) return { ok: false, reason: 'Monitor window unavailable' }
+  if (!pollSent) maybeStartPolling()
+  else monitor.webContents.send('tt-poll-now')
+  return { ok: true }
+})
+
 ipcMain.handle('recap-enabled', () => ({ enabled: !!GEMINI_KEY, model: GEMINI_MODEL }))
 
 interface TranscriptFields { brand?: string; item?: string; color?: string; size?: string; retailPrice?: string; summary?: string }

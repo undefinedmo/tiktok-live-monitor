@@ -15,3 +15,7 @@ contextBridge.exposeInMainWorld('recapAPI', {
   enabled: () => ipcRenderer.invoke('recap-enabled'),
   transcribe: (payload: unknown) => ipcRenderer.invoke('tt-transcribe', payload),
 })
+
+contextBridge.exposeInMainWorld('syncAPI', {
+  now: () => ipcRenderer.invoke('tt-sync'),
+})
