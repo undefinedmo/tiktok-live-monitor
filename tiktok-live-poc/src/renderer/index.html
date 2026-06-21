@@ -146,6 +146,7 @@
       <!-- icon rail -->
       <div style="width:56px;flex:none;border-right:1px solid #15181f;display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:8px;background:#090a0e;">
         <div style="width:40px;height:40px;border-radius:9px;background:linear-gradient(135deg,#1a2740,#241d44);border:1px solid #33405c;display:flex;align-items:center;justify-content:center;"><img src="./sf-logo.png" alt="SF" style="width:24px;height:24px;display:block;" /></div>
+        <div id="dot" title="connecting…" style="width:8px;height:8px;border-radius:50%;background:#5c6473;margin:2px 0 4px;"></div>
         <div class="navicon active" id="navMonitor" title="Live Monitor">◉</div>
         <div class="navicon" id="navLedger" title="Order Ledger">▤</div>
         <div class="navicon" id="navPicklist" title="Picklist / Packlist">✓</div>
@@ -158,20 +159,8 @@
       <div id="monitorScreen" style="flex:1;display:flex;min-width:0;">
       <!-- VIDEO column (capped — TikTok live is 9:16 portrait, so a wide box is mostly black) -->
       <div style="flex:0 1 420px;min-width:300px;max-width:440px;display:flex;flex-direction:column;padding:14px;gap:12px;">
-        <!-- live status header (monitor only) -->
-        <div style="flex:none;display:flex;align-items:center;gap:12px;height:32px;">
-          <div class="mono" style="display:flex;align-items:center;gap:8px;padding:4px 10px;border:1px solid #25303f;border-radius:7px;background:#0c1119;font-size:11px;color:#c4ccd9;">
-            <span id="dot" style="width:7px;height:7px;border-radius:50%;background:#5c6473;"></span>
-            <span id="status">connecting…</span>
-          </div>
-          <div id="sessionName" class="mono" style="font-size:11px;color:#8b93a3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">—</div>
-          <div style="flex:1;"></div>
-          <div id="liveStats" style="display:flex;align-items:center;gap:16px;">
-            <div class="mono" style="font-size:11px;color:#7e8696;">ROOM&nbsp;<span id="room" style="color:#c4ccd9;">—</span></div>
-            <div class="mono" style="display:flex;align-items:center;gap:7px;font-size:11px;color:#7e8696;">VIEWERS&nbsp;<span id="viewers" style="color:#fff;">—</span></div>
-            <div class="mono" style="font-size:11px;color:#7e8696;padding-left:8px;border-left:1px solid #1f242e;">LIVE&nbsp;<span id="elapsed" style="color:#36d9a4;">—</span></div>
-          </div>
-        </div>
+        <!-- no top bar — live metrics kept hidden for JS; status shows on the rail dot, viewers in the chat header -->
+        <div id="liveStats" style="display:none;"><span id="status"></span><span id="sessionName"></span><span id="room"></span><span id="viewers"></span><span id="elapsed"></span></div>
         <div style="flex:1;position:relative;border-radius:10px;border:1px solid #1b1f28;overflow:hidden;background:#05060a;min-height:0;">
           <video id="live" muted autoplay playsinline controls style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#05060a;"></video>
           <div class="mono" style="position:absolute;top:14px;left:14px;display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:1px;color:#9aa4b5;background:rgba(8,10,14,.6);border:1px solid #232a36;padding:5px 9px;border-radius:6px;backdrop-filter:blur(6px);z-index:2;"><span style="width:7px;height:7px;border-radius:50%;background:#ff5c5c;box-shadow:0 0 8px #ff5c5c;animation:sfpulse 1.4s infinite;"></span>REC · LIVE STREAM</div>
@@ -188,7 +177,7 @@
       </div>
 
       <!-- CHAT column (placeholder — chat not captured) -->
-      <div style="flex:0 1 320px;min-width:220px;max-width:360px;border-left:1px solid #15181f;border-right:1px solid #15181f;display:flex;flex-direction:column;background:#08090d;">
+      <div style="flex:0 1 640px;min-width:300px;max-width:720px;border-left:1px solid #15181f;border-right:1px solid #15181f;display:flex;flex-direction:column;background:#08090d;">
         <div style="height:50px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid #15181f;">
           <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#8b93a3;">LIVE CHAT</span>
           <span class="mono" style="display:flex;align-items:center;gap:6px;font-size:11px;color:#36d9a4;"><span style="width:6px;height:6px;border-radius:50%;background:#36d9a4;"></span><span id="chatViewers">—</span></span>

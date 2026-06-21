@@ -773,8 +773,6 @@ function showScreen(s: 'monitor' | 'ledger' | 'picklist') {
   $('navMonitor').classList.toggle('active', s === 'monitor')
   $('navLedger').classList.toggle('active', s === 'ledger')
   $('navPicklist').classList.toggle('active', s === 'picklist')
-  // live room/viewers/elapsed only make sense on the monitor
-  $('liveStats').style.display = s === 'monitor' ? 'flex' : 'none'
   if (s === 'ledger') renderLedger()
   if (s === 'picklist') renderPicklist()
 }
@@ -1013,14 +1011,27 @@ setupPicklist()
 setupSync()
 setupShowFilter()
 
+// Responsive type: scale the whole UI proportionally to the viewport width so text
+// isn't tiny on large/ultrawide screens. Root-level zoom scales fonts + layout
+// together (no clipping); clamped so normal screens are unchanged.
+function scaleUI() {
+  const z = Math.min(1.5, Math.max(1, window.innerWidth / 1680))
+  document.documentElement.style.zoom = String(Math.round(z * 100) / 100)
+}
+scaleUI()
+window.addEventListener('resize', scaleUI)
+
 // ── event loop ──────────────────────────────────────────────────────────────
 window.ttLive.onEvent((ev: LiveEvent) => {
   switch (ev.kind) {
-    case 'status':
-      $('status').textContent = `${ev.status}${ev.detail ? ' — ' + ev.detail : ''}`
+    case 'status': {
+      const label = `${ev.status}${ev.detail ? ' — ' + ev.detail : ''}`
+      $('status').textContent = label
+      $('dot').title = label // rail dot tooltip (no top bar)
       $('dot').style.background = ev.status === 'connected' ? '#36d9a4' : '#5c6473'
       $('dot').style.boxShadow = ev.status === 'connected' ? '0 0 8px #36d9a4' : 'none'
       break
+    }
     case 'room':
       $('room').textContent = ev.roomId.slice(-8)
       break
