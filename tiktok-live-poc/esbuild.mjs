@@ -15,8 +15,9 @@ await build({
   outfile: 'dist/renderer.js',
 })
 
-// The renderer HTML is loaded from dist/ (alongside main.cjs), so copy it there.
+// The renderer HTML + logo are loaded from dist/ (alongside main.cjs), so copy them there.
 mkdirSync('dist', { recursive: true })
 copyFileSync('src/renderer/index.html', 'dist/index.html')
+copyFileSync('src/renderer/sf-logo.png', 'dist/sf-logo.png')
 
 console.log('build complete')

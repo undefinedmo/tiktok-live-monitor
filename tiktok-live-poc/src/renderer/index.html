@@ -21,6 +21,8 @@
       .stat .v{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:25px;line-height:1.15;margin-top:4px;}
       .stat .v.red{color:#ff5c5c;}
       .stat .s{font-size:11px;color:#8b93a3;margin-top:2px;}
+      .rightpanel > div{flex:0 0 auto;}
+      .videocol{flex:1.6;min-width:0;display:flex;flex-direction:column;padding:14px;}
       /* dynamic bid-feed rows */
       .bidrow{position:relative;display:flex;align-items:center;gap:12px;padding:13px 14px;border-bottom:1px solid #1a1e27;}
       .bidrow.fresh{background:linear-gradient(90deg,rgba(86,80,240,.16),rgba(86,80,240,.03));}
@@ -72,7 +74,7 @@
     <!-- TOPBAR -->
     <div style="height:56px;flex:none;display:flex;align-items:center;gap:18px;padding:0 18px;border-bottom:1px solid #15181f;background:linear-gradient(180deg,#0c0e13,#08090d);">
       <div style="display:flex;align-items:center;gap:10px;">
-        <div style="width:24px;height:24px;display:grid;grid-template-columns:1fr 1fr;gap:3px;"><div style="background:#7da8ff;border-radius:2px;"></div><div style="background:#8a78ff;border-radius:2px;"></div><div style="background:#8a78ff;border-radius:2px;"></div><div style="background:#9b6cf6;border-radius:2px;"></div></div>
+        <img src="./sf-logo.png" alt="SellerFolio" style="width:26px;height:26px;display:block;border-radius:6px;" />
         <span class="grot" style="font-weight:600;font-size:17px;background:linear-gradient(110deg,#5cb0ff,#8a78ff 60%,#9b6cf6);-webkit-background-clip:text;background-clip:text;color:transparent;letter-spacing:.2px;">SellerFolio Live</span>
       </div>
       <div class="mono" style="display:flex;align-items:center;gap:8px;padding:5px 11px;border:1px solid #25303f;border-radius:7px;background:#0c1119;font-size:12px;color:#c4ccd9;">
@@ -91,7 +93,7 @@
     <div style="flex:1;display:flex;min-height:0;">
       <!-- icon rail -->
       <div style="width:56px;flex:none;border-right:1px solid #15181f;display:flex;flex-direction:column;align-items:center;padding-top:14px;gap:8px;background:#090a0e;">
-        <div style="width:40px;height:40px;border-radius:9px;background:linear-gradient(135deg,#1a2740,#241d44);border:1px solid #33405c;display:flex;align-items:center;justify-content:center;"><div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;width:16px;height:16px;"><div style="background:#7da8ff;border-radius:1px;"></div><div style="background:#8a78ff;border-radius:1px;"></div><div style="background:#8a78ff;border-radius:1px;"></div><div style="background:#9b6cf6;border-radius:1px;"></div></div></div>
+        <div style="width:40px;height:40px;border-radius:9px;background:linear-gradient(135deg,#1a2740,#241d44);border:1px solid #33405c;display:flex;align-items:center;justify-content:center;"><img src="./sf-logo.png" alt="SF" style="width:24px;height:24px;display:block;" /></div>
         <div style="width:40px;height:40px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:#5c6473;font-size:16px;">⚒</div>
         <div style="width:40px;height:40px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:#5c6473;font-size:15px;">▤</div>
         <div style="width:40px;height:40px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:#5c6473;font-size:15px;">⚙</div>
@@ -125,7 +127,7 @@
       </div>
 
       <!-- RIGHT panel -->
-      <div class="sf-scroll" style="width:480px;flex:none;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;background:#070809;">
+      <div class="sf-scroll rightpanel" style="width:480px;flex:none;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;background:#070809;">
         <!-- stats -->
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;" id="statsGrid"></div>
         <!-- live bid feed -->
