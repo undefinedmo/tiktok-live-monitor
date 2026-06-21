@@ -6,6 +6,7 @@ import { parsePushFrame } from '../core/pushFrame'
 import { LiveFeed } from '../core/liveFeed'
 import { parseRoster } from '../core/roster'
 import { AuctionResults } from '../core/auctionResults'
+import { decodeChat } from '../core/chat'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
 import type { LiveEvent, StatusEvent } from '../core/types'
 
@@ -137,6 +138,16 @@ ipcMain.on('tt-ws-frame', (_e, msg: { url?: string; data?: Uint8Array }) => {
       maybeStartPolling()
     }
     send(ev)
+  }
+})
+
+// Source 4: webcast/im/fetch protobuf → viewer comments.
+ipcMain.on('tt-im-frame', (_e, bytes: Uint8Array) => {
+  const raw = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  const items = decodeChat(raw)
+  if (items.length) {
+    debug(`[tt] chat +${items.length}`)
+    send({ kind: 'chat', items, ts: Date.now() })
   }
 })
 

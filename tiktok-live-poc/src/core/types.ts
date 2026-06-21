@@ -79,6 +79,21 @@ export interface StreamEvent {
   ts: number
 }
 
+/** A viewer comment decoded from the webcast/im/fetch protobuf stream. */
+export interface ChatMessage {
+  userId?: string
+  nickname: string
+  avatarUrl?: string
+  text: string
+  ts: number
+}
+
+export interface ChatEvent {
+  kind: 'chat'
+  items: ChatMessage[]
+  ts: number
+}
+
 // ─── Source 2: auction roster (added_auction_product/list) ───────────────────
 
 export interface RosterProduct {
@@ -188,6 +203,7 @@ export type LiveEvent =
   | SessionEvent
   | RoomEvent
   | StreamEvent
+  | ChatEvent
   | RosterSnapshot
   | SalesUpdate
   | StatusEvent

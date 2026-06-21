@@ -1,5 +1,5 @@
 import flvjs from 'flv.js'
-import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuction } from '../core/types'
+import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuction, ChatMessage } from '../core/types'
 
 interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string; title?: string }
 interface LabelTemplate {
@@ -83,12 +83,29 @@ function renderStats() {
   }
 }
 
-// ── live sales feed (comp "bid feed") ───────────────────────────────────────
-function renderFeed(sales: Sale[], topSet: Set<string>) {
+// ── live sales feed (comp "bid feed") — paginated ───────────────────────────
+let allSales: Sale[] = []
+let currentTopSet = new Set<string>()
+let feedPage = 0
+let feedSize = Number(localStorage.getItem('tt-feed-size')) || 25
+
+function updateFeedNav(totalPages: number) {
+  $('feedPage').textContent = `${allSales.length ? feedPage + 1 : 0}/${totalPages}`
+  ;($('feedPrev') as HTMLButtonElement).disabled = feedPage <= 0
+  ;($('feedNext') as HTMLButtonElement).disabled = feedPage >= totalPages - 1
+}
+
+function renderFeed() {
   const feed = $('bidFeed')
   feed.replaceChildren()
-  if (!sales.length) { feed.appendChild(el('div', 'mono', 'Waiting for sales…')); return }
-  sales.forEach((s, i) => {
+  if (!allSales.length) { feed.appendChild(el('div', 'mono', 'Waiting for sales…')); updateFeedNav(1); return }
+  const totalPages = Math.max(1, Math.ceil(allSales.length / feedSize))
+  feedPage = Math.max(0, Math.min(feedPage, totalPages - 1))
+  const start = feedPage * feedSize
+  const page = allSales.slice(start, start + feedSize)
+  const topSet = currentTopSet
+  page.forEach((s, idx) => {
+    const i = start + idx
     const failed = s.paymentStatus === 'failed'
     const row = el('div', 'bidrow' + (i === 0 ? ' fresh' : '') + (failed ? ' failed' : ''))
     row.appendChild(avatar(s.buyer.avatarUrl))
@@ -110,6 +127,45 @@ function renderFeed(sales: Sale[], topSet: Set<string>) {
     row.appendChild(pb)
     feed.appendChild(row)
   })
+  updateFeedNav(totalPages)
+}
+
+function setupFeed() {
+  const sizeSel = $('feedSize') as HTMLSelectElement
+  sizeSel.value = String(feedSize)
+  sizeSel.addEventListener('change', () => { feedSize = Number(sizeSel.value) || 25; feedPage = 0; localStorage.setItem('tt-feed-size', String(feedSize)); renderFeed() })
+  $('feedPrev').addEventListener('click', () => { feedPage = Math.max(0, feedPage - 1); renderFeed() })
+  $('feedNext').addEventListener('click', () => { feedPage += 1; renderFeed() })
+}
+
+// ── live chat (decoded comments) ────────────────────────────────────────────
+const chatSeen = new Set<string>()
+const NAME_COLORS = ['#7da8ff', '#8a78ff', '#36d9a4', '#ffb23e', '#9b6cf6', '#5fe3bb']
+function nameColor(n: string): string {
+  let h = 0
+  for (let i = 0; i < n.length; i++) h = (h * 31 + n.charCodeAt(i)) >>> 0
+  return NAME_COLORS[h % NAME_COLORS.length]!
+}
+function appendChat(items: ChatMessage[]) {
+  const list = $('chatList')
+  let added = false
+  for (const m of items) {
+    const key = `${m.ts}|${m.nickname}|${m.text}`
+    if (chatSeen.has(key)) continue
+    chatSeen.add(key)
+    if (!added && list.querySelector('.mono')) list.replaceChildren() // clear placeholder
+    added = true
+    const row = el('div', 'chatrow')
+    const nm = el('span', 'chatname', m.nickname)
+    nm.style.color = nameColor(m.nickname)
+    row.appendChild(nm)
+    row.appendChild(el('span', 'chattext', ' ' + m.text))
+    list.appendChild(row)
+  }
+  if (!added) return
+  while (list.childElementCount > 80) list.firstElementChild?.remove()
+  if (chatSeen.size > 600) chatSeen.clear()
+  list.scrollTop = list.scrollHeight
 }
 
 // ── top buyer intel ─────────────────────────────────────────────────────────
@@ -156,32 +212,23 @@ function renderProductsTable() {
 function renderAuction(p?: PinnedAuction) {
   if (!p || !p.winUsername) {
     pinnedEndMs = undefined
-    $('auctionTitle').textContent = 'No active auction'
-    $('auctionBid').textContent = '—'
-    $('auctionBids').textContent = '0'
-    $('auctionHi').textContent = '—'
     $('lotOverlay').style.display = 'none'
     return
   }
   pinnedEndMs = p.expectedEndMs
-  $('auctionTitle').textContent = p.productName
-  $('auctionBid').textContent = p.maxBiddingPrice ?? '—'
-  $('auctionBids').textContent = String(p.numBids ?? 0)
-  $('auctionHi').textContent = '@' + p.winUsername
-  // video lot overlay
   $('lotOverlay').style.display = 'flex'
   $('lotName').textContent = p.productName
   $('lotBid').textContent = p.maxBiddingPrice ?? '—'
   $('lotBids').textContent = String(p.numBids ?? 0)
-  $('lotNum').textContent = 'CURRENT LOT'
+  $('lotBuyer').textContent = '@' + p.winUsername
 }
 
 function tickCountdown() {
-  if (!pinnedEndMs) { $('auctionEnds').textContent = '—'; $('auctionBar').style.width = '0%'; return }
-  const leftMs = pinnedEndMs - Date.now()
-  const left = Math.max(0, Math.round(leftMs / 1000))
-  $('auctionEnds').textContent = left > 0 ? `${left}s` : 'ended'
-  $('auctionBar').style.width = Math.max(0, Math.min(100, (leftMs / 1000 / 15) * 100)) + '%'
+  const ends = document.getElementById('lotEnds')
+  if (!ends) return
+  if (!pinnedEndMs) { ends.textContent = '—'; return }
+  const left = Math.max(0, Math.round((pinnedEndMs - Date.now()) / 1000))
+  ends.textContent = left > 0 ? `${left}s` : 'ended'
 }
 setInterval(tickCountdown, 250)
 
@@ -336,6 +383,7 @@ function setupSettings() {
   document.getElementById('closeSettings')?.addEventListener('click', () => document.getElementById('settingsModal')?.classList.add('hidden'))
 }
 setupSettings()
+setupFeed()
 renderStats()
 
 // ── event loop ──────────────────────────────────────────────────────────────
@@ -377,8 +425,9 @@ window.ttLive.onEvent((ev: LiveEvent) => {
     case 'sales': {
       lastByProduct = ev.byProduct
       renderProductsTable()
-      const topSet = new Set(ev.topBuyers.slice(0, 5).map((b) => b.ttuid || b.username))
-      renderFeed(ev.recentSales, topSet)
+      allSales = ev.recentSales
+      currentTopSet = new Set(ev.topBuyers.slice(0, 5).map((b) => b.ttuid || b.username))
+      renderFeed()
       renderTopBuyer(ev.topBuyers)
       stats.buyers = String(ev.uniqueBuyers)
       stats.failed = String(ev.failedPayments.length)
@@ -396,6 +445,9 @@ window.ttLive.onEvent((ev: LiveEvent) => {
     case 'stream':
       if (!flvPlayer) loadStream(ev.url)
       else lastStreamUrl = ev.url
+      break
+    case 'chat':
+      appendChat(ev.items)
       break
   }
 })

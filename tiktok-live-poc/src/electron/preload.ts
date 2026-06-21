@@ -50,13 +50,22 @@ window.fetch = function (this: unknown, input: RequestInfo | URL, init?: Request
 
 const OrigOpen = XMLHttpRequest.prototype.open
 XMLHttpRequest.prototype.open = function (this: XMLHttpRequest, method: string, url: string | URL, ...rest: unknown[]) {
-  const ep = endpointOf(String(url))
+  const u = String(url)
+  const ep = endpointOf(u)
   if (ep) {
     this.addEventListener('load', () => {
       try {
         if (this.responseType === '' || this.responseType === 'text') {
           ipcRenderer.send('tt-rest-data', { endpoint: ep, body: this.responseText })
         }
+      } catch { /* ignore */ }
+    })
+  } else if (/webcast\/im\/fetch/.test(u)) {
+    // viewer comment stream (protobuf). Forward raw bytes to main for decoding.
+    this.addEventListener('load', () => {
+      try {
+        const r = this.response
+        if (r instanceof ArrayBuffer && r.byteLength) ipcRenderer.send('tt-im-frame', new Uint8Array(r))
       } catch { /* ignore */ }
     })
   }
