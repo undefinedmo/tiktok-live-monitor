@@ -30,6 +30,32 @@
       .recap-text{font-size:12.5px;line-height:1.45;color:#cdd4e0;}
       .recap-text.transcribing{color:#ffc56b;font-style:italic;}
       .recap-text.error{color:#ff8f8f;}
+      .navicon{width:40px;height:40px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:#5c6473;font-size:16px;cursor:pointer;}
+      .navicon:hover{color:#aab2c0;background:#11151c;}
+      .navicon.active{color:#fff;background:linear-gradient(135deg,#1a2740,#241d44);border:1px solid #33405c;}
+      .ledger-head,.ledger-row{display:grid;grid-template-columns:1.2fr 1.5fr 1.5fr 2fr .9fr .9fr 1.1fr 1fr;align-items:center;padding:9px 14px;border-bottom:1px solid #1a1e27;gap:8px;}
+      .ledger-head{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1px;color:#707a8c;text-transform:uppercase;flex:none;}
+      .ledger-head span{cursor:pointer;user-select:none;}
+      .ledger-head span:hover{color:#aab2c0;}
+      .ledger-head .r,.ledger-row .r{text-align:right;justify-self:end;}
+      .ledger-row{cursor:pointer;font-size:13px;}
+      .ledger-row:hover{background:#0c0f16;}
+      .lc-id{font-family:'IBM Plex Mono',monospace;font-size:12px;color:#dfe4ec;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .lc-date{color:#aab2c0;font-size:12px;}
+      .lc-buyer .n{font-weight:600;color:#eef1f7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;} .lc-buyer .h{color:#707a8c;font-size:11px;}
+      .lc-prod{color:#dfe4ec;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;} .lc-prod .v{color:#707a8c;font-size:11px;}
+      .lc-total,.lc-cost,.lc-profit{font-family:'IBM Plex Mono',monospace;}
+      .lc-cost{color:#aab2c0;} .lc-cost.empty{color:#4a525f;}
+      .lc-profit .m{display:block;font-size:10px;color:#707a8c;}
+      .lc-profit.pos{color:#5fe3bb;} .lc-profit.neg{color:#ff8f8f;} .lc-profit.nul{color:#5c6473;}
+      .lc-cost-input{width:62px;background:#0c0e13;color:#eef1f7;border:1px solid #4a5b86;border-radius:5px;padding:2px 5px;font:inherit;text-align:right;}
+      .statuspill{font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.5px;padding:3px 8px;border-radius:5px;background:#161b24;color:#aab2c0;border:1px solid #262c38;justify-self:start;}
+      .statuspill.bad{background:rgba(255,92,92,.16);color:#ff8f8f;border-color:rgba(255,92,92,.34);}
+      .statuspill .ai{color:#b9adff;margin-left:6px;}
+      .ledger-detail{padding:14px 16px;background:#0a0d13;border-bottom:1px solid #1a1e27;display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:18px;}
+      .ledger-detail h5{margin:0 0 8px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1px;color:#707a8c;font-weight:500;}
+      .ledger-detail .kv{font-size:12px;color:#cdd4e0;line-height:1.7;} .ledger-detail .kv b{color:#8b93a3;font-weight:500;}
+      .ledger-detail .txbox{background:#0f131a;border:1px solid #1d212b;border-radius:7px;padding:10px;font-size:12px;color:#cdd4e0;line-height:1.5;}
       .videocol{flex:1.6;min-width:0;display:flex;flex-direction:column;padding:14px;}
       /* dynamic bid-feed rows */
       .bidrow{position:relative;display:flex;align-items:center;gap:12px;padding:13px 14px;border-bottom:1px solid #1a1e27;}
@@ -55,6 +81,7 @@
       .qbtn{height:28px;padding:0 12px;border-radius:6px;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;}
       .qbtn.print{border:none;background:linear-gradient(135deg,#3fa0ff,#7c5cff);color:#fff;}
       .qbtn.void{border:1px solid #2a3140;background:#161b24;color:#aab2c0;}
+      .qbtn.on{background:rgba(138,120,255,.16);color:#b9adff;border-color:#4a5b86;}
       /* products rows */
       .prow{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid #1a1e27;font-family:'IBM Plex Mono',monospace;font-size:12px;}
       .prow .pn{flex:1;min-width:0;font-family:'Plus Jakarta Sans',sans-serif;color:#dfe4ec;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -102,11 +129,13 @@
       <!-- icon rail -->
       <div style="width:56px;flex:none;border-right:1px solid #15181f;display:flex;flex-direction:column;align-items:center;padding-top:14px;gap:8px;background:#090a0e;">
         <div style="width:40px;height:40px;border-radius:9px;background:linear-gradient(135deg,#1a2740,#241d44);border:1px solid #33405c;display:flex;align-items:center;justify-content:center;"><img src="./sf-logo.png" alt="SF" style="width:24px;height:24px;display:block;" /></div>
-        <div style="width:40px;height:40px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:#5c6473;font-size:16px;">⚒</div>
-        <div style="width:40px;height:40px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:#5c6473;font-size:15px;">▤</div>
-        <div style="width:40px;height:40px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:#5c6473;font-size:15px;">⚙</div>
+        <div class="navicon active" id="navMonitor" title="Live Monitor">◉</div>
+        <div class="navicon" id="navLedger" title="Order Ledger">▤</div>
+        <div class="navicon" id="navSettings2" title="Label settings">⚙</div>
       </div>
 
+      <!-- ============ MONITOR SCREEN ============ -->
+      <div id="monitorScreen" style="flex:1;display:flex;min-width:0;">
       <!-- VIDEO column -->
       <div style="flex:1.6;min-width:0;display:flex;flex-direction:column;padding:14px;gap:12px;">
         <div style="flex:1;position:relative;border-radius:10px;border:1px solid #1b1f28;overflow:hidden;background:#05060a;min-height:0;">
@@ -193,6 +222,25 @@
             <span class="mono" style="font-size:9.5px;color:#5c6473;">SOLD / FAIL / PEND / STOCK</span>
           </div>
           <div id="products"></div>
+        </div>
+      </div>
+      </div><!-- /monitorScreen -->
+
+      <!-- ============ LEDGER SCREEN ============ -->
+      <div id="ledgerScreen" style="flex:1;display:none;flex-direction:column;min-width:0;padding:14px;gap:12px;overflow:hidden;">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:none;">
+          <span class="grot" style="font-weight:600;font-size:18px;">Order Ledger</span>
+          <input id="ledgerSearch" placeholder="Search orders, buyers, products, AI…" style="flex:1;min-width:160px;max-width:380px;background:#0c0e13;color:#eef1f7;border:1px solid #20242e;border-radius:7px;padding:7px 11px;font:inherit;" />
+          <select id="ledgerStatus" class="mono" style="background:#0c0e13;color:#aab2c0;border:1px solid #20242e;border-radius:7px;padding:6px 9px;font-size:12px;"><option value="">All status</option><option>Paid</option><option>Unpaid</option><option>Failed</option></select>
+          <button id="ledgerMissingCost" class="qbtn void" style="height:32px;">Missing cost</button>
+          <span id="ledgerCount" class="mono" style="margin-left:auto;color:#5c6473;font-size:11px;">0 orders</span>
+        </div>
+        <div id="ledgerKpis" style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;flex:none;"></div>
+        <div class="panel" style="flex:1;min-height:0;">
+          <div class="ledger-head" id="ledgerHead">
+            <span data-sort="id">Order</span><span data-sort="date">Date</span><span data-sort="buyer">Buyer</span><span data-sort="product">Product</span><span data-sort="total" class="r">Total</span><span class="r">Cost</span><span class="r">Profit</span><span>Status</span>
+          </div>
+          <div class="body sf-scroll" id="ledgerRows"></div>
         </div>
       </div>
     </div>

@@ -1,5 +1,6 @@
 import flvjs from 'flv.js'
 import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuction, ChatMessage } from '../core/types'
+import { computeKpis, filterRows, sortRows, profitCents, marginPct, statusLabel, type LedgerRow, type LedgerFilters, type SortKey } from '../core/ledger'
 
 interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string; title?: string }
 interface LabelTemplate {
@@ -334,6 +335,7 @@ async function transcribeSale(s: Sale) {
     const res = await window.recapAPI.transcribe({ audio, productName: s.productName })
     entry.status = res.text ? 'done' : 'error'
     entry.text = res.text ?? res.error ?? 'failed'
+    if (res.text) { transcriptsByOrder.set(s.orderId, res.text); renderLedger() }
   } catch (e) {
     entry.status = 'error'
     entry.text = (e as Error).message
@@ -477,6 +479,159 @@ setupSettings()
 setupFeed()
 renderStats()
 
+// ── Order Ledger screen (ported from live-ledger viewmodel) ─────────────────
+const costMap: Record<string, number> = (() => { try { return JSON.parse(localStorage.getItem('tt-cost') || '{}') } catch { return {} } })()
+const transcriptsByOrder = new Map<string, string>()
+let ledgerFilters: LedgerFilters = { q: '', status: '', cost: '' }
+let ledgerSort: { key: SortKey; dir: 1 | -1 } = { key: 'date', dir: -1 }
+let ledgerExpanded: string | null = null
+let currentScreen: 'monitor' | 'ledger' = 'monitor'
+const fmtCents = (c: number) => `$${(c / 100).toFixed(2)}`
+
+function ledgerRows(): LedgerRow[] {
+  return allSales.map((s) => ({
+    ...s,
+    costCents: costMap[s.orderId],
+    transcript: transcriptsByOrder.has(s.orderId) ? { summary: transcriptsByOrder.get(s.orderId) } : undefined,
+  }))
+}
+
+function editCost(r: LedgerRow, cell: HTMLElement) {
+  const input = document.createElement('input')
+  input.className = 'lc-cost-input'
+  input.value = r.costCents != null ? (r.costCents / 100).toFixed(2) : ''
+  cell.replaceChildren(input)
+  input.focus()
+  let done = false
+  const commit = () => {
+    if (done) return
+    done = true
+    const v = parseFloat(input.value)
+    if (Number.isFinite(v) && v >= 0) costMap[r.orderId] = Math.round(v * 100)
+    else delete costMap[r.orderId]
+    localStorage.setItem('tt-cost', JSON.stringify(costMap))
+    renderLedger()
+  }
+  input.addEventListener('blur', commit)
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); else if (e.key === 'Escape') { done = true; renderLedger() } })
+}
+
+function ledgerRowEl(r: LedgerRow): HTMLElement {
+  const row = el('div', 'ledger-row')
+  row.appendChild(el('div', 'lc-id', '…' + r.orderId.slice(-8)))
+  row.appendChild(el('div', 'lc-date', new Date(r.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })))
+  const b = el('div', 'lc-buyer')
+  b.appendChild(el('div', 'n', r.buyer.username || '—'))
+  b.appendChild(el('div', 'h', '@' + (r.buyer.handle ?? '')))
+  row.appendChild(b)
+  const p = el('div', 'lc-prod')
+  p.appendChild(txt(r.productName))
+  p.appendChild(el('span', 'v', ` · ${r.skuDesc ?? ''}`))
+  row.appendChild(p)
+  row.appendChild(el('div', 'lc-total r', r.price.formatted))
+  const cost = el('div', 'lc-cost r' + (r.costCents == null ? ' empty' : ''), r.costCents == null ? '—' : fmtCents(r.costCents))
+  cost.addEventListener('click', (e) => { e.stopPropagation(); editCost(r, cost) })
+  row.appendChild(cost)
+  const pc = profitCents(r)
+  const m = marginPct(r)
+  const prof = el('div', 'lc-profit r ' + (pc == null ? 'nul' : pc >= 0 ? 'pos' : 'neg'))
+  prof.appendChild(txt(pc == null ? '—' : fmtCents(pc)))
+  if (m != null) prof.appendChild(el('span', 'm', `${m.toFixed(0)}%`))
+  row.appendChild(prof)
+  const lbl = statusLabel(r)
+  const pill = el('div', 'statuspill' + (/fail|refund|cancel/i.test(lbl) ? ' bad' : ''), lbl)
+  if (r.transcript) pill.appendChild(el('span', 'ai', '✦'))
+  row.appendChild(pill)
+  row.addEventListener('click', () => { ledgerExpanded = ledgerExpanded === r.orderId ? null : r.orderId; renderLedger() })
+  return row
+}
+
+function ledgerDetailEl(r: LedgerRow): HTMLElement {
+  const d = el('div', 'ledger-detail')
+  const col = (title: string, kvs: [string, string][]) => {
+    const c = el('div')
+    c.appendChild(el('h5', undefined, title))
+    for (const [k, v] of kvs) { const line = el('div', 'kv'); line.appendChild(el('b', undefined, k + ': ')); line.appendChild(txt(v)); c.appendChild(line) }
+    return c
+  }
+  d.appendChild(col('BUYER', [['Name', r.buyer.username || '—'], ['Handle', '@' + (r.buyer.handle ?? '')], ['Order', r.orderId]]))
+  const pc = profitCents(r)
+  d.appendChild(col('PRICING', [['Total', r.price.formatted], ['Cost', r.costCents != null ? fmtCents(r.costCents) : '—'], ['Profit', pc != null ? fmtCents(pc) : '—'], ['SKU', r.skuDesc ?? '—']]))
+  const tx = el('div')
+  tx.appendChild(el('h5', undefined, '✦ GEMINI TRANSCRIPT'))
+  tx.appendChild(el('div', 'txbox', r.transcript?.summary ?? '(no transcript — captured live as items sell)'))
+  d.appendChild(tx)
+  return d
+}
+
+function renderLedger() {
+  if (currentScreen !== 'ledger') return
+  const all = ledgerRows()
+  const k = computeKpis(all)
+  const tiles: [string, string, string?, boolean?][] = [
+    ['ORDERS', String(k.orders)],
+    ['GROSS', fmtCents(k.grossCents)],
+    ['UNITS', String(k.units)],
+    ['AVG ORDER', fmtCents(k.avgCents)],
+    ['REFUNDS', String(k.refunds), `${k.refundPct.toFixed(0)}%`, k.refunds > 0],
+    ['PROFIT', fmtCents(k.profitCents), k.marginPct != null ? `${k.marginPct.toFixed(0)}% margin · ${k.uncosted} uncosted` : `${k.uncosted} uncosted`],
+  ]
+  const kpiEl = $('ledgerKpis')
+  kpiEl.replaceChildren()
+  for (const [l, v, sub, red] of tiles) {
+    const t = el('div', 'stat')
+    t.appendChild(el('div', 'l', l))
+    t.appendChild(el('div', 'v' + (red ? ' red' : ''), v))
+    if (sub) t.appendChild(el('div', 's', sub))
+    kpiEl.appendChild(t)
+  }
+  const rows = sortRows(filterRows(all, ledgerFilters), ledgerSort.key, ledgerSort.dir)
+  $('ledgerCount').textContent = `${rows.length} of ${all.length} orders`
+  const body = $('ledgerRows')
+  body.replaceChildren()
+  if (!rows.length) {
+    const e = el('div', 'mono', 'no orders yet')
+    e.style.cssText = 'padding:18px;color:#3a4150;font-size:11px;'
+    body.appendChild(e)
+    return
+  }
+  for (const r of rows) {
+    body.appendChild(ledgerRowEl(r))
+    if (ledgerExpanded === r.orderId) body.appendChild(ledgerDetailEl(r))
+  }
+}
+
+function showScreen(s: 'monitor' | 'ledger') {
+  currentScreen = s
+  $('monitorScreen').style.display = s === 'monitor' ? 'flex' : 'none'
+  $('ledgerScreen').style.display = s === 'ledger' ? 'flex' : 'none'
+  $('navMonitor').classList.toggle('active', s === 'monitor')
+  $('navLedger').classList.toggle('active', s === 'ledger')
+  if (s === 'ledger') renderLedger()
+}
+
+function setupLedger() {
+  $('navMonitor').addEventListener('click', () => showScreen('monitor'))
+  $('navLedger').addEventListener('click', () => showScreen('ledger'))
+  document.getElementById('navSettings2')?.addEventListener('click', () => document.getElementById('settingsModal')?.classList.remove('hidden'))
+  ;($('ledgerSearch') as HTMLInputElement).addEventListener('input', (e) => { ledgerFilters = { ...ledgerFilters, q: (e.target as HTMLInputElement).value }; renderLedger() })
+  ;($('ledgerStatus') as HTMLSelectElement).addEventListener('change', (e) => { ledgerFilters = { ...ledgerFilters, status: (e.target as HTMLSelectElement).value }; renderLedger() })
+  $('ledgerMissingCost').addEventListener('click', () => {
+    ledgerFilters = { ...ledgerFilters, cost: ledgerFilters.cost === 'missing' ? '' : 'missing' }
+    $('ledgerMissingCost').classList.toggle('on', ledgerFilters.cost === 'missing')
+    renderLedger()
+  })
+  $('ledgerHead').querySelectorAll('span[data-sort]').forEach((sp) =>
+    sp.addEventListener('click', () => {
+      const key = (sp as HTMLElement).dataset.sort as SortKey
+      if (ledgerSort.key === key) ledgerSort.dir = (ledgerSort.dir * -1) as 1 | -1
+      else ledgerSort = { key, dir: 1 }
+      renderLedger()
+    }),
+  )
+}
+setupLedger()
+
 // ── event loop ──────────────────────────────────────────────────────────────
 window.ttLive.onEvent((ev: LiveEvent) => {
   switch (ev.kind) {
@@ -536,6 +691,7 @@ window.ttLive.onEvent((ev: LiveEvent) => {
         if (recent) void transcribeSale(recent) // AI transcript for the latest fresh sale
         seedMaxCreatedAt = Math.max(seedMaxCreatedAt, maxCreated)
       }
+      renderLedger()
       break
     }
     case 'stream':
