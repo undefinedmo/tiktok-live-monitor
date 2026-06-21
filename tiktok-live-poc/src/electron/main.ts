@@ -212,16 +212,58 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
 
 ipcMain.handle('recap-enabled', () => ({ enabled: !!GEMINI_KEY, model: GEMINI_MODEL }))
 
-ipcMain.handle('tt-transcribe', async (_e, payload: { audio?: Uint8Array; productName?: string }) => {
+interface TranscriptFields { brand?: string; item?: string; color?: string; size?: string; retailPrice?: string; summary?: string }
+
+ipcMain.handle('tt-transcribe', async (_e, payload: { audio?: Uint8Array; productName?: string; structured?: boolean }) => {
   if (!GEMINI_KEY) return { error: 'GEMINI_API_KEY not set' }
   const audio = payload?.audio instanceof Uint8Array ? payload.audio : new Uint8Array(payload?.audio ?? [])
   if (!audio.byteLength) return { error: 'no audio captured' }
-  const prompt =
-    `This is a short audio clip from a live-shopping auction that just sold an item labeled "${payload?.productName ?? ''}". ` +
-    `Transcribe the seller's speech verbatim. Return ONLY the transcript text — no labels, no commentary.`
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`
+  const label = payload?.productName ?? ''
+  const clip = { inlineData: { mimeType: 'audio/webm', data: Buffer.from(audio).toString('base64') } }
+
+  // Structured mode: extract product attributes (brand/size/retail…) for costing + the ledger.
+  if (payload?.structured) {
+    const prompt =
+      `This is a short audio clip from a live-shopping auction selling an item labeled "${label}". ` +
+      `From the seller's speech, extract the product attributes. Use an empty string for anything not stated. ` +
+      `retailPrice is the stated retail/MSRP if mentioned (e.g. "$120"). summary is a one-line plain-English description.`
+    const body = {
+      contents: [{ parts: [{ text: prompt }, clip] }],
+      generationConfig: {
+        temperature: 0.1,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'object',
+          properties: {
+            brand: { type: 'string' }, item: { type: 'string' }, color: { type: 'string' },
+            size: { type: 'string' }, retailPrice: { type: 'string' }, summary: { type: 'string' },
+          },
+        },
+      },
+    }
+    try {
+      const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      const json = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[]; error?: { message?: string } }
+      if (!res.ok) return { error: `gemini ${res.status}: ${json?.error?.message ?? ''}`.slice(0, 200) }
+      const raw = (json.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('').trim()
+      let fields: TranscriptFields = {}
+      try { fields = JSON.parse(raw) as TranscriptFields } catch { /* fall back to summary text below */ }
+      // drop empties so the renderer can tell what was actually captured
+      fields = Object.fromEntries(Object.entries(fields).filter(([, v]) => v && String(v).trim())) as TranscriptFields
+      const text = fields.summary || raw
+      debug(`[tt] structured fields: ${Object.keys(fields).join(',')}`)
+      return { text, fields }
+    } catch (e) {
+      return { error: (e as Error).message }
+    }
+  }
+
+  const prompt =
+    `This is a short audio clip from a live-shopping auction that just sold an item labeled "${label}". ` +
+    `Transcribe the seller's speech verbatim. Return ONLY the transcript text — no labels, no commentary.`
   const body = {
-    contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: 'audio/webm', data: Buffer.from(audio).toString('base64') } }] }],
+    contents: [{ parts: [{ text: prompt }, clip] }],
     generationConfig: { temperature: 0.1 },
   }
   try {

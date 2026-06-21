@@ -1,6 +1,6 @@
 import flvjs from 'flv.js'
 import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuction, ChatMessage } from '../core/types'
-import { computeKpis, filterRows, sortRows, profitCents, marginPct, statusLabel, type LedgerRow, type LedgerFilters, type SortKey } from '../core/ledger'
+import { computeKpis, filterRows, sortRows, profitCents, marginPct, statusLabel, applyCost, toCsv, parseRetailCents, groupForPicklist, type LedgerRow, type LedgerFilters, type LedgerTranscript, type SortKey, type CostApply, type PickGroup } from '../core/ledger'
 
 interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string; title?: string }
 interface LabelTemplate {
@@ -21,7 +21,7 @@ declare global {
     }
     recapAPI?: {
       enabled: () => Promise<{ enabled: boolean; model: string }>
-      transcribe: (payload: { audio: Uint8Array; productName?: string }) => Promise<{ text?: string; error?: string }>
+      transcribe: (payload: { audio: Uint8Array; productName?: string; structured?: boolean }) => Promise<{ text?: string; fields?: LedgerTranscript; error?: string }>
     }
   }
 }
@@ -199,11 +199,17 @@ function renderProductsTable() {
     .map((id) => {
       const r = rosterProducts.get(id)
       const c = counts.get(id)
-      return { name: r?.name ?? c?.productName ?? id, sold: c?.paid ?? r?.numSold ?? 0, failed: c?.failed ?? 0, pending: c?.pending ?? 0, stock: r?.stockNum }
+      return { id, name: r?.name ?? c?.productName ?? id, sold: c?.paid ?? r?.numSold ?? 0, failed: c?.failed ?? 0, pending: c?.pending ?? 0, stock: r?.stockNum }
     })
     .sort((a, b) => b.sold - a.sold)
   for (const row of rows) {
     const tr = el('div', 'prow')
+    const busy = productTxBusy.has(row.id)
+    const has = !!productTx[row.id]
+    const tx = el('div', 'ptx' + (busy ? ' busy' : has ? ' has' : ''), busy ? '◴' : '✦')
+    tx.title = has ? (productTx[row.id]?.summary || 'AI details captured — click to re-transcribe this bin') : recapEnabled ? 'Click to AI-transcribe this bin' : 'Set GEMINI_API_KEY to enable AI transcription'
+    if (recapEnabled && !busy) tx.addEventListener('click', () => void transcribeProduct(row.id, row.name))
+    tr.appendChild(tx)
     tr.appendChild(el('div', 'pn', row.name))
     tr.appendChild(el('div', 'pc', String(row.sold)))
     tr.appendChild(el('div', 'pc', String(row.failed)))
@@ -343,6 +349,32 @@ async function transcribeSale(s: Sale) {
   transcribing = false
   renderRecap()
 }
+// structured per-product (per-bin) transcription — one capture covers every order of that product
+const productTxBusy = new Set<string>()
+async function transcribeProduct(productId: string, productName: string): Promise<boolean> {
+  // `transcribing` is the shared audio-capture lock (also used by transcribeSale) — only one clip grab at a time
+  if (!recapEnabled || !window.recapAPI || transcribing || productTxBusy.has(productId)) return false
+  transcribing = true
+  productTxBusy.add(productId)
+  renderProductsTable()
+  try {
+    const clip = await grabClip()
+    if (!clip || clip.size < 2000) return false
+    const audio = new Uint8Array(await clip.arrayBuffer())
+    const res = await window.recapAPI.transcribe({ audio, productName, structured: true })
+    if (res.fields && Object.keys(res.fields).length) productTx[productId] = res.fields
+    else if (res.text) productTx[productId] = { summary: res.text }
+    else return false
+    saveProductTx()
+    renderLedger(); renderProductsTable(); renderPicklist()
+    return true
+  } catch { return false } finally {
+    transcribing = false
+    productTxBusy.delete(productId)
+    renderProductsTable()
+  }
+}
+
 async function initRecap() {
   try { recapEnabled = (await window.recapAPI?.enabled())?.enabled ?? false } catch { recapEnabled = false }
   const st = document.getElementById('recapStatus')
@@ -480,19 +512,82 @@ setupFeed()
 renderStats()
 
 // ── Order Ledger screen (ported from live-ledger viewmodel) ─────────────────
-const costMap: Record<string, number> = (() => { try { return JSON.parse(localStorage.getItem('tt-cost') || '{}') } catch { return {} } })()
+const loadJson = <T,>(k: string, fb: T): T => { try { return JSON.parse(localStorage.getItem(k) || '') as T } catch { return fb } }
+// order-level overrides win; product/bin-level values cascade to every order of that product
+const costMap: Record<string, number> = loadJson('tt-cost', {})
+const productCostMap: Record<string, number> = loadJson('tt-product-cost', {}) // productId → cents (template, persists across shows)
 const transcriptsByOrder = new Map<string, string>()
-let ledgerFilters: LedgerFilters = { q: '', status: '', cost: '' }
+const productTx: Record<string, LedgerTranscript> = loadJson('tt-product-tx', {}) // productId → structured AI transcript
+// demo seed — these globals only exist in the static-HTML mock, never in the Electron app
+const demoSeed = window as unknown as { __demoProductTx?: Record<string, LedgerTranscript>; __demoProductCost?: Record<string, number> }
+if (demoSeed.__demoProductCost) Object.assign(productCostMap, demoSeed.__demoProductCost)
+if (demoSeed.__demoProductTx) Object.assign(productTx, demoSeed.__demoProductTx)
+let ledgerFilters: LedgerFilters = { q: '', status: '', cost: '', profit: '', min: null, max: null }
 let ledgerSort: { key: SortKey; dir: 1 | -1 } = { key: 'date', dir: -1 }
 let ledgerExpanded: string | null = null
-let currentScreen: 'monitor' | 'ledger' = 'monitor'
+let currentScreen: 'monitor' | 'ledger' | 'picklist' = 'monitor'
 const fmtCents = (c: number) => `$${(c / 100).toFixed(2)}`
+
+// bulk-selection + cost state
+const selected = new Set<string>()
+let bulkMode: 'flat' | 'percent' | 'retail' = 'percent'
+let bulkWholeProduct = false // when on, cost edits cascade to the whole product/bin
+let visibleRows: LedgerRow[] = []
+const saveCosts = () => localStorage.setItem('tt-cost', JSON.stringify(costMap))
+const saveProductCosts = () => localStorage.setItem('tt-product-cost', JSON.stringify(productCostMap))
+const saveProductTx = () => localStorage.setItem('tt-product-tx', JSON.stringify(productTx))
+
+function updateBulkBar() {
+  const n = selected.size
+  $('ledgerBulk').style.display = n > 0 ? 'flex' : 'none'
+  if (n > 0) $('ledgerSelCount').textContent = `${n} selected`
+  const all = document.getElementById('ledgerSelectAll') as HTMLInputElement | null
+  if (!all) return
+  const visIds = visibleRows.map((r) => r.orderId)
+  const selVis = visIds.filter((id) => selected.has(id)).length
+  all.checked = visIds.length > 0 && selVis === visIds.length
+  all.indeterminate = selVis > 0 && selVis < visIds.length
+}
+
+function applyBulkCost(apply: CostApply) {
+  const rows = ledgerRows()
+  const byId = new Map(rows.map((r) => [r.orderId, r]))
+  if (bulkWholeProduct) {
+    // set a product/bin-level cost for every distinct product among the selection;
+    // it cascades to ALL orders of that bin and persists as a template across shows.
+    const prods = new Map<string, LedgerRow>()
+    for (const id of selected) { const r = byId.get(id); if (r) prods.set(r.productId, r) }
+    for (const [pid, sample] of prods) {
+      const c = applyCost(sample, apply)
+      if (c == null) delete productCostMap[pid]
+      else productCostMap[pid] = c
+      // drop per-order overrides for this bin so the template shows through uniformly
+      for (const r of rows) if (r.productId === pid) delete costMap[r.orderId]
+    }
+    saveProductCosts()
+    saveCosts()
+  } else {
+    for (const id of selected) {
+      const r = byId.get(id)
+      if (!r) continue
+      const c = applyCost(r, apply)
+      if (c == null) delete costMap[id]
+      else costMap[id] = c
+    }
+    saveCosts()
+  }
+  renderLedger()
+}
 
 function ledgerRows(): LedgerRow[] {
   return allSales.map((s) => ({
     ...s,
-    costCents: costMap[s.orderId],
-    transcript: transcriptsByOrder.has(s.orderId) ? { summary: transcriptsByOrder.get(s.orderId) } : undefined,
+    // order-level cost overrides the product/bin template
+    costCents: costMap[s.orderId] ?? productCostMap[s.productId],
+    // order-level summary wins, else the structured per-product transcript
+    transcript: transcriptsByOrder.has(s.orderId)
+      ? { summary: transcriptsByOrder.get(s.orderId) }
+      : productTx[s.productId],
   }))
 }
 
@@ -509,7 +604,7 @@ function editCost(r: LedgerRow, cell: HTMLElement) {
     const v = parseFloat(input.value)
     if (Number.isFinite(v) && v >= 0) costMap[r.orderId] = Math.round(v * 100)
     else delete costMap[r.orderId]
-    localStorage.setItem('tt-cost', JSON.stringify(costMap))
+    saveCosts()
     renderLedger()
   }
   input.addEventListener('blur', commit)
@@ -518,6 +613,20 @@ function editCost(r: LedgerRow, cell: HTMLElement) {
 
 function ledgerRowEl(r: LedgerRow): HTMLElement {
   const row = el('div', 'ledger-row')
+  const check = el('div', 'lc-check')
+  const cb = document.createElement('input')
+  cb.type = 'checkbox'
+  cb.checked = selected.has(r.orderId)
+  cb.addEventListener('click', (e) => e.stopPropagation())
+  cb.addEventListener('change', () => {
+    if (cb.checked) selected.add(r.orderId)
+    else selected.delete(r.orderId)
+    row.classList.toggle('sel', cb.checked)
+    updateBulkBar()
+  })
+  check.appendChild(cb)
+  row.appendChild(check)
+  if (cb.checked) row.classList.add('sel')
   row.appendChild(el('div', 'lc-id', '…' + r.orderId.slice(-8)))
   row.appendChild(el('div', 'lc-date', new Date(r.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })))
   const b = el('div', 'lc-buyer')
@@ -529,7 +638,9 @@ function ledgerRowEl(r: LedgerRow): HTMLElement {
   p.appendChild(el('span', 'v', ` · ${r.skuDesc ?? ''}`))
   row.appendChild(p)
   row.appendChild(el('div', 'lc-total r', r.price.formatted))
+  const fromTemplate = costMap[r.orderId] == null && productCostMap[r.productId] != null
   const cost = el('div', 'lc-cost r' + (r.costCents == null ? ' empty' : ''), r.costCents == null ? '—' : fmtCents(r.costCents))
+  if (fromTemplate) { cost.classList.add('tmpl'); cost.title = 'Cost from bin template — click to override this order' }
   cost.addEventListener('click', (e) => { e.stopPropagation(); editCost(r, cost) })
   row.appendChild(cost)
   const pc = profitCents(r)
@@ -557,9 +668,17 @@ function ledgerDetailEl(r: LedgerRow): HTMLElement {
   d.appendChild(col('BUYER', [['Name', r.buyer.username || '—'], ['Handle', '@' + (r.buyer.handle ?? '')], ['Order', r.orderId]]))
   const pc = profitCents(r)
   d.appendChild(col('PRICING', [['Total', r.price.formatted], ['Cost', r.costCents != null ? fmtCents(r.costCents) : '—'], ['Profit', pc != null ? fmtCents(pc) : '—'], ['SKU', r.skuDesc ?? '—']]))
+  const t = r.transcript
   const tx = el('div')
-  tx.appendChild(el('h5', undefined, '✦ GEMINI TRANSCRIPT'))
-  tx.appendChild(el('div', 'txbox', r.transcript?.summary ?? '(no transcript — captured live as items sell)'))
+  tx.appendChild(el('h5', undefined, '✦ AI PRODUCT DETAILS'))
+  const structured = t && (t.brand || t.item || t.color || t.size || t.retailPrice)
+  if (structured) {
+    const kv = (k: string, v?: string) => { if (!v) return; const line = el('div', 'kv'); line.appendChild(el('b', undefined, k + ': ')); line.appendChild(txt(v)); tx.appendChild(line) }
+    kv('Brand', t!.brand); kv('Item', t!.item); kv('Color', t!.color); kv('Size', t!.size); kv('Retail', t!.retailPrice)
+    if (t!.summary) tx.appendChild(el('div', 'txbox', t!.summary))
+  } else {
+    tx.appendChild(el('div', 'txbox', t?.summary ?? '(no transcript — capture per bin via ✦ in the Products panel)'))
+  }
   d.appendChild(tx)
   return d
 }
@@ -586,28 +705,108 @@ function renderLedger() {
     kpiEl.appendChild(t)
   }
   const rows = sortRows(filterRows(all, ledgerFilters), ledgerSort.key, ledgerSort.dir)
+  visibleRows = rows
   $('ledgerCount').textContent = `${rows.length} of ${all.length} orders`
   const body = $('ledgerRows')
   body.replaceChildren()
   if (!rows.length) {
-    const e = el('div', 'mono', 'no orders yet')
+    const e = el('div', 'mono', all.length ? 'no orders match these filters' : 'no orders yet')
     e.style.cssText = 'padding:18px;color:#3a4150;font-size:11px;'
     body.appendChild(e)
+    updateBulkBar()
     return
   }
   for (const r of rows) {
     body.appendChild(ledgerRowEl(r))
     if (ledgerExpanded === r.orderId) body.appendChild(ledgerDetailEl(r))
   }
+  updateBulkBar()
 }
 
-function showScreen(s: 'monitor' | 'ledger') {
+function showScreen(s: 'monitor' | 'ledger' | 'picklist') {
   currentScreen = s
   $('monitorScreen').style.display = s === 'monitor' ? 'flex' : 'none'
   $('ledgerScreen').style.display = s === 'ledger' ? 'flex' : 'none'
+  $('picklistScreen').style.display = s === 'picklist' ? 'flex' : 'none'
   $('navMonitor').classList.toggle('active', s === 'monitor')
   $('navLedger').classList.toggle('active', s === 'ledger')
+  $('navPicklist').classList.toggle('active', s === 'picklist')
   if (s === 'ledger') renderLedger()
+  if (s === 'picklist') renderPicklist()
+}
+
+// ── Picklist / packlist screen ──────────────────────────────────────────────
+let pickBy: 'product' | 'buyer' = 'product'
+const pickedOrders = new Set<string>(loadJson<string[]>('tt-picked', []))
+const savePicked = () => localStorage.setItem('tt-picked', JSON.stringify([...pickedOrders]))
+
+function renderPicklist() {
+  if (currentScreen !== 'picklist') return
+  const groups = groupForPicklist(ledgerRows(), pickBy)
+  const host = $('pickGroups')
+  host.replaceChildren()
+  const totalItems = groups.reduce((n, g) => n + g.units, 0)
+  const doneItems = groups.reduce((n, g) => n + g.items.filter((r) => pickedOrders.has(r.orderId)).length, 0)
+  $('pickProgress').textContent = `${doneItems}/${totalItems} done`
+  $('pickHint').textContent = pickBy === 'product' ? 'pull each bin, check items off' : 'pack one box per buyer'
+  if (!groups.length) {
+    const e = el('div', 'mono', 'no orders to pick yet')
+    e.style.cssText = 'padding:18px;color:#3a4150;font-size:11px;'
+    host.appendChild(e)
+    return
+  }
+  for (const g of groups) {
+    const card = el('div', 'pick-card')
+    const doneN = g.items.filter((r) => pickedOrders.has(r.orderId)).length
+    if (doneN === g.units) card.classList.add('complete')
+    const head = el('div', 'pick-head')
+    head.appendChild(el('div', 'pl', g.label))
+    head.appendChild(el('div', 'ps', `${g.units} item${g.units > 1 ? 's' : ''} · ${fmtCents(g.totalCents)}`))
+    head.appendChild(el('div', 'pct', `${doneN}/${g.units}`))
+    if (selectedPrinter) {
+      const pbtn = el('button', 'qbtn void', '⎙ Labels') as HTMLButtonElement
+      pbtn.style.marginLeft = '8px'
+      pbtn.addEventListener('click', () => { for (const r of g.items) void printSale(r) })
+      head.appendChild(pbtn)
+    }
+    card.appendChild(head)
+    for (const r of g.items) {
+      const item = el('div', 'pick-item' + (pickedOrders.has(r.orderId) ? ' done' : ''))
+      const cb = document.createElement('input')
+      cb.type = 'checkbox'
+      cb.checked = pickedOrders.has(r.orderId)
+      cb.addEventListener('change', () => {
+        if (cb.checked) pickedOrders.add(r.orderId)
+        else pickedOrders.delete(r.orderId)
+        savePicked()
+        renderPicklist()
+      })
+      item.appendChild(cb)
+      const name = el('div', 'pi-name')
+      name.appendChild(el('span', 'pi-sku', (r.skuDesc ?? '') + ' '))
+      // by bin → show who bought it; by buyer → show which bin/product
+      name.appendChild(txt(pickBy === 'product' ? r.buyer.username || r.buyer.handle || '—' : r.productName))
+      if (r.paymentStatus === 'pending') name.appendChild(el('span', 'pi-sku', '  · unpaid'))
+      item.appendChild(name)
+      item.appendChild(el('div', 'pi-price', r.price.formatted))
+      card.appendChild(item)
+    }
+    host.appendChild(card)
+  }
+}
+
+function setupPicklist() {
+  $('navPicklist').addEventListener('click', () => showScreen('picklist'))
+  $('pickBySeg').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    pickBy = ((b as HTMLElement).dataset.by ?? 'product') as 'product' | 'buyer'
+    $('pickBySeg').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b))
+    renderPicklist()
+  }))
+  $('pickReset').addEventListener('click', () => { pickedOrders.clear(); savePicked(); renderPicklist() })
+}
+
+function segActive(segId: string, attr: 'cost' | 'profit', val: string) {
+  $(segId).querySelectorAll('button').forEach((b) => b.classList.toggle('on', ((b as HTMLElement).dataset[attr] ?? '') === val))
 }
 
 function setupLedger() {
@@ -616,11 +815,95 @@ function setupLedger() {
   document.getElementById('navSettings2')?.addEventListener('click', () => document.getElementById('settingsModal')?.classList.remove('hidden'))
   ;($('ledgerSearch') as HTMLInputElement).addEventListener('input', (e) => { ledgerFilters = { ...ledgerFilters, q: (e.target as HTMLInputElement).value }; renderLedger() })
   ;($('ledgerStatus') as HTMLSelectElement).addEventListener('change', (e) => { ledgerFilters = { ...ledgerFilters, status: (e.target as HTMLSelectElement).value }; renderLedger() })
-  $('ledgerMissingCost').addEventListener('click', () => {
-    ledgerFilters = { ...ledgerFilters, cost: ledgerFilters.cost === 'missing' ? '' : 'missing' }
-    $('ledgerMissingCost').classList.toggle('on', ledgerFilters.cost === 'missing')
+
+  // cost / profit segmented filters
+  $('ledgerCostSeg').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    const v = ((b as HTMLElement).dataset.cost ?? '') as LedgerFilters['cost']
+    ledgerFilters = { ...ledgerFilters, cost: v }
+    segActive('ledgerCostSeg', 'cost', v)
+    renderLedger()
+  }))
+  $('ledgerProfitSeg').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    const v = ((b as HTMLElement).dataset.profit ?? '') as NonNullable<LedgerFilters['profit']>
+    ledgerFilters = { ...ledgerFilters, profit: v }
+    segActive('ledgerProfitSeg', 'profit', v)
+    renderLedger()
+  }))
+
+  // total min / max
+  const numOrNull = (s: string) => { const v = parseFloat(s); return Number.isFinite(v) ? v : null }
+  ;($('ledgerMin') as HTMLInputElement).addEventListener('input', (e) => { ledgerFilters = { ...ledgerFilters, min: numOrNull((e.target as HTMLInputElement).value) }; renderLedger() })
+  ;($('ledgerMax') as HTMLInputElement).addEventListener('input', (e) => { ledgerFilters = { ...ledgerFilters, max: numOrNull((e.target as HTMLInputElement).value) }; renderLedger() })
+
+  // clear all filters
+  $('ledgerClearFilters').addEventListener('click', () => {
+    ledgerFilters = { q: '', status: '', cost: '', profit: '', min: null, max: null }
+    ;($('ledgerSearch') as HTMLInputElement).value = ''
+    ;($('ledgerStatus') as HTMLSelectElement).value = ''
+    ;($('ledgerMin') as HTMLInputElement).value = ''
+    ;($('ledgerMax') as HTMLInputElement).value = ''
+    segActive('ledgerCostSeg', 'cost', '')
+    segActive('ledgerProfitSeg', 'profit', '')
     renderLedger()
   })
+
+  // CSV export of the current (filtered + sorted) view
+  $('ledgerExport').addEventListener('click', () => {
+    const rows = sortRows(filterRows(ledgerRows(), ledgerFilters), ledgerSort.key, ledgerSort.dir)
+    if (!rows.length) return
+    const blob = new Blob([toCsv(rows)], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `tiktok-ledger-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  })
+
+  // select-all (applies to the currently visible/filtered rows)
+  ;(document.getElementById('ledgerSelectAll') as HTMLInputElement).addEventListener('change', (e) => {
+    const on = (e.target as HTMLInputElement).checked
+    for (const r of visibleRows) { if (on) selected.add(r.orderId); else selected.delete(r.orderId) }
+    renderLedger()
+  })
+
+  // bulk cost bar
+  const setMode = (m: 'flat' | 'percent' | 'retail') => {
+    bulkMode = m
+    $('bulkModeFlat').classList.toggle('on', m === 'flat')
+    $('bulkModePct').classList.toggle('on', m === 'percent')
+    $('bulkModeRetail').classList.toggle('on', m === 'retail')
+    ;($('bulkCostValue') as HTMLInputElement).placeholder = m === 'flat' ? '$ per order' : m === 'retail' ? '% of retail' : '% of total'
+  }
+  $('bulkModeFlat').addEventListener('click', () => setMode('flat'))
+  $('bulkModePct').addEventListener('click', () => setMode('percent'))
+  $('bulkModeRetail').addEventListener('click', () => setMode('retail'))
+  $('bulkWhole').addEventListener('click', () => { bulkWholeProduct = !bulkWholeProduct; $('bulkWhole').classList.toggle('on', bulkWholeProduct) })
+  $('bulkApply').addEventListener('click', () => {
+    const v = parseFloat(($('bulkCostValue') as HTMLInputElement).value)
+    if (!Number.isFinite(v) || v < 0) return
+    applyBulkCost({ mode: bulkMode, value: v })
+  })
+  ;($('bulkCostValue') as HTMLInputElement).addEventListener('keydown', (e) => { if ((e as KeyboardEvent).key === 'Enter') $('bulkApply').click() })
+  document.querySelectorAll('.bulk-preset').forEach((b) => b.addEventListener('click', () => {
+    applyBulkCost({ mode: 'percent', value: parseFloat((b as HTMLElement).dataset.pct!) })
+  }))
+  $('bulkClear').addEventListener('click', () => applyBulkCost({ mode: 'clear', value: 0 }))
+  $('bulkTranscribe').addEventListener('click', async () => {
+    if (!recapEnabled) return
+    const byId = new Map(ledgerRows().map((r) => [r.orderId, r]))
+    const seen = new Set<string>()
+    const targets: { id: string; name: string }[] = []
+    for (const oid of selected) {
+      const r = byId.get(oid)
+      if (!r || seen.has(r.productId)) continue
+      seen.add(r.productId)
+      if (!productTx[r.productId]) targets.push({ id: r.productId, name: r.productName })
+    }
+    for (const t of targets) await transcribeProduct(t.id, t.name) // sequential — one audio clip at a time
+  })
+  $('bulkDeselect').addEventListener('click', () => { selected.clear(); renderLedger() })
+
   $('ledgerHead').querySelectorAll('span[data-sort]').forEach((sp) =>
     sp.addEventListener('click', () => {
       const key = (sp as HTMLElement).dataset.sort as SortKey
@@ -631,6 +914,7 @@ function setupLedger() {
   )
 }
 setupLedger()
+setupPicklist()
 
 // ── event loop ──────────────────────────────────────────────────────────────
 window.ttLive.onEvent((ev: LiveEvent) => {
@@ -692,6 +976,7 @@ window.ttLive.onEvent((ev: LiveEvent) => {
         seedMaxCreatedAt = Math.max(seedMaxCreatedAt, maxCreated)
       }
       renderLedger()
+      renderPicklist()
       break
     }
     case 'stream':

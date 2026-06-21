@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { statusLabel, profitCents, marginPct, computeKpis, filterRows, sortRows, type LedgerRow } from '../ledger'
+import { statusLabel, profitCents, marginPct, computeKpis, filterRows, sortRows, applyCost, toCsv, parseRetailCents, groupForPicklist, type LedgerRow } from '../ledger'
 import type { Sale } from '../types'
 
 const sale = (over: Partial<Sale> & Partial<LedgerRow>): LedgerRow => ({
@@ -55,6 +55,97 @@ describe('filterRows', () => {
   it('filters by status and missing-cost', () => {
     expect(filterRows(rows, { q: '', status: 'Failed', cost: '' }).map((r) => r.orderId)).toEqual(['b'])
     expect(filterRows(rows, { q: '', status: '', cost: 'missing' }).map((r) => r.orderId)).toEqual(['b'])
+  })
+  it('filters by costed', () => {
+    expect(filterRows(rows, { q: '', status: '', cost: 'costed' }).map((r) => r.orderId)).toEqual(['a'])
+  })
+  it('filters by profit sign (only costed rows count)', () => {
+    const pr = [
+      sale({ orderId: 'win', price: { cents: 5000, formatted: '$50' }, costCents: 1000 }), // +4000
+      sale({ orderId: 'loss', price: { cents: 2000, formatted: '$20' }, costCents: 3000 }), // -1000
+      sale({ orderId: 'unc', price: { cents: 5000, formatted: '$50' } }), // uncosted → excluded by both
+    ]
+    expect(filterRows(pr, { q: '', status: '', cost: '', profit: 'pos' }).map((r) => r.orderId)).toEqual(['win'])
+    expect(filterRows(pr, { q: '', status: '', cost: '', profit: 'neg' }).map((r) => r.orderId)).toEqual(['loss'])
+  })
+  it('filters by total min/max (dollars)', () => {
+    const pr = [
+      sale({ orderId: 'lo', price: { cents: 1000, formatted: '$10' } }),
+      sale({ orderId: 'mid', price: { cents: 5000, formatted: '$50' } }),
+      sale({ orderId: 'hi', price: { cents: 12000, formatted: '$120' } }),
+    ]
+    expect(filterRows(pr, { q: '', status: '', cost: '', min: 20 }).map((r) => r.orderId)).toEqual(['mid', 'hi'])
+    expect(filterRows(pr, { q: '', status: '', cost: '', max: 100 }).map((r) => r.orderId)).toEqual(['lo', 'mid'])
+    expect(filterRows(pr, { q: '', status: '', cost: '', min: 20, max: 100 }).map((r) => r.orderId)).toEqual(['mid'])
+  })
+})
+
+describe('toCsv', () => {
+  const rows = [
+    sale({ orderId: 'a1', buyer: { username: 'Cris, Q', handle: 'cris' }, productName: 'Bin A', price: { cents: 5000, formatted: '$50' }, costCents: 1500, paymentStatus: 'paid', createdAt: 0 }),
+  ]
+  it('emits a header and one row per order, quoting commas', () => {
+    const csv = toCsv(rows)
+    const lines = csv.trim().split('\n')
+    expect(lines[0]).toContain('Order')
+    expect(lines[0]).toContain('Profit')
+    expect(lines).toHaveLength(2)
+    expect(lines[1]).toContain('"Cris, Q"') // comma-bearing field is quoted
+    expect(lines[1]).toContain('35.00') // profit = 50 - 15
+  })
+})
+
+describe('applyCost (bulk)', () => {
+  const r = sale({ price: { cents: 5000, formatted: '$50' } })
+  it('sets a flat dollar cost in cents', () => {
+    expect(applyCost(r, { mode: 'flat', value: 12 })).toBe(1200)
+  })
+  it('sets a percent of the order total', () => {
+    expect(applyCost(r, { mode: 'percent', value: 30 })).toBe(1500) // 30% of $50
+  })
+  it('clears the cost', () => {
+    expect(applyCost(r, { mode: 'clear', value: 0 })).toBeUndefined()
+  })
+  it('sets a percent of the AI retail price when present', () => {
+    const withRetail = sale({ price: { cents: 5000, formatted: '$50' }, transcript: { retailPrice: '$120.00' } })
+    expect(applyCost(withRetail, { mode: 'retail', value: 25 })).toBe(3000) // 25% of $120
+  })
+  it('retail mode yields undefined when no retail price is known', () => {
+    expect(applyCost(r, { mode: 'retail', value: 25 })).toBeUndefined()
+  })
+})
+
+describe('parseRetailCents', () => {
+  it('parses common money formats to cents', () => {
+    expect(parseRetailCents('$120.00')).toBe(12000)
+    expect(parseRetailCents('120')).toBe(12000)
+    expect(parseRetailCents('$1,250')).toBe(125000)
+    expect(parseRetailCents('approx $89.99 retail')).toBe(8999)
+  })
+  it('returns null for missing or unparseable values', () => {
+    expect(parseRetailCents(undefined)).toBeNull()
+    expect(parseRetailCents('n/a')).toBeNull()
+  })
+})
+
+describe('groupForPicklist', () => {
+  const rows = [
+    sale({ orderId: 'a', buyer: { username: 'Ann', handle: 'ann1' }, productId: 'PA', productName: 'Bin A', price: { cents: 5000, formatted: '$50' }, paymentStatus: 'paid' }),
+    sale({ orderId: 'b', buyer: { username: 'Ann', handle: 'ann1' }, productId: 'PB', productName: 'Bin B', price: { cents: 3000, formatted: '$30' }, paymentStatus: 'pending' }),
+    sale({ orderId: 'c', buyer: { username: 'Bob', handle: 'bob1' }, productId: 'PA', productName: 'Bin A', price: { cents: 2000, formatted: '$20' }, paymentStatus: 'paid' }),
+    sale({ orderId: 'x', buyer: { username: 'Zoe', handle: 'zoe1' }, productId: 'PA', productName: 'Bin A', price: { cents: 9000, formatted: '$90' }, paymentStatus: 'failed' }),
+  ]
+  it('groups by buyer, excluding failed payments', () => {
+    const g = groupForPicklist(rows, 'buyer')
+    expect(g.map((x) => x.key)).toEqual(['ann1', 'bob1']) // Zoe excluded (failed), Ann first (2 units)
+    expect(g[0]!.units).toBe(2)
+    expect(g[0]!.totalCents).toBe(8000)
+  })
+  it('groups by product/bin, excluding failed payments', () => {
+    const g = groupForPicklist(rows, 'product')
+    expect(g.map((x) => x.key)).toEqual(['PA', 'PB'])
+    expect(g[0]!.label).toBe('Bin A')
+    expect(g[0]!.units).toBe(2) // a + c (Zoe's failed PA excluded)
   })
 })
 
