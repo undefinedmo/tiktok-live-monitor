@@ -231,7 +231,11 @@ function renderProductsTable() {
 function renderAuction(p?: PinnedAuction) {
   if (!p || !p.winUsername) {
     pinnedEndMs = undefined
-    $('lotOverlay').style.display = 'none'
+    // keep the overlay visible (it's always over the video); show placeholders until a lot is live
+    $('lotName').textContent = 'Waiting for current lot'
+    $('lotBuyer').textContent = '—'
+    $('lotBid').textContent = '—'
+    $('lotBids').textContent = '0'
     document.getElementById('auctionPanelName')!.textContent = 'Waiting for current lot'
     document.getElementById('auctionPanelBid')!.textContent = '--'
     document.getElementById('auctionPanelBids')!.textContent = '0'

@@ -46,7 +46,7 @@
       .stream-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;z-index:1;pointer-events:none;}
       .stream-empty .thumb{width:128px;height:88px;border-radius:8px;background:repeating-linear-gradient(45deg,#1a2330 0 8px,#161e29 8px 16px);border:1px solid #2a3340;}
       .stream-empty .hint{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:1.5px;color:#4a525f;}
-      .lot-card{position:absolute;left:16px;right:16px;bottom:16px;display:none;align-items:center;gap:14px;background:rgba(10,12,17,.84);border:1px solid #262c38;border-radius:10px;padding:13px 16px;backdrop-filter:blur(10px);z-index:2;}
+      .lot-card{position:absolute;left:16px;right:16px;bottom:16px;display:flex;align-items:center;gap:14px;background:rgba(10,12,17,.84);border:1px solid #262c38;border-radius:10px;padding:13px 16px;backdrop-filter:blur(10px);z-index:2;}
       .lot-thumb{width:56px;height:76px;border-radius:6px;background:repeating-linear-gradient(45deg,#243049 0 6px,#1c2740 6px 12px);border:1px solid #34405c;flex:none;}
       .bid-cta{flex:none;height:62px;border:none;border-radius:10px;cursor:pointer;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:18px;letter-spacing:1px;color:#fff;background:linear-gradient(110deg,#3fa0ff,#6b56f0 55%,#8a5cf6);box-shadow:0 8px 24px rgba(86,80,240,.4),inset 0 1px 0 rgba(255,255,255,.25);}
       .chat-col{width:296px;flex:none;border-left:1px solid #15181f;border-right:1px solid #15181f;display:flex;flex-direction:column;background:#08090d;}
@@ -73,9 +73,9 @@
          width to a larger chat + a wider ops panel (multi-column feed). Smaller screens
          keep the default proportions. */
       @media (min-width:1700px){
-        .video-col{flex:0 1 520px;max-width:560px;}
-        .chat-col{width:540px;}
-        .rightpanel{flex:1 1 560px;width:auto;}
+        .video-col{flex:0 1 460px;max-width:480px;}
+        .chat-col{width:660px;}
+        .rightpanel{flex:1 1 520px;width:auto;}
         .bidfeed{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:8px;padding:8px;max-height:600px;}
         .bidfeed .bidrow{border-bottom:none;border:1px solid #1a1e27;border-radius:9px;}
       }
@@ -189,37 +189,27 @@
     </style>
   </head>
   <body>
-    <div class="topbar">
-      <div class="brand"><img src="./sf-logo.png" alt="SellerFolio" /><span>SellerFolio Live</span></div>
-      <div class="livepill">
-        <span id="dot" title="connecting..."></span>
-        <span id="status">connecting...</span><span class="sep">&middot;</span><span id="sessionName">@sellerName</span><span class="sep">&middot;</span><span id="elapsed">--</span>
-      </div>
-      <span id="room" class="visually-hidden">--</span><span id="viewers" class="visually-hidden">--</span>
-      <div style="flex:1;"></div>
-      <div class="meter"><span class="label">CPU</span><div class="track"><div class="fill" style="width:24%;"></div></div><span class="value">24%</span></div>
-      <div class="meter"><span class="label">RAM</span><div class="track"><div class="fill" style="width:52%;"></div></div><span class="value">4.2GB</span></div>
-      <div class="mono" style="font-size:12px;color:#7e8696;padding-left:6px;border-left:1px solid #1f242e;">EST. COST <span style="color:#36d9a4;">$0.12/hr</span></div>
-      <button class="topicon" id="navSync" title="Sync orders now">⌗<span id="syncDot" style="position:absolute;width:0;height:0;overflow:hidden;"></span></button>
-      <button class="topicon" id="navSettings2" title="Label settings">⚙</button>
-    </div>
+    <!-- no top bar — live metrics kept hidden for the JS; status shows on the rail dot -->
+    <div id="liveStats" class="visually-hidden"><span id="status"></span><span id="sessionName"></span><span id="elapsed"></span><span id="room"></span><span id="viewers"></span></div>
 
     <div class="terminal-body">
       <div class="rail">
+        <div class="rail-logo"><img src="./sf-logo.png" alt="SF" /></div>
+        <div id="dot" title="connecting…" style="margin:2px 0 4px;"></div>
         <div class="navicon active" id="navMonitor" title="Live Monitor"><div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;width:16px;height:16px;"><div style="background:#7da8ff;border-radius:1px;"></div><div style="background:#8a78ff;border-radius:1px;"></div><div style="background:#8a78ff;border-radius:1px;"></div><div style="background:#9b6cf6;border-radius:1px;"></div></div></div>
         <div class="navicon" id="navLedger" title="Order Ledger">⚒</div>
         <div class="navicon" id="navPicklist" title="Picklist / Packlist"><div style="display:flex;align-items:end;justify-content:center;gap:2px;height:18px;"><div style="width:3px;height:8px;background:#5c6473;border-radius:1px;"></div><div style="width:3px;height:13px;background:#5c6473;border-radius:1px;"></div><div style="width:3px;height:6px;background:#5c6473;border-radius:1px;"></div></div></div>
-        <div class="navicon" title="Filters"><div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;"><div style="width:16px;height:2px;background:#5c6473;border-radius:2px;position:relative;"><div style="position:absolute;left:3px;top:-2px;width:6px;height:6px;border-radius:50%;background:#5c6473;"></div></div><div style="width:16px;height:2px;background:#5c6473;border-radius:2px;position:relative;"><div style="position:absolute;right:2px;top:-2px;width:6px;height:6px;border-radius:50%;background:#5c6473;"></div></div></div></div>
+        <div style="flex:1;"></div>
+        <div class="navicon" id="navSync" title="Sync orders now" style="position:relative;">↻<span id="syncDot" style="position:absolute;width:0;height:0;overflow:hidden;"></span></div>
+        <div class="navicon" id="navSettings2" title="Label settings">⚙</div>
+        <div style="height:8px;"></div>
       </div>
 
       <div id="monitorScreen" class="monitor">
         <div class="video-col">
-          <div id="liveStats" class="visually-hidden"></div>
           <div class="stream-card">
             <video id="live" muted autoplay playsinline controls></video>
-            <div class="stream-empty"><div class="thumb"></div><div class="hint">[ STREAM PREVIEW &middot; DROP CAPTURE HERE ]</div></div>
-            <div class="stream-badge"><span style="width:7px;height:7px;border-radius:50%;background:#ff5c5c;box-shadow:0 0 8px #ff5c5c;animation:sfpulse 1.4s infinite;"></span>REC &middot; 1080p60 &middot; LIVE STREAM</div>
-            <div class="stream-rate">8.2 MB/s</div>
+            <div class="stream-badge"><span style="width:7px;height:7px;border-radius:50%;background:#ff5c5c;box-shadow:0 0 8px #ff5c5c;animation:sfpulse 1.4s infinite;"></span>REC &middot; LIVE STREAM</div>
             <div id="lotOverlay" class="lot-card">
               <div class="lot-thumb"></div>
               <div style="flex:1;min-width:0;">
@@ -230,7 +220,6 @@
               <div style="text-align:right;flex:none;border-left:1px solid #2a3140;padding-left:14px;"><div style="font-size:11px;color:#8b93a3;">Ends in</div><div class="mono" id="lotEnds" style="font-weight:600;font-size:24px;color:#ff9b6b;">--</div></div>
             </div>
           </div>
-          <button class="bid-cta" type="button">CUSTOM BID&nbsp;&nbsp;$450</button>
         </div>
 
         <div class="chat-col">
@@ -386,14 +375,6 @@
         </div>
         <div class="body sf-scroll" id="pickGroups" style="flex:1;min-height:0;display:flex;flex-direction:column;gap:12px;overflow-y:auto;"></div>
       </div>
-    </div>
-
-    <div class="footerbar">
-      <span>TERMINAL INSTANCE #US-EAST-01A</span>
-      <span style="color:#36d9a4;">WEBSOCKET: CONNECTED</span>
-      <div style="flex:1;"></div>
-      <span>REDIS: 1.2MS</span>
-      <span style="color:#36d9a4;">CLOUDSYNC: ACTIVE</span>
     </div>
 
     <div id="settingsModal" class="modal hidden">
