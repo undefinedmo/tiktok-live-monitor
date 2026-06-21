@@ -2,212 +2,192 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>SellerFolio Live — TikTok Monitor</title>
+    <title>SellerFolio Live — Operations Terminal</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <style>
-      :root {
-        --bg:#07080b; --panel:#0f131a; --panel-grad:linear-gradient(180deg,#10131b,#0c0f16);
-        --rail:#090a0e; --topbar:linear-gradient(180deg,#0c0e13,#08090d);
-        --line:#1d212b; --line2:#15181f; --line3:#1a1e27;
-        --txt:#eef1f7; --txt2:#dfe4ec; --dim:#8b93a3; --dim2:#707a8c; --mdim:#5c6473;
-        --blue:#5cb0ff; --blue2:#4da3ff; --blue3:#7da8ff;
-        --purple:#8a78ff; --violet:#9b6cf6; --green:#36d9a4; --green2:#5fe3bb;
-        --red:#ff5c5c; --amber:#ffb23e; --amber2:#ffc56b; --orange:#ff9b6b;
-        --grad-brand:linear-gradient(110deg,#5cb0ff,#8a78ff 60%,#9b6cf6);
-        --grad-btn:linear-gradient(110deg,#3fa0ff,#6b56f0 55%,#8a5cf6);
-        --head:'Space Grotesk', system-ui, sans-serif;
-        --mono:'IBM Plex Mono', ui-monospace, monospace;
-        --body:'Plus Jakarta Sans', system-ui, sans-serif;
-      }
-      * { box-sizing: border-box; }
-      body { font: 14px/1.4 var(--body); margin: 0; background: var(--bg); color: var(--txt); height: 100vh; display: flex; flex-direction: column; }
-      ::-webkit-scrollbar { width: 8px; height: 8px; }
-      ::-webkit-scrollbar-thumb { background: rgba(130,140,160,.28); border-radius: 8px; }
-      ::-webkit-scrollbar-track { background: transparent; }
-      @keyframes sfpulse { 0%,100%{opacity:1;} 50%{opacity:.35;} }
-      .mono { font-family: var(--mono); }
-
-      /* topbar */
-      header { height: 54px; flex: none; display: flex; align-items: center; gap: 16px; padding: 0 18px; background: var(--topbar); border-bottom: 1px solid var(--line2); }
-      .logo { width: 22px; height: 22px; display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
-      .logo i { border-radius: 2px; } .logo i:nth-child(1){background:#7da8ff;} .logo i:nth-child(2){background:#8a78ff;} .logo i:nth-child(3){background:#8a78ff;} .logo i:nth-child(4){background:#9b6cf6;}
-      .brand { font-family: var(--head); font-weight: 600; font-size: 17px; background: var(--grad-brand); -webkit-background-clip: text; background-clip: text; color: transparent; letter-spacing: .2px; }
-      .livepill { display: flex; align-items: center; gap: 8px; padding: 5px 11px; border: 1px solid #25303f; border-radius: 7px; background: #0c1119; font-family: var(--mono); font-size: 12px; color: #c4ccd9; }
-      .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim2); }
-      .dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); animation: sfpulse 1.8s infinite; }
-      header .sp { margin-left: auto; }
-      .meta { font-family: var(--mono); font-size: 12px; color: var(--dim); }
-      .meta b { color: var(--txt); }
-      .icobtn { width: 32px; height: 32px; border: 1px solid #20242e; border-radius: 7px; color: var(--dim); display: flex; align-items: center; justify-content: center; font-size: 15px; cursor: pointer; background: none; }
-
-      #session { padding: 5px 18px; background: #090b10; color: var(--dim2); font-family: var(--mono); font-size: 11px; letter-spacing: .3px; border-bottom: 1px solid var(--line2); }
-
-      /* stat cards */
-      .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 12px 14px 6px; }
-      .card { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 12px 14px; }
-      .card .lbl { font-family: var(--mono); font-size: 10px; letter-spacing: 1.5px; color: var(--dim2); }
-      .card .val { font-family: var(--head); font-weight: 700; font-size: 28px; line-height: 1.15; margin-top: 4px; }
-      .card.alert .val { color: var(--red); }
-
-      /* kpi strip */
-      .kpis { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 2px 16px 10px; }
-      .kpis span { font-family: var(--mono); font-size: 11px; letter-spacing: .4px; color: var(--dim2); display: inline-flex; gap: 6px; align-items: baseline; }
-      .kpis b { color: var(--txt2); font-weight: 600; }
-      .kpis b.up { color: var(--green2); } .kpis b.down { color: var(--red); }
-
-      main { flex: 1; display: grid; grid-template-columns: 1.6fr 1fr; gap: 12px; padding: 0 14px 12px; min-height: 0; }
-      .col { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
-      #rightCol { overflow-y: auto; }
-      #productsRow { padding: 0 14px 12px; height: 190px; display: flex; }
-      #productsRow .panel { flex: 1; }
-
-      .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-      .panel > h3 { margin: 0; padding: 11px 14px; font-family: var(--mono); font-size: 11px; letter-spacing: 1.5px; color: #c4ccd9; border-bottom: 1px solid var(--line3); display: flex; justify-content: space-between; align-items: center; text-transform: uppercase; }
-      .panel > h3 .sp { color: var(--mdim); letter-spacing: .3px; }
-      .panel > .body { overflow: auto; padding: 0; }
-
-      /* live sales feed */
-      .feed-row { position: relative; display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-bottom: 1px solid var(--line3); }
-      .feed-row.fresh { background: linear-gradient(90deg, rgba(86,80,240,.16), rgba(86,80,240,.02)); }
-      .feed-row.fresh::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: linear-gradient(180deg,#4da3ff,#8a5cf6); }
-      .feed-row.failed { background: rgba(255,92,92,.07); }
-      .avatar { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; background: #1a1f2a; border: 1px solid #2a3140; flex: none; }
-      .who { min-width: 0; flex: 1; }
-      .who .name { font-weight: 700; color: var(--txt); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .who .item { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
-      .badge { font-family: var(--mono); font-size: 9px; letter-spacing: .5px; padding: 2px 7px; border-radius: 4px; }
-      .badge.failed { background: rgba(255,92,92,.16); color: #ff8f8f; border: 1px solid rgba(255,92,92,.34); }
-      .badge.pending { background: rgba(255,178,62,.14); color: var(--amber2); border: 1px solid rgba(255,178,62,.32); }
-      .price { font-family: var(--mono); font-weight: 600; font-size: 16px; color: var(--green2); white-space: nowrap; }
-      .price.failed { color: var(--red); text-decoration: line-through; }
-      .time { font-family: var(--mono); font-size: 10px; color: var(--mdim); width: 46px; text-align: right; flex: none; }
-      .printbtn { background: #161b24; color: var(--blue3); border: 1px solid #2a3140; border-radius: 6px; cursor: pointer; font-size: 12px; padding: 3px 8px; flex: none; }
-      .printbtn:hover { border-color: #4a5b86; }
-
-      /* tables (top buyers / products) */
-      table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-      th, td { text-align: left; padding: 8px 14px; border-bottom: 1px solid var(--line3); }
-      th { font-family: var(--mono); color: var(--dim2); font-weight: 500; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
-      td { color: var(--txt2); }
-      td.n, th.n { text-align: right; font-family: var(--mono); }
-      .rank { color: var(--mdim); width: 18px; text-align: right; font-family: var(--mono); }
-
-      /* current auction */
-      .auction { padding: 14px; background: var(--panel-grad); }
-      .auction .pname { font-family: var(--head); font-weight: 600; font-size: 18px; color: #fff; }
-      .auction .grid3 { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 14px; }
-      .auction .lbl { font-size: 11px; color: var(--dim); }
-      .auction .bignum { font-family: var(--mono); font-weight: 600; font-size: 26px; margin-top: 3px; }
-      .auction .bid { background: var(--grad-brand); -webkit-background-clip: text; background-clip: text; color: transparent; }
-      .auction .ends { color: var(--orange); }
-      .auction .meta-line { color: var(--dim); font-size: 12px; margin-top: 9px; }
-      .auction .bar { height: 7px; border-radius: 4px; background: #1a1f2a; overflow: hidden; margin-top: 12px; }
-      .auction .bar > i { display: block; height: 100%; background: linear-gradient(90deg,#ff7a59,#ff9b6b); transition: width .25s linear; }
-
-      .empty { color: var(--mdim); padding: 16px 14px; font-style: italic; }
-
-      /* printer footer */
-      footer#printerBar { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: #08090d; border-top: 1px solid var(--line2); font-size: 12px; flex-wrap: wrap; }
-      footer#printerBar select, footer#printerBar input, footer#printerBar button { background: #0c0e13; color: var(--txt); border: 1px solid #20242e; border-radius: 7px; padding: 5px 9px; font: inherit; }
-      footer#printerBar input { width: 56px; }
-      footer#printerBar button { cursor: pointer; }
-      footer#printerBar button#printNext, footer#printerBar button#printCustom, footer#printerBar button#printRange { background: var(--grad-btn); border: none; color: #fff; font-weight: 600; }
-      footer#printerBar button:disabled { opacity: .4; cursor: default; }
-      footer#printerBar .sep { color: var(--mdim); font-family: var(--mono); font-size: 10px; letter-spacing: 1px; }
-      footer#printerBar .queue { margin-left: auto; color: var(--dim); display: flex; gap: 10px; overflow: hidden; font-family: var(--mono); font-size: 11px; }
-      footer#printerBar .q { white-space: nowrap; }
-      footer#printerBar .q.printed { color: var(--green2); }
-      footer#printerBar .q.error { color: var(--red); }
-      footer#printerBar .q.printing { color: var(--amber2); }
-
-      /* settings modal */
-      .modal { position: fixed; inset: 0; background: rgba(4,5,8,.66); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; z-index: 100; }
-      .modal.hidden { display: none; }
-      .modal-box { background: var(--panel); border: 1px solid #2a3142; border-radius: 12px; padding: 20px 22px; width: 460px; max-width: 92%; }
-      .modal-box h3 { margin: 0 0 16px; font-family: var(--head); font-weight: 600; font-size: 16px; }
-      .modal-box label { display: block; margin: 8px 0; color: var(--txt2); }
-      .modal-box .fields { margin: 12px 0; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; }
-      .modal-box .fields label { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
-      .modal-box select, .modal-box input[type=text] { background: #0c0e13; color: var(--txt); border: 1px solid #20242e; border-radius: 7px; padding: 6px 9px; font: inherit; }
-      .modal-box .custom-row { display: flex; gap: 8px; margin: 8px 0; }
-      .modal-box .custom-row #setRegex { flex: 1; font-family: var(--mono); }
-      .modal-box .custom-row #setFlags { width: 72px; font-family: var(--mono); }
-      .modal-box .preview { background: #0c0e13; border: 1px solid var(--line); border-radius: 7px; padding: 10px 12px; font-family: var(--mono); font-size: 12px; color: var(--dim); margin: 12px 0 4px; }
-      .modal-box .preview b { color: var(--green2); }
-      .modal-actions { text-align: right; margin-top: 16px; }
-      .modal-actions button { background: var(--grad-btn); color: #fff; border: none; border-radius: 7px; padding: 7px 18px; font-weight: 600; cursor: pointer; }
+      *{box-sizing:border-box;}
+      body{margin:0;height:100vh;overflow:hidden;background:#07080b;font-family:'Plus Jakarta Sans',system-ui,sans-serif;color:#eef1f7;font-size:14px;display:flex;flex-direction:column;}
+      .mono{font-family:'IBM Plex Mono',monospace;}
+      .grot{font-family:'Space Grotesk',sans-serif;}
+      .sf-scroll::-webkit-scrollbar{width:8px;height:8px;}
+      .sf-scroll::-webkit-scrollbar-thumb{background:rgba(130,140,160,.28);border-radius:8px;}
+      .sf-scroll::-webkit-scrollbar-track{background:transparent;}
+      @keyframes sfpulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+      button{cursor:pointer;font:inherit;}
+      .stat{background:#0f131a;border:1px solid #1d212b;border-radius:9px;padding:13px 14px;}
+      .stat .l{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1.5px;color:#707a8c;}
+      .stat .v{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:25px;line-height:1.15;margin-top:4px;}
+      .stat .v.red{color:#ff5c5c;}
+      .stat .s{font-size:11px;color:#8b93a3;margin-top:2px;}
+      /* dynamic bid-feed rows */
+      .bidrow{position:relative;display:flex;align-items:center;gap:12px;padding:13px 14px;border-bottom:1px solid #1a1e27;}
+      .bidrow.fresh{background:linear-gradient(90deg,rgba(86,80,240,.16),rgba(86,80,240,.03));}
+      .bidrow.fresh::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(180deg,#4da3ff,#8a5cf6);}
+      .bidrow.failed{background:rgba(255,92,92,.06);}
+      .bidav{width:34px;height:34px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-size:13px;color:#cdd4e0;background:#1a1f2a;border:1px solid #2a3140;object-fit:cover;}
+      .bidrow.fresh .bidav{background:linear-gradient(135deg,#2a3a5c,#3a2f5e);border-color:#4a5b86;}
+      .bidwho{flex:1;min-width:0;}
+      .bidname{font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .bidsub{font-family:'IBM Plex Mono',monospace;font-size:11px;color:#707a8c;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .tag{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.5px;padding:2px 7px;border-radius:4px;margin-right:6px;}
+      .tag.whale{background:rgba(138,120,255,.22);color:#b9adff;border:1px solid rgba(138,120,255,.4);}
+      .tag.failed{background:rgba(255,92,92,.16);color:#ff8f8f;border:1px solid rgba(255,92,92,.34);}
+      .tag.pending{background:rgba(255,178,62,.14);color:#ffc56b;border:1px solid rgba(255,178,62,.32);}
+      .bidright{text-align:right;}
+      .bidprice{font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:17px;color:#fff;}
+      .bidprice.failed{color:#ff5c5c;text-decoration:line-through;}
+      .bidtime{font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8a78ff;margin-top:2px;}
+      .printmini{margin-left:10px;flex:none;height:28px;padding:0 10px;border-radius:6px;border:1px solid #2a3140;background:#161b24;color:#7da8ff;font-family:'IBM Plex Mono',monospace;font-size:11px;}
+      /* print queue rows */
+      .qrow{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid #1a1e27;}
+      .qbtn{height:28px;padding:0 12px;border-radius:6px;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;}
+      .qbtn.print{border:none;background:linear-gradient(135deg,#3fa0ff,#7c5cff);color:#fff;}
+      .qbtn.void{border:1px solid #2a3140;background:#161b24;color:#aab2c0;}
+      /* products rows */
+      .prow{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid #1a1e27;font-family:'IBM Plex Mono',monospace;font-size:12px;}
+      .prow .pn{flex:1;min-width:0;font-family:'Plus Jakarta Sans',sans-serif;color:#dfe4ec;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .prow .pc{width:42px;text-align:right;color:#aab2c0;}
+      .chip{font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.5px;padding:3px 8px;border-radius:5px;background:rgba(54,217,164,.14);color:#5fe3bb;border:1px solid rgba(54,217,164,.32);}
+      .chip.amber{background:rgba(255,178,62,.14);color:#ffc56b;border-color:rgba(255,178,62,.32);}
+      .modal{position:fixed;inset:0;background:rgba(4,5,8,.66);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;z-index:100;}
+      .modal.hidden{display:none;}
+      .modal-box{background:#0f131a;border:1px solid #2a3142;border-radius:12px;padding:20px 22px;width:460px;max-width:92%;}
+      .modal-box h3{margin:0 0 16px;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;}
+      .modal-box label{display:block;margin:8px 0;color:#dfe4ec;}
+      .modal-box .fields{margin:12px 0;display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;}
+      .modal-box .fields label{display:flex;gap:8px;align-items:center;margin:4px 0;}
+      .modal-box select,.modal-box input[type=text]{background:#0c0e13;color:#eef1f7;border:1px solid #20242e;border-radius:7px;padding:6px 9px;font:inherit;}
+      .modal-box .custom-row{display:flex;gap:8px;margin:8px 0;}
+      .modal-box .custom-row #setRegex{flex:1;font-family:'IBM Plex Mono',monospace;}
+      .modal-box .custom-row #setFlags{width:72px;font-family:'IBM Plex Mono',monospace;}
+      .modal-box .preview{background:#0c0e13;border:1px solid #1d212b;border-radius:7px;padding:10px 12px;font-family:'IBM Plex Mono',monospace;font-size:12px;color:#8b93a3;margin:12px 0 4px;}
+      .modal-box .preview b{color:#5fe3bb;}
+      .modal-actions{text-align:right;margin-top:16px;}
+      .modal-actions button{background:linear-gradient(110deg,#3fa0ff,#6b56f0 55%,#8a5cf6);color:#fff;border:none;border-radius:7px;padding:7px 18px;font-weight:600;}
     </style>
   </head>
   <body>
-    <header>
-      <span class="logo"><i></i><i></i><i></i><i></i></span>
-      <span class="brand">SellerFolio Live</span>
-      <span class="livepill"><span class="dot" id="dot"></span><b id="status">connecting…</b></span>
-      <span class="sp meta">room <b id="room">—</b> · viewers <b id="viewers">—</b></span>
-      <button class="icobtn" id="labelSettings" title="Label settings">⚙</button>
-    </header>
-    <div id="session">—</div>
-    <div class="cards">
-      <div class="card"><div class="lbl">ITEMS SOLD</div><div class="val" id="itemsSold">0</div></div>
-      <div class="card"><div class="lbl">GMV</div><div class="val" id="gmv">$0.00</div></div>
-      <div class="card"><div class="lbl">UNIQUE BUYERS</div><div class="val" id="uniqueBuyers">0</div></div>
-      <div class="card alert"><div class="lbl">FAILED PAYMENTS</div><div class="val" id="failed">0</div></div>
-    </div>
-    <div class="kpis" id="kpis">
-      <span>GPM <b id="gpm">—</b></span>
-      <span>GMV/hr <b id="gmvHr">—</b></span>
-      <span>IMPRESSIONS <b id="impr">—</b></span>
-      <span>CLICKS <b id="clicks">—</b></span>
-      <span>AVG VIEW <b id="avgView">—</b></span>
-      <span>ENTER RATE <b id="enterRate">—</b></span>
-      <span>VS MARKET <b id="mktCmp">—</b></span>
-    </div>
-    <main>
-      <div class="col">
-        <div class="panel" style="flex:1">
-          <h3><span>⚡ Live Sales Feed</span><span id="feedCount" class="sp"></span></h3>
-          <div class="body" id="feed"><div class="empty">Waiting for sales… (open the live/auction view in the monitor window)</div></div>
-        </div>
+    <!-- TOPBAR -->
+    <div style="height:56px;flex:none;display:flex;align-items:center;gap:18px;padding:0 18px;border-bottom:1px solid #15181f;background:linear-gradient(180deg,#0c0e13,#08090d);">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="width:24px;height:24px;display:grid;grid-template-columns:1fr 1fr;gap:3px;"><div style="background:#7da8ff;border-radius:2px;"></div><div style="background:#8a78ff;border-radius:2px;"></div><div style="background:#8a78ff;border-radius:2px;"></div><div style="background:#9b6cf6;border-radius:2px;"></div></div>
+        <span class="grot" style="font-weight:600;font-size:17px;background:linear-gradient(110deg,#5cb0ff,#8a78ff 60%,#9b6cf6);-webkit-background-clip:text;background-clip:text;color:transparent;letter-spacing:.2px;">SellerFolio Live</span>
       </div>
-      <div class="col" id="rightCol">
-        <div class="panel" style="flex:none">
-          <h3>Live Stream</h3>
-          <div style="height:170px; background:#05060a; overflow:hidden;">
-            <video id="live" muted autoplay playsinline controls style="width:100%; height:100%; object-fit:contain; display:block;"></video>
+      <div class="mono" style="display:flex;align-items:center;gap:8px;padding:5px 11px;border:1px solid #25303f;border-radius:7px;background:#0c1119;font-size:12px;color:#c4ccd9;">
+        <span id="dot" style="width:7px;height:7px;border-radius:50%;background:#5c6473;"></span>
+        <span id="status">connecting…</span>
+      </div>
+      <div id="sessionName" class="mono" style="font-size:12px;color:#8b93a3;">—</div>
+      <div style="flex:1;"></div>
+      <div class="mono" style="font-size:12px;color:#7e8696;">ROOM&nbsp;<span id="room" style="color:#c4ccd9;">—</span></div>
+      <div class="mono" style="display:flex;align-items:center;gap:7px;font-size:12px;color:#7e8696;">VIEWERS&nbsp;<span id="viewers" style="color:#fff;">—</span></div>
+      <div class="mono" style="font-size:12px;color:#7e8696;padding-left:8px;border-left:1px solid #1f242e;">LIVE&nbsp;<span id="elapsed" style="color:#36d9a4;">—</span></div>
+      <button id="labelSettings" class="icobtn" style="width:32px;height:32px;border:1px solid #20242e;border-radius:7px;color:#8b93a3;background:none;font-size:15px;display:flex;align-items:center;justify-content:center;">⚙</button>
+    </div>
+
+    <!-- BODY -->
+    <div style="flex:1;display:flex;min-height:0;">
+      <!-- icon rail -->
+      <div style="width:56px;flex:none;border-right:1px solid #15181f;display:flex;flex-direction:column;align-items:center;padding-top:14px;gap:8px;background:#090a0e;">
+        <div style="width:40px;height:40px;border-radius:9px;background:linear-gradient(135deg,#1a2740,#241d44);border:1px solid #33405c;display:flex;align-items:center;justify-content:center;"><div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;width:16px;height:16px;"><div style="background:#7da8ff;border-radius:1px;"></div><div style="background:#8a78ff;border-radius:1px;"></div><div style="background:#8a78ff;border-radius:1px;"></div><div style="background:#9b6cf6;border-radius:1px;"></div></div></div>
+        <div style="width:40px;height:40px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:#5c6473;font-size:16px;">⚒</div>
+        <div style="width:40px;height:40px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:#5c6473;font-size:15px;">▤</div>
+        <div style="width:40px;height:40px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:#5c6473;font-size:15px;">⚙</div>
+      </div>
+
+      <!-- VIDEO column -->
+      <div style="flex:1.6;min-width:0;display:flex;flex-direction:column;padding:14px;gap:12px;">
+        <div style="flex:1;position:relative;border-radius:10px;border:1px solid #1b1f28;overflow:hidden;background:#05060a;min-height:0;">
+          <video id="live" muted autoplay playsinline controls style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#05060a;"></video>
+          <div class="mono" style="position:absolute;top:14px;left:14px;display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:1px;color:#9aa4b5;background:rgba(8,10,14,.6);border:1px solid #232a36;padding:5px 9px;border-radius:6px;backdrop-filter:blur(6px);z-index:2;"><span style="width:7px;height:7px;border-radius:50%;background:#ff5c5c;box-shadow:0 0 8px #ff5c5c;animation:sfpulse 1.4s infinite;"></span>REC · LIVE STREAM</div>
+          <!-- lot overlay -->
+          <div id="lotOverlay" style="position:absolute;left:16px;bottom:16px;display:none;align-items:center;gap:14px;background:rgba(10,12,17,.82);border:1px solid #262c38;border-radius:10px;padding:12px 16px 12px 12px;backdrop-filter:blur(10px);z-index:2;max-width:80%;">
+            <div>
+              <div class="mono" id="lotNum" style="font-size:10px;letter-spacing:1.5px;color:#7da8ff;margin-bottom:5px;">CURRENT LOT</div>
+              <div class="grot" id="lotName" style="font-weight:600;font-size:17px;color:#fff;max-width:420px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">—</div>
+              <div style="font-size:13px;color:#9aa4b5;margin-top:3px;"><span class="mono" id="lotBid" style="color:#fff;">—</span> Current Bid · <span id="lotBids">0</span> bids</div>
+            </div>
           </div>
         </div>
-        <div class="panel" style="flex:none">
-          <h3>Current Auction</h3>
-          <div class="auction" id="currentAuction"><div class="empty">No active auction</div></div>
+      </div>
+
+      <!-- CHAT column (placeholder — chat not captured) -->
+      <div style="width:264px;flex:none;border-left:1px solid #15181f;border-right:1px solid #15181f;display:flex;flex-direction:column;background:#08090d;">
+        <div style="height:50px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid #15181f;">
+          <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#8b93a3;">LIVE CHAT</span>
+          <span class="mono" style="display:flex;align-items:center;gap:6px;font-size:11px;color:#36d9a4;"><span style="width:6px;height:6px;border-radius:50%;background:#36d9a4;"></span><span id="chatViewers">—</span></span>
         </div>
-        <div class="panel" style="flex:none">
-          <h3>Top Buyers</h3>
-          <div class="body" style="max-height:320px"><table><tbody id="topBuyers"></tbody></table></div>
+        <div class="sf-scroll" style="flex:1;overflow-y:auto;padding:16px;display:flex;align-items:center;justify-content:center;text-align:center;">
+          <span class="mono" style="font-size:11px;letter-spacing:1px;color:#3a4150;line-height:1.7;">[ CHAT STREAM ]<br/>not captured in this PoC</span>
         </div>
       </div>
-    </main>
-    <section id="productsRow">
-      <div class="panel">
-        <h3>Products</h3>
-        <div class="body"><table>
-          <thead><tr><th>Product</th><th class="n">Sold</th><th class="n">Failed</th><th class="n">Pending</th><th class="n">Stock</th></tr></thead>
-          <tbody id="products"></tbody>
-        </table></div>
+
+      <!-- RIGHT panel -->
+      <div class="sf-scroll" style="width:480px;flex:none;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;background:#070809;">
+        <!-- stats -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;" id="statsGrid"></div>
+        <!-- live bid feed -->
+        <div style="background:#0f131a;border:1px solid #1d212b;border-radius:9px;overflow:hidden;">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #1a1e27;">
+            <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#c4ccd9;"><span style="color:#8a78ff;">⚡</span> LIVE SALES FEED</span>
+            <span class="mono" id="feedCount" style="font-size:11px;color:#5c6473;">—</span>
+          </div>
+          <div id="bidFeed" style="max-height:340px;overflow-y:auto;" class="sf-scroll"><div class="mono" style="padding:18px 14px;color:#3a4150;font-size:11px;">Waiting for sales…</div></div>
+        </div>
+        <!-- buyer intel -->
+        <div style="background:#0f131a;border:1px solid #1d212b;border-radius:9px;padding:14px;">
+          <div style="display:flex;align-items:center;gap:11px;">
+            <div style="width:38px;height:38px;border-radius:8px;background:linear-gradient(135deg,#1c2c47,#2a2150);border:1px solid #364663;display:flex;align-items:end;justify-content:center;gap:2px;padding-bottom:9px;"><div style="width:3px;height:8px;background:#7da8ff;border-radius:1px;"></div><div style="width:3px;height:13px;background:#8a78ff;border-radius:1px;"></div><div style="width:3px;height:6px;background:#9b6cf6;border-radius:1px;"></div></div>
+            <div style="flex:1;"><div class="mono" style="font-size:10px;letter-spacing:1px;color:#707a8c;">TOP BUYER</div><div id="topBuyerName" style="font-weight:700;color:#fff;margin-top:2px;">—</div></div>
+            <div id="topBuyerSpend" class="mono" style="font-size:18px;font-weight:600;color:#9b6cf6;">—</div>
+          </div>
+          <div id="topBuyerBars" style="display:flex;align-items:end;gap:5px;height:42px;margin-top:14px;"></div>
+        </div>
+        <!-- current auction -->
+        <div style="background:linear-gradient(180deg,#10131b,#0c0f16);border:1px solid #2a3142;border-radius:9px;padding:15px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#c4ccd9;">CURRENT AUCTION ITEM</span>
+            <span class="mono" id="auctionHi" style="font-size:9.5px;letter-spacing:.5px;padding:3px 8px;border-radius:5px;background:rgba(54,217,164,.14);color:#5fe3bb;border:1px solid rgba(54,217,164,.32);">—</span>
+          </div>
+          <div class="grot" id="auctionTitle" style="font-weight:600;font-size:20px;color:#fff;margin-top:11px;">No active auction</div>
+          <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:14px;">
+            <div><div style="font-size:11px;color:#8b93a3;">Current Bid</div><div class="mono" id="auctionBid" style="font-weight:600;font-size:28px;background:linear-gradient(110deg,#5cb0ff,#9b6cf6);-webkit-background-clip:text;background-clip:text;color:transparent;margin-top:3px;">—</div></div>
+            <div><div style="font-size:11px;color:#8b93a3;">Bids</div><div class="mono" id="auctionBids" style="font-weight:600;font-size:28px;color:#fff;margin-top:3px;">0</div></div>
+            <div style="text-align:right;"><div style="font-size:11px;color:#8b93a3;">Ends in</div><div class="mono" id="auctionEnds" style="font-weight:600;font-size:28px;color:#ff9b6b;margin-top:3px;">—</div></div>
+          </div>
+          <div style="height:7px;border-radius:4px;background:#1a1f2a;overflow:hidden;margin-top:14px;"><div id="auctionBar" style="height:100%;width:0%;background:linear-gradient(90deg,#ff7a59,#ff9b6b);transition:width .25s linear;"></div></div>
+        </div>
+        <!-- thermal print queue -->
+        <div style="background:#0f131a;border:1px solid #1d212b;border-radius:9px;overflow:hidden;">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #1a1e27;">
+            <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#c4ccd9;">THERMAL PRINT QUEUE</span>
+            <button id="labelSettingsFooter" class="mono" style="font-size:9.5px;letter-spacing:.5px;padding:3px 9px;border-radius:5px;background:#161b24;color:#aab2c0;border:1px solid #262c38;">⚙ SETTINGS</button>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid #1a1e27;font-size:12px;">
+            <select id="printerSel" style="background:#0c0e13;color:#eef1f7;border:1px solid #20242e;border-radius:7px;padding:5px 8px;max-width:150px;"><option value="">No printer</option></select>
+            <label style="display:flex;gap:6px;align-items:center;color:#aab2c0;"><input type="checkbox" id="autoPrint" /> Auto</label>
+            <button id="printNext" class="qbtn void" disabled>Next</button>
+            <input id="customNum" placeholder="#" style="width:46px;background:#0c0e13;color:#eef1f7;border:1px solid #20242e;border-radius:6px;padding:4px 7px;" />
+            <button id="printCustom" class="qbtn print">Print</button>
+            <input id="rangeFrom" placeholder="a" style="width:42px;background:#0c0e13;color:#eef1f7;border:1px solid #20242e;border-radius:6px;padding:4px 7px;" />
+            <input id="rangeTo" placeholder="b" style="width:42px;background:#0c0e13;color:#eef1f7;border:1px solid #20242e;border-radius:6px;padding:4px 7px;" />
+            <button id="printRange" class="qbtn void">Range</button>
+          </div>
+          <div id="printQueue"><div class="mono" style="padding:14px;color:#3a4150;font-size:11px;">No labels yet</div></div>
+        </div>
+        <!-- products -->
+        <div style="background:#0f131a;border:1px solid #1d212b;border-radius:9px;overflow:hidden;">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #1a1e27;">
+            <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#c4ccd9;">PRODUCTS</span>
+            <span class="mono" style="font-size:9.5px;color:#5c6473;">SOLD / FAIL / PEND / STOCK</span>
+          </div>
+          <div id="products"></div>
+        </div>
       </div>
-    </section>
-    <footer id="printerBar">
-      <span class="sep">THERMAL</span>
-      <select id="printerSel" title="Label printer"><option value="">No printer</option></select>
-      <button id="labelSettingsFooter" title="Label settings">⚙ Label</button>
-      <label><input type="checkbox" id="autoPrint" /> Auto-print</label>
-      <button id="printNext" disabled>Print Next</button>
-      <input id="customNum" placeholder="#" /><button id="printCustom">Print #</button>
-      <span class="sep">RANGE</span>
-      <input id="rangeFrom" placeholder="from" /><input id="rangeTo" placeholder="to" /><button id="printRange">Print range</button>
-      <span class="queue" id="printQueue"></span>
-    </footer>
+    </div>
+
     <div id="settingsModal" class="modal hidden">
       <div class="modal-box">
         <h3>Label Settings</h3>
@@ -227,7 +207,7 @@
         </div>
         <div class="custom-row">
           <input type="text" id="setRegex" placeholder="regex, e.g. (Bin [A-Z])" />
-          <input type="text" id="setFlags" placeholder="flags" title="regex flags e.g. i" />
+          <input type="text" id="setFlags" placeholder="flags" />
         </div>
         <div class="preview">Sample: <span id="sampleTitle"></span> → extracts <b id="extractPreview">—</b></div>
         <div class="modal-actions"><button id="closeSettings">Done</button></div>

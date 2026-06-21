@@ -21,15 +21,6 @@ declare global {
   }
 }
 
-const DEFAULT_TEMPLATE: LabelTemplate = {
-  labelSize: '2x1', itemNumber: true, buyer: true, productName: true, price: false,
-  custom: { enabled: false, regex: '', flags: '' },
-}
-let labelTemplate: LabelTemplate = (() => {
-  try { return { ...DEFAULT_TEMPLATE, ...JSON.parse(localStorage.getItem('tt-label-template') || '{}') } } catch { return DEFAULT_TEMPLATE }
-})()
-const saveTemplate = () => localStorage.setItem('tt-label-template', JSON.stringify(labelTemplate))
-
 const $ = (id: string) => document.getElementById(id)!
 const txt = (s: string) => document.createTextNode(s)
 function el(tag: string, className?: string, text?: string): HTMLElement {
@@ -38,9 +29,9 @@ function el(tag: string, className?: string, text?: string): HTMLElement {
   if (text !== undefined) e.textContent = text
   return e
 }
-function avatar(url?: string): HTMLImageElement {
+function avatar(url: string | undefined, cls = 'bidav'): HTMLElement {
   const img = document.createElement('img')
-  img.className = 'avatar'
+  img.className = cls
   img.referrerPolicy = 'no-referrer'
   if (url) img.src = url
   img.addEventListener('error', () => { img.style.visibility = 'hidden' })
@@ -53,90 +44,91 @@ function ago(ms: number): string {
   return `${Math.floor(s / 3600)}h`
 }
 
+const DEFAULT_TEMPLATE: LabelTemplate = {
+  labelSize: '2x1', itemNumber: true, buyer: true, productName: true, price: false,
+  custom: { enabled: false, regex: '', flags: '' },
+}
+let labelTemplate: LabelTemplate = (() => {
+  try { return { ...DEFAULT_TEMPLATE, ...JSON.parse(localStorage.getItem('tt-label-template') || '{}') } } catch { return DEFAULT_TEMPLATE }
+})()
+const saveTemplate = () => localStorage.setItem('tt-label-template', JSON.stringify(labelTemplate))
+
+// ── state ───────────────────────────────────────────────────────────────────
+let sessionStart: number | undefined
+let pinnedEndMs: number | undefined
 let gmvFromWs = false
-let sessionName = '—'
-let sessionStart: number | undefined // unix seconds
+let seedMaxCreatedAt: number | null = null
 const rosterProducts = new Map<string, RosterProduct>()
 let lastByProduct: ProductRollup[] = []
-let pinnedEndMs: number | undefined
+const stats = { sales: '0', gmv: '$0.00', pace: '—', buyers: '0', failed: '0', gpm: '—' }
 
-// ── Session bar (with live-ticking elapsed) ─────────────────────────────────
-function fmtClock(unixSec: number): string {
-  return new Date(unixSec * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+// ── stat tiles ──────────────────────────────────────────────────────────────
+function renderStats() {
+  const tiles: [string, string, string, boolean][] = [
+    ['SALES', stats.sales, '', false],
+    ['GMV', stats.gmv, '', false],
+    ['PACE', stats.pace, '/ hr', false],
+    ['UNIQUE BUYERS', stats.buyers, '', false],
+    ['FAILED', stats.failed, '', stats.failed !== '0'],
+    ['GPM', stats.gpm, '', false],
+  ]
+  const grid = $('statsGrid')
+  grid.replaceChildren()
+  for (const [l, v, sub, red] of tiles) {
+    const tile = el('div', 'stat')
+    tile.appendChild(el('div', 'l', l))
+    tile.appendChild(el('div', 'v' + (red ? ' red' : ''), v))
+    if (sub) tile.appendChild(el('div', 's', sub))
+    grid.appendChild(tile)
+  }
 }
-function elapsedSince(unixSec: number): string {
-  const s = Math.max(0, Math.floor(Date.now() / 1000 - unixSec))
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  return h ? `${h}h ${m}m` : `${m}m`
-}
-function renderSession() {
-  const t = sessionStart ? `  ·  started ${fmtClock(sessionStart)}  ·  live ${elapsedSince(sessionStart)}` : ''
-  $('session').textContent = `${sessionName}${t}`
-}
-setInterval(() => { if (sessionStart) renderSession() }, 1000)
 
-// ── Auction countdown ───────────────────────────────────────────────────────
-function tickCountdown() {
-  const cd = document.getElementById('countdown')
-  const bar = document.getElementById('auctionBar') as HTMLElement | null
-  if (!cd) return
-  if (!pinnedEndMs) { cd.textContent = '—'; if (bar) bar.style.width = '0%'; return }
-  const leftMs = pinnedEndMs - Date.now()
-  const left = Math.max(0, Math.round(leftMs / 1000))
-  cd.textContent = left > 0 ? `${left}s` : 'ended'
-  if (bar) bar.style.width = Math.max(0, Math.min(100, (leftMs / 1000 / 15) * 100)) + '%' // ~15s window
-}
-setInterval(tickCountdown, 250)
-
-// ── Renderers ───────────────────────────────────────────────────────────────
-function renderFeed(sales: Sale[]) {
-  const feed = $('feed')
+// ── live sales feed (comp "bid feed") ───────────────────────────────────────
+function renderFeed(sales: Sale[], topSet: Set<string>) {
+  const feed = $('bidFeed')
   feed.replaceChildren()
-  if (!sales.length) { feed.appendChild(el('div', 'empty', 'Waiting for sales…')); return }
+  if (!sales.length) { feed.appendChild(el('div', 'mono', 'Waiting for sales…')); return }
   sales.forEach((s, i) => {
-    const status = s.paymentStatus === 'paid' ? '' : ' ' + s.paymentStatus
-    const row = el('div', 'feed-row' + status + (i === 0 ? ' fresh' : ''))
+    const failed = s.paymentStatus === 'failed'
+    const row = el('div', 'bidrow' + (i === 0 ? ' fresh' : '') + (failed ? ' failed' : ''))
     row.appendChild(avatar(s.buyer.avatarUrl))
-    const who = el('div', 'who')
-    who.appendChild(el('div', 'name', s.buyer.username || s.buyer.handle || '—'))
-    const item = el('div', 'item')
-    if (s.paymentStatus === 'failed') item.appendChild(el('span', 'badge failed', 'FAILED'))
-    else if (s.paymentStatus === 'pending') item.appendChild(el('span', 'badge pending', 'PENDING'))
-    item.appendChild(txt(`${item.childElementCount ? ' ' : ''}${s.skuDesc ? s.skuDesc + ' · ' : ''}${s.productName}`))
-    who.appendChild(item)
+    const who = el('div', 'bidwho')
+    who.appendChild(el('div', 'bidname', s.buyer.username || s.buyer.handle || '—'))
+    const sub = el('div', 'bidsub')
+    if (topSet.has(s.buyer.ttuid || s.buyer.username)) sub.appendChild(el('span', 'tag whale', 'WHALE'))
+    if (failed) sub.appendChild(el('span', 'tag failed', 'FAILED'))
+    else if (s.paymentStatus === 'pending') sub.appendChild(el('span', 'tag pending', 'PENDING'))
+    sub.appendChild(txt(`${s.skuDesc ? s.skuDesc + ' · ' : ''}${s.productName}`))
+    who.appendChild(sub)
     row.appendChild(who)
-    row.appendChild(el('div', 'price' + (s.paymentStatus === 'failed' ? ' failed' : ''), s.price.formatted))
-    row.appendChild(el('div', 'time', ago(s.createdAt)))
-    const pb = el('button', 'printbtn', '🖨') as HTMLButtonElement
-    pb.title = 'Print label'
+    const right = el('div', 'bidright')
+    right.appendChild(el('div', 'bidprice' + (failed ? ' failed' : ''), s.price.formatted))
+    right.appendChild(el('div', 'bidtime', ago(s.createdAt)))
+    row.appendChild(right)
+    const pb = el('button', 'printmini', '🖨')
     pb.addEventListener('click', () => printSale(s))
     row.appendChild(pb)
     feed.appendChild(row)
   })
 }
 
-function renderTopBuyers(buyers: BuyerAgg[]) {
-  const tb = $('topBuyers')
-  tb.replaceChildren()
-  buyers.slice(0, 8).forEach((b, i) => {
-    const tr = document.createElement('tr')
-    tr.appendChild(el('td', 'rank', String(i + 1)))
-    const td = el('td')
-    td.style.display = 'flex'
-    td.style.alignItems = 'center'
-    td.style.gap = '8px'
-    td.appendChild(avatar(b.avatarUrl))
-    td.appendChild(txt(b.username || b.handle || '—'))
-    tr.appendChild(td)
-    tr.appendChild(el('td', 'n', String(b.itemCount)))
-    tr.appendChild(el('td', 'n', `$${(b.totalCents / 100).toFixed(2)}`))
-    tb.appendChild(tr)
+// ── top buyer intel ─────────────────────────────────────────────────────────
+function renderTopBuyer(buyers: BuyerAgg[]) {
+  const top = buyers[0]
+  $('topBuyerName').textContent = top ? '@' + (top.handle ?? top.username) : '—'
+  $('topBuyerSpend').textContent = top ? `$${(top.totalCents / 100).toFixed(0)}` : '—'
+  const bars = $('topBuyerBars')
+  bars.replaceChildren()
+  const top8 = buyers.slice(0, 8)
+  const max = Math.max(1, ...top8.map((b) => b.totalCents))
+  top8.reverse().forEach((b) => {
+    const bar = el('div')
+    bar.style.cssText = `flex:1;height:${Math.max(10, (b.totalCents / max) * 100)}%;border-radius:2px;background:linear-gradient(180deg,#8a78ff,#6b56f0);`
+    bars.appendChild(bar)
   })
 }
 
-// Products table = sale rollup (paid/failed/pending) joined with roster
-// (name/stock). Failed here and the Failed-Payments card share one source.
+// ── products ────────────────────────────────────────────────────────────────
 function renderProductsTable() {
   const tbody = $('products')
   tbody.replaceChildren()
@@ -146,60 +138,65 @@ function renderProductsTable() {
     .map((id) => {
       const r = rosterProducts.get(id)
       const c = counts.get(id)
-      return {
-        name: r?.name ?? c?.productName ?? id,
-        sold: c?.paid ?? r?.numSold ?? 0,
-        failed: c?.failed ?? 0,
-        pending: c?.pending ?? 0,
-        stock: r?.stockNum,
-      }
+      return { name: r?.name ?? c?.productName ?? id, sold: c?.paid ?? r?.numSold ?? 0, failed: c?.failed ?? 0, pending: c?.pending ?? 0, stock: r?.stockNum }
     })
     .sort((a, b) => b.sold - a.sold)
   for (const row of rows) {
-    const tr = document.createElement('tr')
-    const cells = [row.name, String(row.sold), String(row.failed), String(row.pending), row.stock != null ? String(row.stock) : '—']
-    cells.forEach((t, i) => {
-      const td = el('td', i ? 'n' : undefined, t)
-      tr.appendChild(td)
-    })
+    const tr = el('div', 'prow')
+    tr.appendChild(el('div', 'pn', row.name))
+    tr.appendChild(el('div', 'pc', String(row.sold)))
+    tr.appendChild(el('div', 'pc', String(row.failed)))
+    tr.appendChild(el('div', 'pc', String(row.pending)))
+    tr.appendChild(el('div', 'pc', row.stock != null ? String(row.stock) : '—'))
     tbody.appendChild(tr)
   }
 }
 
+// ── current auction ─────────────────────────────────────────────────────────
 function renderAuction(p?: PinnedAuction) {
-  const box = $('currentAuction')
-  box.replaceChildren()
   if (!p || !p.winUsername) {
     pinnedEndMs = undefined
-    box.appendChild(el('div', 'empty', 'No active auction'))
+    $('auctionTitle').textContent = 'No active auction'
+    $('auctionBid').textContent = '—'
+    $('auctionBids').textContent = '0'
+    $('auctionHi').textContent = '—'
+    $('lotOverlay').style.display = 'none'
     return
   }
   pinnedEndMs = p.expectedEndMs
-  box.appendChild(el('div', 'pname', p.productName))
-  const cell = (label: string, valueEl: HTMLElement, right = false) => {
-    const d = el('div')
-    if (right) d.style.textAlign = 'right'
-    d.appendChild(el('div', 'lbl', label))
-    d.appendChild(valueEl)
-    return d
-  }
-  const grid = el('div', 'grid3')
-  grid.appendChild(cell('Current Bid', el('div', 'bignum bid', p.maxBiddingPrice ?? '—')))
-  grid.appendChild(cell('Bids', el('div', 'bignum', String(p.numBids ?? 0))))
-  const ends = el('div', 'bignum ends')
-  ends.id = 'countdown'
-  grid.appendChild(cell('Ends in', ends, true))
-  box.appendChild(grid)
-  box.appendChild(el('div', 'meta-line', `high bidder @${p.winUsername}`))
-  const bar = el('div', 'bar')
-  const fill = el('i')
-  fill.id = 'auctionBar'
-  bar.appendChild(fill)
-  box.appendChild(bar)
-  tickCountdown()
+  $('auctionTitle').textContent = p.productName
+  $('auctionBid').textContent = p.maxBiddingPrice ?? '—'
+  $('auctionBids').textContent = String(p.numBids ?? 0)
+  $('auctionHi').textContent = '@' + p.winUsername
+  // video lot overlay
+  $('lotOverlay').style.display = 'flex'
+  $('lotName').textContent = p.productName
+  $('lotBid').textContent = p.maxBiddingPrice ?? '—'
+  $('lotBids').textContent = String(p.numBids ?? 0)
+  $('lotNum').textContent = 'CURRENT LOT'
 }
 
-// ── Live video (HTTP-FLV via flv.js) ────────────────────────────────────────
+function tickCountdown() {
+  if (!pinnedEndMs) { $('auctionEnds').textContent = '—'; $('auctionBar').style.width = '0%'; return }
+  const leftMs = pinnedEndMs - Date.now()
+  const left = Math.max(0, Math.round(leftMs / 1000))
+  $('auctionEnds').textContent = left > 0 ? `${left}s` : 'ended'
+  $('auctionBar').style.width = Math.max(0, Math.min(100, (leftMs / 1000 / 15) * 100)) + '%'
+}
+setInterval(tickCountdown, 250)
+
+// ── session elapsed ─────────────────────────────────────────────────────────
+function fmtClock(unixSec: number): string {
+  return new Date(unixSec * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+setInterval(() => {
+  if (!sessionStart) return
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - sessionStart))
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60)
+  $('elapsed').textContent = h ? `${h}h ${m}m` : `${m}m`
+}, 1000)
+
+// ── live video (HTTP-FLV via flv.js) ────────────────────────────────────────
 let flvPlayer: flvjs.Player | null = null
 let lastStreamUrl = ''
 function loadStream(url: string) {
@@ -207,37 +204,41 @@ function loadStream(url: string) {
   const video = document.getElementById('live') as HTMLVideoElement | null
   if (!video || !flvjs.isSupported()) return
   if (flvPlayer) { try { flvPlayer.destroy() } catch { /* ignore */ } flvPlayer = null }
-  console.log(`[render] flv loading ${url.slice(0, 60)} supported=${flvjs.isSupported()}`)
   flvPlayer = flvjs.createPlayer({ type: 'flv', url, isLive: true, cors: true }, { enableStashBuffer: false })
   flvPlayer.attachMediaElement(video)
-  flvPlayer.on(flvjs.Events.ERROR, (a: string, b: string) => { console.log(`[render] flv error ${a} ${b}`); window.setTimeout(() => loadStream(lastStreamUrl), 2500) })
-  video.addEventListener('playing', () => console.log('[render] flv PLAYING'), { once: true })
+  flvPlayer.on(flvjs.Events.ERROR, () => { window.setTimeout(() => loadStream(lastStreamUrl), 2500) })
   flvPlayer.load()
   void video.play().catch(() => {})
 }
 
-// ── Label printing (mirrors the desktop Live Monitor) ───────────────────────
+// ── label printing ──────────────────────────────────────────────────────────
 let selectedPrinter = ''
 let autoPrint = false
 let lastPrintedNumber: number | null = null
-let seedMaxCreatedAt: number | null = null
 const printQueue: { label: string; status: 'printing' | 'printed' | 'error' }[] = []
 
 function renderQueue() {
   const q = $('printQueue')
   q.replaceChildren()
-  for (const item of printQueue.slice(0, 6)) {
+  if (!printQueue.length) { q.appendChild(el('div', 'mono', 'No labels yet')); q.firstElementChild!.setAttribute('style', 'padding:14px;color:#3a4150;font-size:11px;'); return }
+  for (const item of printQueue.slice(0, 8)) {
+    const row = el('div', 'qrow')
     const icon = item.status === 'printed' ? '✓' : item.status === 'error' ? '✗' : '…'
-    q.appendChild(el('span', 'q ' + item.status, `${icon} ${item.label}`))
+    const color = item.status === 'printed' ? '#5fe3bb' : item.status === 'error' ? '#ff5c5c' : '#ffc56b'
+    const who = el('div', 'bidwho')
+    who.appendChild(el('div', 'bidname', item.label))
+    who.appendChild(el('div', 'bidsub', item.status))
+    row.appendChild(who)
+    const st = el('div', 'mono', icon)
+    st.style.cssText = `font-size:16px;color:${color};`
+    row.appendChild(st)
+    q.appendChild(row)
   }
 }
 
 async function printLabel(data: LabelData) {
   if (!selectedPrinter) return
-  const entry: { label: string; status: 'printing' | 'printed' | 'error' } = {
-    label: `#${data.itemNumber}${data.buyer ? ' ' + data.buyer : ''}`,
-    status: 'printing',
-  }
+  const entry: { label: string; status: 'printing' | 'printed' | 'error' } = { label: `#${data.itemNumber}${data.buyer ? ' ' + data.buyer : ''}`, status: 'printing' }
   printQueue.unshift(entry)
   if (printQueue.length > 30) printQueue.pop()
   renderQueue()
@@ -254,19 +255,18 @@ async function printLabel(data: LabelData) {
 
 function printSale(s: Sale) {
   const num = (s.skuDesc ?? '').replace(/^#/, '')
-  const title = `${s.skuDesc ? s.skuDesc + ' ' : ''}${s.productName}` // for the regex extractor
+  const title = `${s.skuDesc ? s.skuDesc + ' ' : ''}${s.productName}`
   printLabel({ itemNumber: num, buyer: s.buyer.username || s.buyer.handle, productName: s.productName, price: s.price.formatted, title })
 }
 
 function updatePrintNext() {
   const btn = $('printNext') as HTMLButtonElement
-  btn.textContent = lastPrintedNumber !== null ? `Print Next (#${lastPrintedNumber + 1})` : 'Print Next'
+  btn.textContent = lastPrintedNumber !== null ? `Next #${lastPrintedNumber + 1}` : 'Next'
   btn.disabled = lastPrintedNumber === null || !selectedPrinter
 }
 
 async function setupPrinting() {
   const { printers, saved } = await window.labelAPI.getPrinters()
-  console.log(`[render] printers: [${printers.map((p) => p.name).join(', ')}] saved="${saved}"`)
   const sel = $('printerSel') as HTMLSelectElement
   for (const p of printers) {
     const opt = document.createElement('option')
@@ -279,17 +279,11 @@ async function setupPrinting() {
   autoPrint = localStorage.getItem('tt-autoprint') === '1'
   ;($('autoPrint') as HTMLInputElement).checked = autoPrint
   updatePrintNext()
-
+  renderQueue()
   sel.addEventListener('change', () => { selectedPrinter = sel.value; void window.labelAPI.savePrinter(selectedPrinter); updatePrintNext() })
-  ;($('autoPrint') as HTMLInputElement).addEventListener('change', (e) => {
-    autoPrint = (e.target as HTMLInputElement).checked
-    localStorage.setItem('tt-autoprint', autoPrint ? '1' : '0')
-  })
+  ;($('autoPrint') as HTMLInputElement).addEventListener('change', (e) => { autoPrint = (e.target as HTMLInputElement).checked; localStorage.setItem('tt-autoprint', autoPrint ? '1' : '0') })
   $('printNext').addEventListener('click', () => { if (lastPrintedNumber !== null) void printLabel({ itemNumber: String(lastPrintedNumber + 1) }) })
-  $('printCustom').addEventListener('click', () => {
-    const v = ($('customNum') as HTMLInputElement).value.replace(/^#/, '').trim()
-    if (v) void printLabel({ itemNumber: v })
-  })
+  $('printCustom').addEventListener('click', () => { const v = ($('customNum') as HTMLInputElement).value.replace(/^#/, '').trim(); if (v) void printLabel({ itemNumber: v }) })
   $('printRange').addEventListener('click', async () => {
     const from = parseInt(($('rangeFrom') as HTMLInputElement).value, 10)
     const to = parseInt(($('rangeTo') as HTMLInputElement).value, 10)
@@ -299,14 +293,13 @@ async function setupPrinting() {
 }
 void setupPrinting()
 
-// ── Label settings modal (field toggles + regex extractor) ──────────────────
+// ── label settings modal ────────────────────────────────────────────────────
 function setupSettings() {
   const inp = (id: string) => document.getElementById(id) as HTMLInputElement
   const sel = (id: string) => document.getElementById(id) as HTMLSelectElement
   const sample = '#141 Bin A - Alo Yoga and More, No Cancels'
   const sampleEl = document.getElementById('sampleTitle')
   if (sampleEl) sampleEl.textContent = `"${sample}"`
-
   sel('setSize').value = labelTemplate.labelSize
   inp('setItemNumber').checked = labelTemplate.itemNumber
   inp('setBuyer').checked = labelTemplate.buyer
@@ -315,106 +308,94 @@ function setupSettings() {
   inp('setCustom').checked = labelTemplate.custom.enabled
   inp('setRegex').value = labelTemplate.custom.regex
   inp('setFlags').value = labelTemplate.custom.flags
-
   const preview = () => {
     const out = document.getElementById('extractPreview')!
     if (!labelTemplate.custom.regex) { out.textContent = '—'; return }
     try {
       const m = sample.match(new RegExp(labelTemplate.custom.regex, labelTemplate.custom.flags))
       out.textContent = m ? (m[1] ?? m[0]) || '(empty)' : '(no match)'
-    } catch {
-      out.textContent = '(invalid regex)'
-    }
+    } catch { out.textContent = '(invalid regex)' }
   }
   const apply = () => {
     labelTemplate = {
       labelSize: sel('setSize').value as LabelTemplate['labelSize'],
-      itemNumber: inp('setItemNumber').checked,
-      buyer: inp('setBuyer').checked,
-      productName: inp('setProductName').checked,
-      price: inp('setPrice').checked,
+      itemNumber: inp('setItemNumber').checked, buyer: inp('setBuyer').checked,
+      productName: inp('setProductName').checked, price: inp('setPrice').checked,
       custom: { enabled: inp('setCustom').checked, regex: inp('setRegex').value, flags: inp('setFlags').value },
     }
-    saveTemplate()
-    preview()
+    saveTemplate(); preview()
   }
   for (const id of ['setSize', 'setItemNumber', 'setBuyer', 'setProductName', 'setPrice', 'setCustom', 'setRegex', 'setFlags']) {
     document.getElementById(id)?.addEventListener('input', apply)
     document.getElementById(id)?.addEventListener('change', apply)
   }
   preview()
-  const openModal = () => document.getElementById('settingsModal')?.classList.remove('hidden')
-  document.getElementById('labelSettings')?.addEventListener('click', openModal)
-  document.getElementById('labelSettingsFooter')?.addEventListener('click', openModal)
+  const open = () => document.getElementById('settingsModal')?.classList.remove('hidden')
+  document.getElementById('labelSettings')?.addEventListener('click', open)
+  document.getElementById('labelSettingsFooter')?.addEventListener('click', open)
   document.getElementById('closeSettings')?.addEventListener('click', () => document.getElementById('settingsModal')?.classList.add('hidden'))
 }
 setupSettings()
+renderStats()
 
+// ── event loop ──────────────────────────────────────────────────────────────
 window.ttLive.onEvent((ev: LiveEvent) => {
   switch (ev.kind) {
     case 'status':
       $('status').textContent = `${ev.status}${ev.detail ? ' — ' + ev.detail : ''}`
-      $('dot').className = 'dot' + (ev.status === 'connected' ? ' on' : '')
+      $('dot').style.background = ev.status === 'connected' ? '#36d9a4' : '#5c6473'
+      $('dot').style.boxShadow = ev.status === 'connected' ? '0 0 8px #36d9a4' : 'none'
       break
     case 'room':
-      $('room').textContent = ev.roomId
-      break
-    case 'stream':
-      if (!flvPlayer) loadStream(ev.url) // load once; keep latest URL for reload-on-error
-      else lastStreamUrl = ev.url
+      $('room').textContent = ev.roomId.slice(-8)
       break
     case 'session':
-      sessionName = ev.name ?? '—'
+      $('sessionName').textContent = ev.name ?? '—'
       if (ev.startTime) sessionStart = ev.startTime
-      renderSession()
+      if (ev.startTime) $('sessionName').title = `started ${fmtClock(ev.startTime)}`
       break
     case 'core_stats':
-      if (ev.viewers !== undefined) $('viewers').textContent = String(ev.viewers)
-      if (ev.gmv) { $('gmv').textContent = ev.gmv.formatted; gmvFromWs = true }
-      if (ev.sales !== undefined) $('itemsSold').textContent = String(ev.sales)
-      if (ev.gpm) $('gpm').textContent = ev.gpm.formatted
-      if (ev.gmvPerHour) $('gmvHr').textContent = ev.gmvPerHour.formatted
-      if (ev.impressions !== undefined) $('impr').textContent = ev.impressions.toLocaleString()
-      if (ev.productClicks !== undefined) $('clicks').textContent = ev.productClicks.toLocaleString()
-      if (ev.avgViewDuration !== undefined) $('avgView').textContent = `${ev.avgViewDuration}s`
-      if (ev.enterRoomRate !== undefined) $('enterRate').textContent = `${(ev.enterRoomRate * 100).toFixed(1)}%`
-      if (ev.marketCmp !== undefined) {
-        const b = $('mktCmp')
-        b.textContent = `${ev.marketCmp >= 0 ? '+' : ''}${(ev.marketCmp * 100).toFixed(0)}%`
-        b.className = ev.marketCmp >= 0 ? 'up' : 'down'
-      }
+      if (ev.viewers !== undefined) { $('viewers').textContent = String(ev.viewers); $('chatViewers').textContent = String(ev.viewers) }
+      if (ev.gmv) { stats.gmv = ev.gmv.formatted; gmvFromWs = true }
+      if (ev.sales !== undefined) stats.sales = String(ev.sales)
+      if (ev.gmvPerHour) stats.pace = ev.gmvPerHour.formatted
+      if (ev.gpm) stats.gpm = ev.gpm.formatted
+      renderStats()
+      break
+    case 'product_stats':
+      stats.sales = String(ev.totalSold)
+      renderStats()
       break
     case 'roster':
       rosterProducts.clear()
       for (const p of ev.products) rosterProducts.set(p.productId, p)
       renderProductsTable()
       renderAuction(ev.pinned)
-      $('itemsSold').textContent = String(ev.totalSold) // REST fallback when no WS
-      console.log(`[render] roster: products=${ev.products.length} sold=${ev.totalSold} auction="${$('currentAuction').textContent?.slice(0, 40)}"`)
+      stats.sales = String(ev.totalSold)
+      renderStats()
       break
     case 'sales': {
       lastByProduct = ev.byProduct
       renderProductsTable()
-      renderFeed(ev.recentSales)
-      renderTopBuyers(ev.topBuyers)
-      $('uniqueBuyers').textContent = String(ev.uniqueBuyers)
-      $('feedCount').textContent = `${ev.totalSales} sold · $${(ev.totalCents / 100).toFixed(2)}`
-      // Failed-Payments card = sum of the per-product failed column (one source).
-      $('failed').textContent = String(ev.failedPayments.length)
-      if (!gmvFromWs) $('gmv').textContent = `$${(ev.totalCents / 100).toFixed(2)}`
-      // Auto-print: skip the initial backfill (seed on the first poll), then
-      // print labels for genuinely-new, non-failed sales as they arrive.
+      const topSet = new Set(ev.topBuyers.slice(0, 5).map((b) => b.ttuid || b.username))
+      renderFeed(ev.recentSales, topSet)
+      renderTopBuyer(ev.topBuyers)
+      stats.buyers = String(ev.uniqueBuyers)
+      stats.failed = String(ev.failedPayments.length)
+      if (!gmvFromWs) stats.gmv = `$${(ev.totalCents / 100).toFixed(2)}`
+      renderStats()
+      $('feedCount').textContent = `${ev.totalSales} · $${(ev.totalCents / 100).toFixed(0)}`
       const maxCreated = ev.recentSales.reduce((m, s) => Math.max(m, s.createdAt), 0)
-      if (seedMaxCreatedAt === null) {
-        seedMaxCreatedAt = maxCreated
-      } else if (autoPrint && selectedPrinter) {
-        for (const s of ev.newSales) {
-          if (s.paymentStatus !== 'failed' && s.createdAt > seedMaxCreatedAt) printSale(s)
-        }
+      if (seedMaxCreatedAt === null) seedMaxCreatedAt = maxCreated
+      else if (autoPrint && selectedPrinter) {
+        for (const s of ev.newSales) if (s.paymentStatus !== 'failed' && s.createdAt > seedMaxCreatedAt) printSale(s)
         seedMaxCreatedAt = Math.max(seedMaxCreatedAt, maxCreated)
       }
-      console.log(`[render] sales: feed=${ev.recentSales.length} buyers=${ev.uniqueBuyers} failed=${ev.failedPayments.length} byProduct=${JSON.stringify(ev.byProduct.map((p) => [p.productName.slice(-6), p.paid, p.failed, p.pending]))}`)
       break
     }
+    case 'stream':
+      if (!flvPlayer) loadStream(ev.url)
+      else lastStreamUrl = ev.url
+      break
   }
 })
