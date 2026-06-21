@@ -216,7 +216,7 @@ function renderProductsTable() {
     const busy = productTxBusy.has(row.id)
     const has = !!productTx[row.id]
     const tx = el('div', 'ptx' + (busy ? ' busy' : has ? ' has' : ''), busy ? '◴' : '✦')
-    tx.title = has ? (productTx[row.id]?.summary || 'AI details captured — click to re-transcribe this bin') : recapEnabled ? 'Click to AI-transcribe this bin' : 'Set GEMINI_API_KEY to enable AI transcription'
+    tx.title = has ? (productTx[row.id]?.summary || 'AI details captured — click to re-transcribe this product') : recapEnabled ? 'Click to AI-transcribe this product' : 'Set GEMINI_API_KEY to enable AI transcription'
     if (recapEnabled && !busy) tx.addEventListener('click', () => void transcribeProduct(row.id, row.name))
     tr.appendChild(tx)
     tr.appendChild(el('div', 'pn', row.name))
@@ -656,7 +656,7 @@ function refreshShowOptions() {
 function ledgerRows(): LedgerRow[] {
   return sourceSales().map((s) => ({
     ...s,
-    // order-level cost overrides the product/bin template
+    // order-level cost overrides the product template
     costCents: costMap[s.orderId] ?? productCostMap[s.productId],
     // per-item transcript wins, then the live order-summary, then the per-bin transcript
     transcript:
@@ -714,7 +714,7 @@ function ledgerRowEl(r: LedgerRow): HTMLElement {
   row.appendChild(el('div', 'lc-total r', r.price.formatted))
   const fromTemplate = costMap[r.orderId] == null && productCostMap[r.productId] != null
   const cost = el('div', 'lc-cost r' + (r.costCents == null ? ' empty' : ''), r.costCents == null ? '—' : fmtCents(r.costCents))
-  if (fromTemplate) { cost.classList.add('tmpl'); cost.title = 'Cost from bin template — click to override this order' }
+  if (fromTemplate) { cost.classList.add('tmpl'); cost.title = 'Cost from product template — click to override this order' }
   cost.addEventListener('click', (e) => { e.stopPropagation(); editCost(r, cost) })
   row.appendChild(cost)
   const pc = profitCents(r)
@@ -852,7 +852,7 @@ function showScreen(s: 'monitor' | 'ledger' | 'picklist') {
 }
 
 // ── Picklist / packlist screen ──────────────────────────────────────────────
-let pickBy: 'product' | 'buyer' = 'product'
+let pickBy: 'show' | 'buyer' = 'show'
 const pickedOrders = new Set<string>(loadJson<string[]>('tt-picked', []))
 const savePicked = () => localStorage.setItem('tt-picked', JSON.stringify([...pickedOrders]))
 
@@ -864,7 +864,7 @@ function renderPicklist() {
   const totalItems = groups.reduce((n, g) => n + g.units, 0)
   const doneItems = groups.reduce((n, g) => n + g.items.filter((r) => pickedOrders.has(r.orderId)).length, 0)
   $('pickProgress').textContent = `${doneItems}/${totalItems} done`
-  $('pickHint').textContent = pickBy === 'product' ? 'pull each bin, check items off' : 'pack one box per buyer'
+  $('pickHint').textContent = pickBy === 'show' ? 'grouped by show — check items off' : 'pack one box per buyer'
   if (!groups.length) {
     const e = el('div', 'mono', 'no orders to pick yet')
     e.style.cssText = 'padding:18px;color:#3a4150;font-size:11px;'
@@ -900,8 +900,8 @@ function renderPicklist() {
       item.appendChild(cb)
       const name = el('div', 'pi-name')
       name.appendChild(el('span', 'pi-sku', (r.skuDesc ?? '') + ' '))
-      // by bin → show who bought it; by buyer → show which bin/product
-      name.appendChild(txt(pickBy === 'product' ? r.buyer.username || r.buyer.handle || '—' : r.productName))
+      // by show → show who bought what; by buyer → show the product
+      name.appendChild(txt(pickBy === 'show' ? `${r.buyer.username || r.buyer.handle || '—'} · ${r.productName}` : r.productName))
       if (r.paymentStatus === 'pending') name.appendChild(el('span', 'pi-sku', '  · unpaid'))
       item.appendChild(name)
       item.appendChild(el('div', 'pi-price', r.price.formatted))
@@ -990,7 +990,7 @@ function setupSync() {
 function setupPicklist() {
   $('navPicklist').addEventListener('click', () => showScreen('picklist'))
   $('pickBySeg').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
-    pickBy = ((b as HTMLElement).dataset.by ?? 'product') as 'product' | 'buyer'
+    pickBy = ((b as HTMLElement).dataset.by ?? 'show') as 'show' | 'buyer'
     $('pickBySeg').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b))
     renderPicklist()
   }))

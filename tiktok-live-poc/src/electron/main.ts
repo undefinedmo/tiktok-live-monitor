@@ -308,29 +308,69 @@ interface TranscriptFields { brand?: string; item?: string; color?: string; size
 // Structured Gemini call: from an audio clip, extract product attributes (brand/size/retail…)
 // for costing + the ledger. Reused by both tt-transcribe (mimeType audio/webm) and
 // tt-transcribe-orders (mimeType audio/aac, the ffmpeg ADTS clip).
+// Prompt ported verbatim from live-ledger (server/src/media/gemini.ts transcribePrompt).
+function transcribePrompt(hints: string | null): string {
+  const b = hints ? `\nKNOWN BRANDS being sold: ${hints}` : ''
+  return (
+    'You are analyzing a short video clip from a TikTok Shop LIVE auction. ' +
+    "The clip ENDS at the exact moment this item's auction closed / the order was placed, " +
+    'so the SOLD item is the one being auctioned and won at the END of the clip.\n' + b +
+    '\n\nTASK: Watch the whole clip and listen to the audio. Identify the item that was SOLD ' +
+    "(the one being auctioned/won right at the end — listen for 'sold', 'congrats', a winning " +
+    "username, 'going once/twice').\n" +
+    'IMPORTANT: If the host shows or discusses TWO different items in the clip, focus ONLY on the ' +
+    'LAST one — the earlier item likely belongs to a PREVIOUS sale that already closed before this ' +
+    'order. Always describe the item being auctioned/won at the very END.\n' +
+    'Then extract:\n' +
+    '- brand: brand name' + (hints ? " (MUST be one of the known brands above; if not, 'Other: <name>')" : " or 'Not stated'") + '\n' +
+    "- item: product type or name (e.g. 'Random Premium Pull', 'Leggings', 'Handbag')\n" +
+    "- color, size: if visible/called out, else 'Not stated'\n" +
+    "- retail_price_mentioned: any retail/MSRP price SPOKEN, formatted '$XX', else 'Not stated'\n" +
+    '- retail_price_estimated: your best estimate of typical retail for this brand+item (always give one)\n' +
+    '- transcript_summary: a brief summary of what was said about the sold item\n\n' +
+    'Return ONLY a JSON object with keys: brand, item, color, size, ' +
+    'retail_price_mentioned, retail_price_estimated, transcript_summary.'
+  )
+}
+
+// Parse live-ledger's JSON (fence-strip, price-normalize, drop "Not stated") → our fields.
+function parseLiveLedgerResult(raw: string): TranscriptFields {
+  const m = /```(?:json)?\s*([\s\S]*?)```/.exec(raw)
+  let parsed: Record<string, unknown> = {}
+  try { parsed = JSON.parse((m && m[1] ? m[1] : raw).trim()) as Record<string, unknown> } catch { parsed = {} }
+  const price = (v: unknown): string | undefined => {
+    if (!v || String(v).toLowerCase() === 'not stated') return undefined
+    const mm = /\$?(\d+(?:\.\d{1,2})?)/.exec(String(v))
+    return mm ? `$${mm[1]}` : undefined
+  }
+  const str = (v: unknown): string | undefined => {
+    const s = v == null ? '' : String(v).trim()
+    return s && s.toLowerCase() !== 'not stated' ? s : undefined
+  }
+  const f: TranscriptFields = {}
+  const brand = str(parsed.brand); if (brand) f.brand = brand
+  const item = str(parsed.item); if (item) f.item = item
+  const color = str(parsed.color); if (color) f.color = color
+  const size = str(parsed.size); if (size) f.size = size
+  const retail = price(parsed.retail_price_mentioned) ?? price(parsed.retail_price_estimated); if (retail) f.retailPrice = retail
+  const summary = str(parsed.transcript_summary); if (summary) f.summary = summary
+  return f
+}
+
 async function geminiStructured(
   audio: Uint8Array,
   mimeType: string,
-  label: string,
+  _label: string,
 ): Promise<{ fields?: TranscriptFields; text?: string; error?: string }> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`
   const clip = { inlineData: { mimeType, data: Buffer.from(audio).toString('base64') } }
-  const prompt =
-    `This is a short audio clip from a live-shopping auction selling an item labeled "${label}". ` +
-    `From the seller's speech, extract the product attributes. Use an empty string for anything not stated. ` +
-    `retailPrice is the stated retail/MSRP if mentioned (e.g. "$120"). summary is a one-line plain-English description.`
   const body = {
-    contents: [{ parts: [{ text: prompt }, clip] }],
+    contents: [{ parts: [{ text: transcribePrompt(null) }, clip] }],
     generationConfig: {
       temperature: 0.1,
+      maxOutputTokens: 2048,
       responseMimeType: 'application/json',
-      responseSchema: {
-        type: 'object',
-        properties: {
-          brand: { type: 'string' }, item: { type: 'string' }, color: { type: 'string' },
-          size: { type: 'string' }, retailPrice: { type: 'string' }, summary: { type: 'string' },
-        },
-      },
+      thinkingConfig: { thinkingBudget: 1024 },
     },
   }
   try {
@@ -338,13 +378,9 @@ async function geminiStructured(
     const json = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[]; error?: { message?: string } }
     if (!res.ok) return { error: `gemini ${res.status}: ${json?.error?.message ?? ''}`.slice(0, 200) }
     const raw = (json.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('').trim()
-    let fields: TranscriptFields = {}
-    try { fields = JSON.parse(raw) as TranscriptFields } catch { /* fall back to summary text below */ }
-    // drop empties so the renderer can tell what was actually captured
-    fields = Object.fromEntries(Object.entries(fields).filter(([, v]) => v && String(v).trim())) as TranscriptFields
-    const text = fields.summary || raw
+    const fields = parseLiveLedgerResult(raw)
     debug(`[tt] structured fields: ${Object.keys(fields).join(',')}`)
-    return { text, fields }
+    return { text: fields.summary || raw, fields }
   } catch (e) {
     return { error: (e as Error).message }
   }

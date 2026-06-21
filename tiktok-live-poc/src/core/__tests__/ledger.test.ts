@@ -130,10 +130,10 @@ describe('parseRetailCents', () => {
 
 describe('groupForPicklist', () => {
   const rows = [
-    sale({ orderId: 'a', buyer: { username: 'Ann', handle: 'ann1' }, productId: 'PA', productName: 'Bin A', price: { cents: 5000, formatted: '$50' }, paymentStatus: 'paid' }),
-    sale({ orderId: 'b', buyer: { username: 'Ann', handle: 'ann1' }, productId: 'PB', productName: 'Bin B', price: { cents: 3000, formatted: '$30' }, paymentStatus: 'pending' }),
-    sale({ orderId: 'c', buyer: { username: 'Bob', handle: 'bob1' }, productId: 'PA', productName: 'Bin A', price: { cents: 2000, formatted: '$20' }, paymentStatus: 'paid' }),
-    sale({ orderId: 'x', buyer: { username: 'Zoe', handle: 'zoe1' }, productId: 'PA', productName: 'Bin A', price: { cents: 9000, formatted: '$90' }, paymentStatus: 'failed' }),
+    sale({ orderId: 'a', buyer: { username: 'Ann', handle: 'ann1' }, liveTag: 'Show 1', price: { cents: 5000, formatted: '$50' }, paymentStatus: 'paid' }),
+    sale({ orderId: 'b', buyer: { username: 'Ann', handle: 'ann1' }, liveTag: 'Show 2', price: { cents: 3000, formatted: '$30' }, paymentStatus: 'pending' }),
+    sale({ orderId: 'c', buyer: { username: 'Bob', handle: 'bob1' }, liveTag: 'Show 1', price: { cents: 2000, formatted: '$20' }, paymentStatus: 'paid' }),
+    sale({ orderId: 'x', buyer: { username: 'Zoe', handle: 'zoe1' }, liveTag: 'Show 1', price: { cents: 9000, formatted: '$90' }, paymentStatus: 'failed' }),
   ]
   it('groups by buyer, excluding failed payments', () => {
     const g = groupForPicklist(rows, 'buyer')
@@ -141,11 +141,15 @@ describe('groupForPicklist', () => {
     expect(g[0]!.units).toBe(2)
     expect(g[0]!.totalCents).toBe(8000)
   })
-  it('groups by product/bin, excluding failed payments', () => {
-    const g = groupForPicklist(rows, 'product')
-    expect(g.map((x) => x.key)).toEqual(['PA', 'PB'])
-    expect(g[0]!.label).toBe('Bin A')
-    expect(g[0]!.units).toBe(2) // a + c (Zoe's failed PA excluded)
+  it('groups by show, excluding failed payments', () => {
+    const g = groupForPicklist(rows, 'show')
+    expect(g.map((x) => x.key)).toEqual(['Show 1', 'Show 2']) // Show 1 first (a + c; Zoe's failed excluded)
+    expect(g[0]!.label).toBe('Show 1')
+    expect(g[0]!.units).toBe(2)
+  })
+  it('orders without a show tag fall under "Other orders"', () => {
+    const g = groupForPicklist([sale({ orderId: 'n', paymentStatus: 'paid' })], 'show')
+    expect(g[0]!.key).toBe('Other orders')
   })
 })
 

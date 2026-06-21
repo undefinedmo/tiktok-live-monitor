@@ -130,7 +130,7 @@ export function applyCost(row: LedgerRow, a: CostApply): number | undefined {
   return Math.round((row.price.cents * a.value) / 100) // percent of order total
 }
 
-/** A picklist/packlist bucket — items grouped for pulling (by bin) or packing (by buyer). */
+/** A picklist/packlist bucket — items grouped by show or packed per buyer. */
 export interface PickGroup {
   key: string
   label: string
@@ -140,18 +140,18 @@ export interface PickGroup {
   totalCents: number
 }
 
-/** Group non-failed orders for the picklist. by 'buyer' = pack per customer; by 'product' = pull per bin. */
-export function groupForPicklist(rows: LedgerRow[], by: 'buyer' | 'product'): PickGroup[] {
+/** Group non-failed orders for the picklist. by 'buyer' = pack per customer; by 'show' = group per live show. */
+export function groupForPicklist(rows: LedgerRow[], by: 'buyer' | 'show'): PickGroup[] {
   const map = new Map<string, PickGroup>()
   for (const r of rows) {
     if (r.paymentStatus === 'failed') continue
-    const key = by === 'buyer' ? (r.buyer.handle || r.buyer.username || r.buyer.ttuid || '?') : r.productId
+    const key = by === 'buyer' ? (r.buyer.handle || r.buyer.username || r.buyer.ttuid || '?') : (r.liveTag || 'Other orders')
     let g = map.get(key)
     if (!g) {
       g = {
         key,
-        label: by === 'buyer' ? r.buyer.username || r.buyer.handle || '—' : r.productName,
-        sub: by === 'buyer' ? '@' + (r.buyer.handle ?? '') : r.productName,
+        label: by === 'buyer' ? r.buyer.username || r.buyer.handle || '—' : key,
+        sub: by === 'buyer' ? '@' + (r.buyer.handle ?? '') : '',
         items: [],
         units: 0,
         totalCents: 0,
