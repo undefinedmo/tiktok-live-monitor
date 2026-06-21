@@ -106,7 +106,7 @@ export function orderToSale(o: MappedOrder): Sale {
     productId: productName, // no stable product id in order/list; group bins by name
     productName,
     skuDesc: item?.variant ?? (o.items.length > 1 ? `${o.items.length} items` : ''),
-    price: { cents: o.totalCents, formatted: '$' + (o.totalCents / 100).toFixed(2) },
+    price: { cents: o.totalCents, formatted: '$' + (o.totalCents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
     paymentStatus,
     createdAt: o.placedAt ?? Date.now(),
     liveTag: o.liveTag ?? undefined,

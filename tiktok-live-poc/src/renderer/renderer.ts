@@ -557,7 +557,7 @@ let ledgerFilters: LedgerFilters = { q: '', status: '', cost: '', profit: '', mi
 let ledgerSort: { key: SortKey; dir: 1 | -1 } = { key: 'date', dir: -1 }
 let ledgerExpanded: string | null = null
 let currentScreen: 'monitor' | 'ledger' | 'picklist' = 'monitor'
-const fmtCents = (c: number) => `$${(c / 100).toFixed(2)}`
+const fmtCents = (c: number) => '$' + (c / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 // bulk-selection + cost state
 const selected = new Set<string>()
@@ -802,7 +802,9 @@ function editAiField(r: LedgerRow, key: keyof LedgerTranscript, node: HTMLElemen
 function renderLedger() {
   if (currentScreen !== 'ledger') return
   const all = ledgerRows()
-  const k = computeKpis(all)
+  // KPIs reflect the active filters/show (the visible set), not the whole book
+  const filtered = sortRows(filterRows(all, ledgerFilters), ledgerSort.key, ledgerSort.dir)
+  const k = computeKpis(filtered)
   const tiles: [string, string, string?, boolean?][] = [
     ['ORDERS', String(k.orders)],
     ['GROSS', fmtCents(k.grossCents)],
@@ -820,7 +822,7 @@ function renderLedger() {
     if (sub) t.appendChild(el('div', 's', sub))
     kpiEl.appendChild(t)
   }
-  const rows = sortRows(filterRows(all, ledgerFilters), ledgerSort.key, ledgerSort.dir)
+  const rows = filtered
   visibleRows = rows
   $('ledgerCount').textContent = `${rows.length} of ${all.length} orders`
   const body = $('ledgerRows')
@@ -847,9 +849,11 @@ function showScreen(s: 'monitor' | 'ledger' | 'picklist') {
   $('navMonitor').classList.toggle('active', s === 'monitor')
   $('navLedger').classList.toggle('active', s === 'ledger')
   $('navPicklist').classList.toggle('active', s === 'picklist')
-  // room/viewers/elapsed only make sense on the live monitor — keep them off the Ledger/Picklist
+  // live status (connecting…) + room/viewers/elapsed only make sense on the Live Monitor
   const meters = document.getElementById('liveMeters')
   if (meters) meters.style.display = s === 'monitor' ? 'flex' : 'none'
+  const livePill = document.getElementById('livePill')
+  if (livePill) livePill.style.display = s === 'monitor' ? 'flex' : 'none'
   if (s === 'ledger') renderLedger()
   if (s === 'picklist') renderPicklist()
 }
