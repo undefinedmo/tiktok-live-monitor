@@ -24,6 +24,22 @@ const feed = new LiveFeed()
 const auctionResults = new AuctionResults()
 let connected = false
 
+// The monitor window uses a persisted session (persist:tiktok), so TikTok's auth
+// cookies live in Electron directly — no browser extension bridge needed. We read
+// them to verify login. NB: this confirms an authenticated session, but TikTok signs
+// its API requests in-page (X-Bogus/msToken/…), so the actual order pulls still ride
+// the monitor page's window.fetch — cookies alone can't drive the data sync.
+const TT_PARTITION = 'persist:tiktok'
+const AUTH_COOKIE_RE = /^(sessionid|sessionid_ss|sid_tt|sid_guard|uid_tt|store-idc|odin_tt)$/i
+async function tiktokLoggedIn(): Promise<boolean> {
+  try {
+    const cookies = await session.fromPartition(TT_PARTITION).cookies.get({})
+    return cookies.some((c) => AUTH_COOKIE_RE.test(c.name) && !!c.value)
+  } catch {
+    return false
+  }
+}
+
 // Once the WS stream yields room_id + session_id, tell the preload to start
 // polling the roster + sale-history REST endpoints itself.
 let pollRoomId: string | undefined
@@ -71,7 +87,7 @@ function createViewer() {
 }
 
 function createMonitor() {
-  const part = session.fromPartition('persist:tiktok')
+  const part = session.fromPartition(TT_PARTITION)
   monitor = new BrowserWindow({
     width: 1280,
     height: 860,
@@ -210,9 +226,29 @@ ipcMain.handle('save-printer', (_e, name: string) => {
 const GEMINI_KEY = process.env.GEMINI_API_KEY || ''
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
 
-// Manual "Sync orders" from the UI → force an immediate REST poll cycle.
-ipcMain.handle('tt-sync', () => {
-  if (!pollRoomId || !pollSessionId) return { ok: false, reason: 'Not connected to a live show yet' }
+// Connection state for the UI: are we logged in, is a live show captured, are we polling?
+ipcMain.handle('tt-connection', async () => ({
+  loggedIn: await tiktokLoggedIn(),
+  hasShow: !!pollRoomId && !!pollSessionId,
+  polling: pollSent,
+}))
+
+// Bring the TikTok monitor window forward (e.g. so the user can log in).
+ipcMain.handle('tt-open-monitor', () => {
+  if (!monitor) return { ok: false }
+  monitor.show()
+  monitor.focus()
+  return { ok: true }
+})
+
+// Manual "Sync orders" from the UI → verify login, then force an immediate poll cycle.
+ipcMain.handle('tt-sync', async () => {
+  if (!(await tiktokLoggedIn())) {
+    monitor?.show()
+    monitor?.focus()
+    return { ok: false, reason: 'Log in to TikTok in the monitor window' }
+  }
+  if (!pollRoomId || !pollSessionId) return { ok: false, reason: 'Logged in — waiting for a live show' }
   if (!monitor) return { ok: false, reason: 'Monitor window unavailable' }
   if (!pollSent) maybeStartPolling()
   else monitor.webContents.send('tt-poll-now')

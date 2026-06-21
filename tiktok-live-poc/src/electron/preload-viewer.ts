@@ -18,4 +18,6 @@ contextBridge.exposeInMainWorld('recapAPI', {
 
 contextBridge.exposeInMainWorld('syncAPI', {
   now: () => ipcRenderer.invoke('tt-sync'),
+  connection: () => ipcRenderer.invoke('tt-connection'),
+  openMonitor: () => ipcRenderer.invoke('tt-open-monitor'),
 })

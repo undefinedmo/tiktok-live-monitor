@@ -26,6 +26,8 @@ declare global {
     }
     syncAPI?: {
       now: () => Promise<{ ok: boolean; reason?: string }>
+      connection: () => Promise<{ loggedIn: boolean; hasShow: boolean; polling: boolean }>
+      openMonitor: () => Promise<{ ok: boolean }>
     }
   }
 }
@@ -856,8 +858,35 @@ function setupShowFilter() {
     ?.addEventListener('change', (e) => onShowChange((e.target as HTMLSelectElement).value))
 }
 
-// ── "Sync orders" — pull the latest orders now ───────────────────────────────
+// ── "Sync orders" + TikTok connection state ──────────────────────────────────
 let syncing = false
+
+function flashSync(msg: string) {
+  const b = document.getElementById('ledgerSync')
+  if (!b) return
+  const orig = b.dataset.label ?? b.textContent ?? '↻ Sync'
+  b.dataset.label = orig
+  b.textContent = msg
+  window.setTimeout(() => { b.textContent = b.dataset.label ?? orig }, 2600)
+}
+
+// Reflect login/live state on the rail dot (cookie-verified via the persisted session).
+async function refreshConnection() {
+  if (!window.syncAPI) return
+  const dot = document.getElementById('dot')
+  if (!dot) return
+  try {
+    const c = await window.syncAPI.connection()
+    let color = '#ff5c5c'
+    let title = 'Not logged in to TikTok — click Sync to open the login window'
+    if (c.loggedIn && c.hasShow) { color = '#36d9a4'; title = 'Connected · live show' }
+    else if (c.loggedIn) { color = '#ffc56b'; title = 'Logged in · waiting for a live show' }
+    dot.style.background = color
+    dot.style.boxShadow = c.loggedIn && c.hasShow ? '0 0 8px #36d9a4' : 'none'
+    dot.title = title
+  } catch { /* ignore */ }
+}
+
 async function runSync() {
   if (syncing) return
   syncing = true
@@ -866,16 +895,12 @@ async function runSync() {
   try {
     if (window.syncAPI) {
       const res = await window.syncAPI.now()
-      if (res.ok === false) {
-        const reason = res.reason ?? 'sync failed'
-        console.warn('sync failed:', reason)
-        // surface the reason in #status; the next live event will overwrite it shortly
-        const st = document.getElementById('status')
-        if (st) st.textContent = reason
-      }
+      if (res.ok) flashSync('✓ Synced')
+      else { flashSync('⚠ ' + (res.reason ?? 'failed')); console.warn('sync:', res.reason) }
+      await refreshConnection()
     } else {
-      // static demo — give the control feedback without a backend
-      await new Promise((r) => window.setTimeout(r, 900))
+      await new Promise((r) => window.setTimeout(r, 900)) // static demo feedback
+      flashSync('✓ Synced')
     }
   } finally {
     navSync?.classList.remove('syncing')
@@ -886,6 +911,8 @@ async function runSync() {
 function setupSync() {
   document.getElementById('navSync')?.addEventListener('click', () => void runSync())
   document.getElementById('ledgerSync')?.addEventListener('click', () => void runSync())
+  void refreshConnection()
+  window.setInterval(() => void refreshConnection(), 12000)
 }
 
 function setupPicklist() {
