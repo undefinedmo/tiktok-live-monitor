@@ -46,7 +46,7 @@
       .stream-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;z-index:1;pointer-events:none;}
       .stream-empty .thumb{width:128px;height:88px;border-radius:8px;background:repeating-linear-gradient(45deg,#1a2330 0 8px,#161e29 8px 16px);border:1px solid #2a3340;}
       .stream-empty .hint{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:1.5px;color:#4a525f;}
-      .lot-card{position:absolute;left:16px;bottom:16px;display:none;align-items:center;gap:14px;background:rgba(10,12,17,.82);border:1px solid #262c38;border-radius:10px;padding:12px 16px 12px 12px;backdrop-filter:blur(10px);z-index:2;max-width:calc(100% - 32px);}
+      .lot-card{position:absolute;left:16px;right:16px;bottom:16px;display:none;align-items:center;gap:14px;background:rgba(10,12,17,.84);border:1px solid #262c38;border-radius:10px;padding:13px 16px;backdrop-filter:blur(10px);z-index:2;}
       .lot-thumb{width:56px;height:76px;border-radius:6px;background:repeating-linear-gradient(45deg,#243049 0 6px,#1c2740 6px 12px);border:1px solid #34405c;flex:none;}
       .bid-cta{flex:none;height:62px;border:none;border-radius:10px;cursor:pointer;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:18px;letter-spacing:1px;color:#fff;background:linear-gradient(110deg,#3fa0ff,#6b56f0 55%,#8a5cf6);box-shadow:0 8px 24px rgba(86,80,240,.4),inset 0 1px 0 rgba(255,255,255,.25);}
       .chat-col{width:296px;flex:none;border-left:1px solid #15181f;border-right:1px solid #15181f;display:flex;flex-direction:column;background:#08090d;}
@@ -69,6 +69,16 @@
       .stat .s{font-size:11px;color:#8b93a3;margin-top:2px;}
       .rightpanel > div{flex:0 0 auto;}
       .bidfeed{max-height:360px;overflow-y:auto;}
+      /* large screens: TikTok live is 9:16 portrait, so cap the video and give the freed
+         width to a larger chat + a wider ops panel (multi-column feed). Smaller screens
+         keep the default proportions. */
+      @media (min-width:1700px){
+        .video-col{flex:0 1 520px;max-width:560px;}
+        .chat-col{width:540px;}
+        .rightpanel{flex:1 1 560px;width:auto;}
+        .bidfeed{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:8px;padding:8px;max-height:600px;}
+        .bidfeed .bidrow{border-bottom:none;border:1px solid #1a1e27;border-radius:9px;}
+      }
       .chatrow{font-size:13px;line-height:1.45;}
       .chatname{font-weight:600;}
       .chattext{color:#cdd4e0;}
@@ -212,11 +222,12 @@
             <div class="stream-rate">8.2 MB/s</div>
             <div id="lotOverlay" class="lot-card">
               <div class="lot-thumb"></div>
-              <div style="min-width:0;">
+              <div style="flex:1;min-width:0;">
                 <div class="mono" style="font-size:10px;letter-spacing:1.5px;color:#7da8ff;margin-bottom:5px;"><span id="lotNum">CURRENT LOT</span> &middot; high bidder <span id="lotBuyer" style="color:#8a78ff;">--</span></div>
-                <div class="grot" id="lotName" style="font-weight:600;font-size:17px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">--</div>
-                <div style="font-size:13px;color:#9aa4b5;margin-top:3px;"><span class="mono" id="lotBid" style="color:#fff;">--</span> Current Bid &middot; <span id="lotBids">0</span> bids &middot; <span id="lotEnds" style="color:#ff9b6b;">--</span></div>
+                <div class="grot" id="lotName" style="font-weight:600;font-size:18px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">--</div>
               </div>
+              <div style="text-align:right;flex:none;"><div style="font-size:11px;color:#8b93a3;">Current Bid &middot; <span id="lotBids">0</span> bids</div><div class="mono" id="lotBid" style="font-weight:600;font-size:24px;background:linear-gradient(110deg,#5cb0ff,#9b6cf6);-webkit-background-clip:text;background-clip:text;color:transparent;">--</div></div>
+              <div style="text-align:right;flex:none;border-left:1px solid #2a3140;padding-left:14px;"><div style="font-size:11px;color:#8b93a3;">Ends in</div><div class="mono" id="lotEnds" style="font-weight:600;font-size:24px;color:#ff9b6b;">--</div></div>
             </div>
           </div>
           <button class="bid-cta" type="button">CUSTOM BID&nbsp;&nbsp;$450</button>
