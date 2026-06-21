@@ -149,6 +149,9 @@
       .ledger-head input[type=checkbox],.ledger-row input[type=checkbox]{accent-color:#7c5cff;cursor:pointer;width:14px;height:14px;}
       .lc-check{display:flex;align-items:center;justify-content:center;}
       .ledger-row.sel{background:rgba(124,92,255,.08);}
+      .ledger-row.transcribing{background:rgba(124,92,255,.10);box-shadow:inset 3px 0 0 #7c5cff;}
+      .ledger-row.transcribing .lc-check::after{content:'◴';position:absolute;color:#b9adff;font-size:12px;animation:sfspin .8s linear infinite;}
+      .ledger-row.transcribing .lc-check input{visibility:hidden;}
       .lc-cost.tmpl{color:#7da8ff;}
       .lc-cost.tmpl::before{content:'⤳ ';opacity:.7;}
       .pick-card{background:#0f131a;border:1px solid #1d212b;border-radius:10px;overflow:hidden;flex:none;}

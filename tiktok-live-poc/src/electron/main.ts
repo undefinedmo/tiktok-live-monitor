@@ -421,25 +421,43 @@ ipcMain.handle('tt-transcribe', async (_e, payload: { audio?: Uint8Array; produc
 // Transcribe INDIVIDUAL ORDERS from their Seller-Center video receipts (not live bins).
 // For each order: order/get → per-order video receipt .m3u8 + sale-moment offset → ffmpeg audio
 // clip ending at the sale → structured Gemini extraction. Cookie auth (Seller Center) required.
-ipcMain.handle('tt-transcribe-orders', async (_e, items: { orderId: string; productName?: string }[]) => {
+ipcMain.handle('tt-transcribe-orders', async (_e, items: { orderId: string; productName?: string; placedAtMs?: number }[]) => {
   if (!GEMINI_KEY) return { error: 'GEMINI_API_KEY not set' }
   if (!(await tiktokLoggedIn())) return { error: 'Log into TikTok Seller Center (cookies needed for order video receipts)' }
   const cookieHeader = await tiktokCookieHeader()
+  const total = items.length
+  const progress = (done: number, orderId: string, phase: 'start' | 'done', ok?: boolean) =>
+    viewer?.webContents.send('tt-transcribe-progress', { done, total, orderId, phase, ok })
   const ids = items.map((i) => i.orderId)
   const details = await fetchOrderDetails(ids, cookieHeader)
   const results: { orderId: string; fields: TranscriptFields }[] = []
   const errors: { orderId: string; error: string }[] = []
-  for (const it of items) {
-    const d = details.get(it.orderId)
-    if (!d?.videoUrl) { errors.push({ orderId: it.orderId, error: 'no video receipt' }); continue }
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i]!
+    progress(i, it.orderId, 'start')
+    let ok = false
     try {
-      const audio = await buildAudioClip(d.videoUrl, d.receiptTsMs != null ? Math.round(d.receiptTsMs / 1000) : null)
-      if (!audio || audio.byteLength < 1000) { errors.push({ orderId: it.orderId, error: 'clip failed' }); continue }
-      const r = await geminiStructured(audio, 'audio/aac', it.productName ?? '')
-      if (r.fields && Object.keys(r.fields).length) results.push({ orderId: it.orderId, fields: r.fields })
-      else if (r.text) results.push({ orderId: it.orderId, fields: { summary: r.text } })
-      else errors.push({ orderId: it.orderId, error: r.error ?? 'no transcript' })
-    } catch (e) { errors.push({ orderId: it.orderId, error: String((e as Error).message).slice(0, 120) }) }
+      const d = details.get(it.orderId)
+      if (!d?.videoUrl) {
+        errors.push({ orderId: it.orderId, error: 'no video receipt' })
+      } else {
+        // seek by the ORDER's placed-at epoch (the sale moment) — same as live-ledger.
+        // (video_receipt_timestamp is a different value and gives the wrong clip window.)
+        const atSec = it.placedAtMs != null ? Math.floor(it.placedAtMs / 1000) : null
+        const audio = await buildAudioClip(d.videoUrl, atSec)
+        if (!audio || audio.byteLength < 1000) {
+          errors.push({ orderId: it.orderId, error: 'clip failed' })
+        } else {
+          const r = await geminiStructured(audio, 'audio/aac', it.productName ?? '')
+          if (r.fields && Object.keys(r.fields).length) { results.push({ orderId: it.orderId, fields: r.fields }); ok = true }
+          else if (r.text) { results.push({ orderId: it.orderId, fields: { summary: r.text } }); ok = true }
+          else errors.push({ orderId: it.orderId, error: r.error ?? 'no transcript' })
+        }
+      }
+    } catch (e) {
+      errors.push({ orderId: it.orderId, error: String((e as Error).message).slice(0, 120) })
+    }
+    progress(i + 1, it.orderId, 'done', ok)
   }
   return { results, errors }
 })

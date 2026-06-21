@@ -23,7 +23,8 @@ declare global {
     recapAPI?: {
       enabled: () => Promise<{ enabled: boolean; model: string }>
       transcribe: (payload: { audio: Uint8Array; productName?: string; structured?: boolean }) => Promise<{ text?: string; fields?: LedgerTranscript; error?: string }>
-      transcribeOrders: (items: { orderId: string; productName?: string }[]) => Promise<{ results: { orderId: string; fields: LedgerTranscript }[]; errors: { orderId: string; error: string }[]; error?: string }>
+      transcribeOrders: (items: { orderId: string; productName?: string; placedAtMs?: number }[]) => Promise<{ results: { orderId: string; fields: LedgerTranscript }[]; errors: { orderId: string; error: string }[]; error?: string }>
+      onTranscribeProgress: (cb: (p: { done: number; total: number; orderId: string; phase: 'start' | 'done'; ok?: boolean }) => void) => void
     }
     syncAPI?: {
       now: () => Promise<{ ok: boolean; reason?: string; count?: number }>
@@ -560,6 +561,7 @@ const fmtCents = (c: number) => `$${(c / 100).toFixed(2)}`
 
 // bulk-selection + cost state
 const selected = new Set<string>()
+const transcribingOrders = new Set<string>() // orderIds currently being transcribed (row spinner)
 let bulkMode: 'flat' | 'percent' | 'retail' = 'percent'
 let bulkWholeProduct = false // when on, cost edits cascade to the whole product/bin
 let visibleRows: LedgerRow[] = []
@@ -686,7 +688,8 @@ function editCost(r: LedgerRow, cell: HTMLElement) {
 }
 
 function ledgerRowEl(r: LedgerRow): HTMLElement {
-  const row = el('div', 'ledger-row')
+  const row = el('div', 'ledger-row' + (transcribingOrders.has(r.orderId) ? ' transcribing' : ''))
+  row.dataset.oid = r.orderId
   const check = el('div', 'lc-check')
   const cb = document.createElement('input')
   cb.type = 'checkbox'
@@ -1089,11 +1092,11 @@ function setupLedger() {
     const items = [...selected]
       .map((oid) => byId.get(oid))
       .filter((r): r is LedgerRow => !!r)
-      .map((r) => ({ orderId: r.orderId, productName: r.productName }))
+      .map((r) => ({ orderId: r.orderId, productName: r.productName, placedAtMs: r.createdAt }))
     if (!items.length) return
     const orig = btn.textContent
     btn.disabled = true
-    btn.textContent = `✦ Transcribing ${items.length}…`
+    btn.textContent = `✦ Transcribing 0/${items.length}…`
     try {
       const res = await window.recapAPI.transcribeOrders(items)
       if (res.error) { btn.textContent = '⚠ ' + res.error.slice(0, 28) }
@@ -1128,6 +1131,24 @@ setupLedger()
 setupPicklist()
 setupSync()
 setupShowFilter()
+
+// live transcription progress → highlight the row being worked + update the button count
+function markRowTx(orderId: string, on: boolean) {
+  const row = [...document.querySelectorAll('#ledgerRows .ledger-row')].find((e) => (e as HTMLElement).dataset.oid === orderId)
+  row?.classList.toggle('transcribing', on)
+}
+window.recapAPI?.onTranscribeProgress?.((p) => {
+  const btn = document.getElementById('bulkTranscribe')
+  if (p.phase === 'start') {
+    transcribingOrders.add(p.orderId)
+    markRowTx(p.orderId, true)
+    if (btn) btn.textContent = `✦ Transcribing ${Math.min(p.done + 1, p.total)}/${p.total}…`
+  } else {
+    transcribingOrders.delete(p.orderId)
+    markRowTx(p.orderId, false)
+    if (btn && p.total) btn.textContent = `✦ ${p.done}/${p.total}…`
+  }
+})
 
 // ── event loop ──────────────────────────────────────────────────────────────
 window.ttLive.onEvent((ev: LiveEvent) => {
