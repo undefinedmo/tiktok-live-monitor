@@ -9,7 +9,7 @@ import { AuctionResults } from '../core/auctionResults'
 import { decodeChat } from '../core/chat'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
 import { pullTiktokOrders, orderToSale, fetchOrderDetails } from './tiktok-orders'
-import { buildAudioClip } from './clip'
+import { buildAudioClip, buildFrames } from './clip'
 import type { LiveEvent, StatusEvent } from '../core/types'
 
 const DASHBOARD = 'https://shop.tiktok.com/streamer/live/event/dashboard'
@@ -358,14 +358,14 @@ function parseLiveLedgerResult(raw: string): TranscriptFields {
 }
 
 async function geminiStructured(
-  audio: Uint8Array,
-  mimeType: string,
-  _label: string,
+  media: { mimeType: string; data: Uint8Array }[],
+  _label = '',
 ): Promise<{ fields?: TranscriptFields; text?: string; error?: string }> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`
-  const clip = { inlineData: { mimeType, data: Buffer.from(audio).toString('base64') } }
+  const parts: unknown[] = [{ text: transcribePrompt(null) }]
+  for (const m of media) parts.push({ inlineData: { mimeType: m.mimeType, data: Buffer.from(m.data).toString('base64') } })
   const body = {
-    contents: [{ parts: [{ text: transcribePrompt(null) }, clip] }],
+    contents: [{ parts }],
     generationConfig: {
       temperature: 0.1,
       maxOutputTokens: 2048,
@@ -396,7 +396,7 @@ ipcMain.handle('tt-transcribe', async (_e, payload: { audio?: Uint8Array; produc
 
   // Structured mode: extract product attributes (brand/size/retail…) for costing + the ledger.
   if (payload?.structured) {
-    return geminiStructured(audio, 'audio/webm', label)
+    return geminiStructured([{ mimeType: 'audio/webm', data: audio }], label)
   }
 
   const prompt =
@@ -448,7 +448,13 @@ ipcMain.handle('tt-transcribe-orders', async (_e, items: { orderId: string; prod
         if (!audio || audio.byteLength < 1000) {
           errors.push({ orderId: it.orderId, error: 'clip failed' })
         } else {
-          const r = await geminiStructured(audio, 'audio/aac', it.productName ?? '')
+          // 5 frames give Gemini visual context (color/size/brand) + the audio for speech
+          const frames = await buildFrames(d.videoUrl, atSec, 5)
+          const media = [
+            ...frames.map((f) => ({ mimeType: 'image/jpeg', data: f })),
+            { mimeType: 'audio/aac', data: audio },
+          ]
+          const r = await geminiStructured(media, it.productName ?? '')
           if (r.fields && Object.keys(r.fields).length) { results.push({ orderId: it.orderId, fields: r.fields }); ok = true }
           else if (r.text) { results.push({ orderId: it.orderId, fields: { summary: r.text } }); ok = true }
           else errors.push({ orderId: it.orderId, error: r.error ?? 'no transcript' })

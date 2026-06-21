@@ -1,7 +1,7 @@
 // ffmpeg AUDIO clip builder: ~60s of AAC/ADTS ENDING at the sale moment, from a
 // signed Seller-Center .m3u8 video receipt. Returns the raw bytes (or null). ffmpeg is on PATH.
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -55,4 +55,38 @@ export async function buildAudioClip(m3u8Url: string, atEpochSec: number | null)
     try { if (existsSync(outPath)) unlinkSync(outPath) } catch { /* ignore */ }
     return null
   }
+}
+
+/** Extract `count` JPEG frames spread across the ~60s clip (the last one ~at the sale moment)
+ *  so Gemini gets visual context (color/size/brand) without the cost of full video. */
+export async function buildFrames(m3u8Url: string, atEpochSec: number | null, count = 5): Promise<Uint8Array[]> {
+  let ss = 0
+  if (atEpochSec) {
+    try { ss = parseSeekFromM3u8(await (await fetch(m3u8Url)).text(), atEpochSec) } catch { ss = 0 }
+  }
+  const dir = join(tmpdir(), `tt-frames-${process.pid}-${clipCounter++}`)
+  mkdirSync(dir, { recursive: true })
+  const args = [
+    '-nostdin', '-loglevel', 'error', '-y',
+    ...(ss > 0 ? ['-ss', String(ss)] : []),
+    '-i', m3u8Url, '-t', String(CLIP_SECONDS),
+    '-vf', `fps=${count}/${CLIP_SECONDS},scale=480:-2`,
+    '-frames:v', String(count), '-q:v', '4', join(dir, 'f_%02d.jpg'),
+  ]
+  const code = await new Promise<number>((resolve) => {
+    const p = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    p.on('error', () => resolve(-1))
+    p.on('close', (c) => resolve(c ?? -1))
+  })
+  const frames: Uint8Array[] = []
+  try {
+    if (code === 0) {
+      for (const n of readdirSync(dir).filter((x) => x.endsWith('.jpg')).sort()) {
+        try { frames.push(new Uint8Array(readFileSync(join(dir, n)))) } catch { /* ignore */ }
+      }
+    }
+  } finally {
+    try { rmSync(dir, { recursive: true, force: true }) } catch { /* ignore */ }
+  }
+  return frames
 }

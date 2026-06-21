@@ -625,12 +625,24 @@ function sourceSales(): Sale[] {
 function refreshShowOptions() {
   const fmtShowDate = (sec?: number) =>
     sec ? new Date(sec * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
-  // When we have a synced order book, derive shows from the per-order live-show tag.
+  // When we have a synced order book, derive shows from the per-order live-show tag,
+  // enriched with date · item-count · duration (like live-ledger's ShowSelect).
   const opts: { value: string; label: string }[] = []
   if (syncedOrders.length) {
-    const tags = [...new Set(syncedOrders.map(SHOW_OF))].sort()
+    const fmtDur = (ms: number) => { if (ms <= 0) return ''; const m = Math.round(ms / 60000); const h = Math.floor(m / 60); return h ? `${h}h ${m % 60}m` : `${m}m` }
+    const agg = new Map<string, { count: number; minT: number; maxT: number }>()
+    for (const s of syncedOrders) {
+      const tag = SHOW_OF(s)
+      const e = agg.get(tag) ?? { count: 0, minT: Infinity, maxT: -Infinity }
+      e.count++; if (s.createdAt < e.minT) e.minT = s.createdAt; if (s.createdAt > e.maxT) e.maxT = s.createdAt
+      agg.set(tag, e)
+    }
     opts.push({ value: 'all', label: `All orders (${syncedOrders.length})` })
-    for (const t of tags) opts.push({ value: t, label: t })
+    for (const [tag, e] of [...agg.entries()].sort((a, b) => b[1].maxT - a[1].maxT)) {
+      const date = Number.isFinite(e.minT) ? new Date(e.minT).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
+      const sub = [date, `${e.count} items`, fmtDur(e.maxT - e.minT)].filter(Boolean).join(' · ')
+      opts.push({ value: tag, label: sub ? `${tag} · ${sub}` : tag })
+    }
   } else {
     opts.push({ value: 'live', label: 'Live (current)' })
     for (const s of listShows(showStore)) {
