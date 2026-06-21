@@ -23,6 +23,7 @@ declare global {
     recapAPI?: {
       enabled: () => Promise<{ enabled: boolean; model: string }>
       transcribe: (payload: { audio: Uint8Array; productName?: string; structured?: boolean }) => Promise<{ text?: string; fields?: LedgerTranscript; error?: string }>
+      transcribeOrders: (items: { orderId: string; productName?: string }[]) => Promise<{ results: { orderId: string; fields: LedgerTranscript }[]; errors: { orderId: string; error: string }[]; error?: string }>
     }
     syncAPI?: {
       now: () => Promise<{ ok: boolean; reason?: string; count?: number }>
@@ -540,6 +541,8 @@ const costMap: Record<string, number> = loadJson('tt-cost', {})
 const productCostMap: Record<string, number> = loadJson('tt-product-cost', {}) // productId → cents (template, persists across shows)
 const transcriptsByOrder = new Map<string, string>()
 const productTx: Record<string, LedgerTranscript> = loadJson('tt-product-tx', {}) // productId → structured AI transcript
+const orderTx: Record<string, LedgerTranscript> = loadJson('tt-order-tx', {}) // orderId → per-ITEM structured transcript (from its video receipt)
+const saveOrderTx = () => localStorage.setItem('tt-order-tx', JSON.stringify(orderTx))
 // Synced order book from Seller-Center order/list (decoupled from the live stream). When present
 // it is the Ledger/Picklist source; grouped into "shows" by the live-show tag on each order.
 let syncedOrders: Sale[] = loadJson<Sale[]>('tt-orders', [])
@@ -655,10 +658,10 @@ function ledgerRows(): LedgerRow[] {
     ...s,
     // order-level cost overrides the product/bin template
     costCents: costMap[s.orderId] ?? productCostMap[s.productId],
-    // order-level summary wins, else the structured per-product transcript
-    transcript: transcriptsByOrder.has(s.orderId)
-      ? { summary: transcriptsByOrder.get(s.orderId) }
-      : productTx[s.productId],
+    // per-item transcript wins, then the live order-summary, then the per-bin transcript
+    transcript:
+      orderTx[s.orderId] ??
+      (transcriptsByOrder.has(s.orderId) ? { summary: transcriptsByOrder.get(s.orderId) } : productTx[s.productId]),
   }))
 }
 
@@ -1039,18 +1042,37 @@ function setupLedger() {
     applyBulkCost({ mode: 'percent', value: parseFloat((b as HTMLElement).dataset.pct!) })
   }))
   $('bulkClear').addEventListener('click', () => applyBulkCost({ mode: 'clear', value: 0 }))
+  // Transcribe the SELECTED ITEMS individually — each order's own video receipt, not the bin.
   $('bulkTranscribe').addEventListener('click', async () => {
-    if (!recapEnabled) return
+    const btn = $('bulkTranscribe') as HTMLButtonElement
+    if (!window.recapAPI?.transcribeOrders) { btn.textContent = '✦ AI off'; return }
     const byId = new Map(ledgerRows().map((r) => [r.orderId, r]))
-    const seen = new Set<string>()
-    const targets: { id: string; name: string }[] = []
-    for (const oid of selected) {
-      const r = byId.get(oid)
-      if (!r || seen.has(r.productId)) continue
-      seen.add(r.productId)
-      if (!productTx[r.productId]) targets.push({ id: r.productId, name: r.productName })
+    const items = [...selected]
+      .map((oid) => byId.get(oid))
+      .filter((r): r is LedgerRow => !!r)
+      .map((r) => ({ orderId: r.orderId, productName: r.productName }))
+    if (!items.length) return
+    const orig = btn.textContent
+    btn.disabled = true
+    btn.textContent = `✦ Transcribing ${items.length}…`
+    try {
+      const res = await window.recapAPI.transcribeOrders(items)
+      if (res.error) { btn.textContent = '⚠ ' + res.error.slice(0, 28) }
+      else {
+        for (const r of res.results) orderTx[r.orderId] = r.fields
+        saveOrderTx()
+        renderLedger()
+        renderPicklist()
+        const fail = res.errors?.length ?? 0
+        btn.textContent = `✓ ${res.results.length}${fail ? ` · ${fail} failed` : ''}`
+      }
+    } catch (e) {
+      btn.textContent = '⚠ failed'
+      console.warn('transcribe-orders:', e)
+    } finally {
+      btn.disabled = false
+      window.setTimeout(() => { btn.textContent = orig }, 3000)
     }
-    for (const t of targets) await transcribeProduct(t.id, t.name) // sequential — one audio clip at a time
   })
   $('bulkDeselect').addEventListener('click', () => { selected.clear(); renderLedger() })
 

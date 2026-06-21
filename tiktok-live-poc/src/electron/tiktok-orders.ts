@@ -165,3 +165,64 @@ export async function pullTiktokOrders(
   }
   return { orders: all, total }
 }
+
+// ── Order-detail pull (signed replay .m3u8 + LIVE room id) ───────────────────
+// The Seller-Center order/get call returns, for LIVE/auction orders, the auction_module with:
+//   • auction_video_receipt_url — signed HLS replay (per-order video receipt)
+//   • live_room_id              — the real TikTok LIVE room the order belongs to
+//   • video_receipt_timestamp   — the replay offset for this order's sale moment
+// Same cookie auth as the order list. Batched in main_order_id chunks of 20.
+export const ORDER_GET_URL =
+  'https://seller-us.tiktok.com/api/fulfillment/na/order/get?aid=4068&app_name=i18n_ecom_shop&device_platform=web'
+
+export interface OrderDetail {
+  videoUrl: string | null   // signed .m3u8 receipt, when present
+  roomId: string | null     // live_room_id — group orders into real shows
+  receiptTsMs: number | null // video_receipt_timestamp (replay offset)
+}
+
+/** Fetch per-order detail (video receipt + LIVE room id), keyed by main_order_id. Cookie auth only. */
+export async function fetchOrderDetails(
+  orderIds: string[],
+  cookieHeader: string,
+): Promise<Map<string, OrderDetail>> {
+  const out = new Map<string, OrderDetail>()
+  const BATCH = 20
+  for (let i = 0; i < orderIds.length; i += BATCH) {
+    const ids = orderIds.slice(i, i + BATCH)
+    const res = await fetch(ORDER_GET_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+        origin: 'https://seller-us.tiktok.com',
+        referer: 'https://seller-us.tiktok.com/order',
+        'user-agent': UA,
+        cookie: cookieHeader,
+      },
+      body: JSON.stringify({ main_order_id: ids }),
+    })
+    if (!res.ok) throw new Error(`order/get HTTP ${res.status}`)
+    // live_room_id is a bare 19-digit JSON number (> 2^53) — quote it before parsing so V8
+    // doesn't round it; we need the exact room id.
+    const text = await res.text()
+    const j = JSON.parse(text.replace(/"live_room_id":\s*(\d+)/g, '"live_room_id":"$1"')) as Raw
+    if (j.code !== 0 && j.code != null) {
+      throw new Error(`order/get code ${j.code} — ${String(j.message ?? 'rejected')} (session may be expired — re-open the monitor and log in)`)
+    }
+    const mains = ((j.data as Raw)?.main_order as Raw[]) || []
+    for (const m of mains) {
+      const id = String(get(m, 'main_order_id') ?? get(m, 'trade_order_module.main_order_id') ?? get(m, 'note_module.main_order_id') ?? '')
+      if (!id) continue
+      const am = (get(m, 'auction_module') as Raw) || {}
+      const url = am.auction_video_receipt_url
+      const tsRaw = num(am.video_receipt_timestamp)
+      out.set(id, {
+        videoUrl: typeof url === 'string' && url.length > 0 ? url : null,
+        roomId: am.live_room_id != null ? String(am.live_room_id) : null,
+        receiptTsMs: tsRaw != null ? Math.round(tsRaw) : null,
+      })
+    }
+  }
+  return out
+}

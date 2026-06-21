@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('labelAPI', {
 contextBridge.exposeInMainWorld('recapAPI', {
   enabled: () => ipcRenderer.invoke('recap-enabled'),
   transcribe: (payload: unknown) => ipcRenderer.invoke('tt-transcribe', payload),
+  transcribeOrders: (items: unknown) => ipcRenderer.invoke('tt-transcribe-orders', items),
 })
 
 contextBridge.exposeInMainWorld('syncAPI', {

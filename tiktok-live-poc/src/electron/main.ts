@@ -8,7 +8,8 @@ import { parseRoster } from '../core/roster'
 import { AuctionResults } from '../core/auctionResults'
 import { decodeChat } from '../core/chat'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
-import { pullTiktokOrders, orderToSale } from './tiktok-orders'
+import { pullTiktokOrders, orderToSale, fetchOrderDetails } from './tiktok-orders'
+import { buildAudioClip } from './clip'
 import type { LiveEvent, StatusEvent } from '../core/types'
 
 const DASHBOARD = 'https://shop.tiktok.com/streamer/live/event/dashboard'
@@ -297,6 +298,51 @@ ipcMain.handle('recap-enabled', () => ({ enabled: !!GEMINI_KEY, model: GEMINI_MO
 
 interface TranscriptFields { brand?: string; item?: string; color?: string; size?: string; retailPrice?: string; summary?: string }
 
+// Structured Gemini call: from an audio clip, extract product attributes (brand/size/retail…)
+// for costing + the ledger. Reused by both tt-transcribe (mimeType audio/webm) and
+// tt-transcribe-orders (mimeType audio/aac, the ffmpeg ADTS clip).
+async function geminiStructured(
+  audio: Uint8Array,
+  mimeType: string,
+  label: string,
+): Promise<{ fields?: TranscriptFields; text?: string; error?: string }> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`
+  const clip = { inlineData: { mimeType, data: Buffer.from(audio).toString('base64') } }
+  const prompt =
+    `This is a short audio clip from a live-shopping auction selling an item labeled "${label}". ` +
+    `From the seller's speech, extract the product attributes. Use an empty string for anything not stated. ` +
+    `retailPrice is the stated retail/MSRP if mentioned (e.g. "$120"). summary is a one-line plain-English description.`
+  const body = {
+    contents: [{ parts: [{ text: prompt }, clip] }],
+    generationConfig: {
+      temperature: 0.1,
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'object',
+        properties: {
+          brand: { type: 'string' }, item: { type: 'string' }, color: { type: 'string' },
+          size: { type: 'string' }, retailPrice: { type: 'string' }, summary: { type: 'string' },
+        },
+      },
+    },
+  }
+  try {
+    const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    const json = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[]; error?: { message?: string } }
+    if (!res.ok) return { error: `gemini ${res.status}: ${json?.error?.message ?? ''}`.slice(0, 200) }
+    const raw = (json.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('').trim()
+    let fields: TranscriptFields = {}
+    try { fields = JSON.parse(raw) as TranscriptFields } catch { /* fall back to summary text below */ }
+    // drop empties so the renderer can tell what was actually captured
+    fields = Object.fromEntries(Object.entries(fields).filter(([, v]) => v && String(v).trim())) as TranscriptFields
+    const text = fields.summary || raw
+    debug(`[tt] structured fields: ${Object.keys(fields).join(',')}`)
+    return { text, fields }
+  } catch (e) {
+    return { error: (e as Error).message }
+  }
+}
+
 ipcMain.handle('tt-transcribe', async (_e, payload: { audio?: Uint8Array; productName?: string; structured?: boolean }) => {
   if (!GEMINI_KEY) return { error: 'GEMINI_API_KEY not set' }
   const audio = payload?.audio instanceof Uint8Array ? payload.audio : new Uint8Array(payload?.audio ?? [])
@@ -307,39 +353,7 @@ ipcMain.handle('tt-transcribe', async (_e, payload: { audio?: Uint8Array; produc
 
   // Structured mode: extract product attributes (brand/size/retail…) for costing + the ledger.
   if (payload?.structured) {
-    const prompt =
-      `This is a short audio clip from a live-shopping auction selling an item labeled "${label}". ` +
-      `From the seller's speech, extract the product attributes. Use an empty string for anything not stated. ` +
-      `retailPrice is the stated retail/MSRP if mentioned (e.g. "$120"). summary is a one-line plain-English description.`
-    const body = {
-      contents: [{ parts: [{ text: prompt }, clip] }],
-      generationConfig: {
-        temperature: 0.1,
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: 'object',
-          properties: {
-            brand: { type: 'string' }, item: { type: 'string' }, color: { type: 'string' },
-            size: { type: 'string' }, retailPrice: { type: 'string' }, summary: { type: 'string' },
-          },
-        },
-      },
-    }
-    try {
-      const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
-      const json = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[]; error?: { message?: string } }
-      if (!res.ok) return { error: `gemini ${res.status}: ${json?.error?.message ?? ''}`.slice(0, 200) }
-      const raw = (json.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('').trim()
-      let fields: TranscriptFields = {}
-      try { fields = JSON.parse(raw) as TranscriptFields } catch { /* fall back to summary text below */ }
-      // drop empties so the renderer can tell what was actually captured
-      fields = Object.fromEntries(Object.entries(fields).filter(([, v]) => v && String(v).trim())) as TranscriptFields
-      const text = fields.summary || raw
-      debug(`[tt] structured fields: ${Object.keys(fields).join(',')}`)
-      return { text, fields }
-    } catch (e) {
-      return { error: (e as Error).message }
-    }
+    return geminiStructured(audio, 'audio/webm', label)
   }
 
   const prompt =
@@ -359,6 +373,32 @@ ipcMain.handle('tt-transcribe', async (_e, payload: { audio?: Uint8Array; produc
   } catch (e) {
     return { error: (e as Error).message }
   }
+})
+
+// Transcribe INDIVIDUAL ORDERS from their Seller-Center video receipts (not live bins).
+// For each order: order/get → per-order video receipt .m3u8 + sale-moment offset → ffmpeg audio
+// clip ending at the sale → structured Gemini extraction. Cookie auth (Seller Center) required.
+ipcMain.handle('tt-transcribe-orders', async (_e, items: { orderId: string; productName?: string }[]) => {
+  if (!GEMINI_KEY) return { error: 'GEMINI_API_KEY not set' }
+  if (!(await tiktokLoggedIn())) return { error: 'Log into TikTok Seller Center (cookies needed for order video receipts)' }
+  const cookieHeader = await tiktokCookieHeader()
+  const ids = items.map((i) => i.orderId)
+  const details = await fetchOrderDetails(ids, cookieHeader)
+  const results: { orderId: string; fields: TranscriptFields }[] = []
+  const errors: { orderId: string; error: string }[] = []
+  for (const it of items) {
+    const d = details.get(it.orderId)
+    if (!d?.videoUrl) { errors.push({ orderId: it.orderId, error: 'no video receipt' }); continue }
+    try {
+      const audio = await buildAudioClip(d.videoUrl, d.receiptTsMs != null ? Math.round(d.receiptTsMs / 1000) : null)
+      if (!audio || audio.byteLength < 1000) { errors.push({ orderId: it.orderId, error: 'clip failed' }); continue }
+      const r = await geminiStructured(audio, 'audio/aac', it.productName ?? '')
+      if (r.fields && Object.keys(r.fields).length) results.push({ orderId: it.orderId, fields: r.fields })
+      else if (r.text) results.push({ orderId: it.orderId, fields: { summary: r.text } })
+      else errors.push({ orderId: it.orderId, error: r.error ?? 'no transcript' })
+    } catch (e) { errors.push({ orderId: it.orderId, error: String((e as Error).message).slice(0, 120) }) }
+  }
+  return { results, errors }
 })
 
 ipcMain.handle('print-label', async (_e, args: { labelData: LabelData; printerName: string; template?: LabelTemplate }) => {
