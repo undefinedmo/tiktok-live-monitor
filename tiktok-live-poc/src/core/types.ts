@@ -153,6 +153,21 @@ export interface Sale {
   orderStatus?: number
   createdAt: number // order_create_time (ms)
   liveTag?: string // Seller-Center live-show tag (from order/list); groups synced orders by show
+  detail?: OrderDetailInfo // richer Seller-Center fields, shown when the ledger row is expanded
+}
+
+/** Extra Seller-Center order fields surfaced in the expanded ledger row. */
+export interface OrderDetailInfo {
+  status?: string
+  subtotalCents?: number
+  shippingCents?: number
+  taxCents?: number
+  address?: string
+  carrier?: string
+  tracking?: string
+  items?: { productName: string; variant?: string; quantity: number }[]
+  isAuction?: boolean
+  orderUrl?: string
 }
 
 export interface BuyerAgg {

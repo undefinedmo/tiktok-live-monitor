@@ -736,17 +736,73 @@ function ledgerRowEl(r: LedgerRow): HTMLElement {
 
 function ledgerDetailEl(r: LedgerRow): HTMLElement {
   const d = el('div', 'ledger-detail')
-  const col = (title: string, kvs: [string, string][]) => {
+  const dt = r.detail
+  const col = (title: string, kvs: [string, string | undefined][]) => {
     const c = el('div')
     c.appendChild(el('h5', undefined, title))
-    for (const [k, v] of kvs) { const line = el('div', 'kv'); line.appendChild(el('b', undefined, k + ': ')); line.appendChild(txt(v)); c.appendChild(line) }
+    for (const [k, v] of kvs) {
+      if (v == null || v === '') continue
+      const line = el('div', 'kv')
+      line.appendChild(el('b', undefined, k + ': '))
+      line.appendChild(txt(v))
+      c.appendChild(line)
+    }
     return c
   }
-  d.appendChild(col('BUYER', [['Name', r.buyer.username || '—'], ['Handle', '@' + (r.buyer.handle ?? '')], ['Order', r.orderId]]))
+  const date = new Date(r.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+
+  // 1) BUYER & SHIPPING
+  d.appendChild(col('BUYER & SHIPPING', [
+    ['Name', r.buyer.username || '—'],
+    ['Handle', r.buyer.handle ? '@' + r.buyer.handle : undefined],
+    ['Ship to', dt?.address],
+    ['Order #', r.orderId],
+    ['Created', date],
+    ['Status', dt?.status ?? statusLabel(r)],
+  ]))
+
+  // 2) ITEMS + FULFILLMENT
+  const mid = el('div')
+  mid.appendChild(el('h5', undefined, 'ITEMS'))
+  const itemList = dt?.items?.length ? dt.items : [{ productName: r.productName, variant: r.skuDesc || undefined, quantity: 1 }]
+  for (const it of itemList) {
+    mid.appendChild(el('div', 'kv', `${it.quantity}× ${it.productName}${it.variant ? ' · ' + it.variant : ''}`))
+  }
+  if (dt?.carrier || dt?.tracking) {
+    mid.appendChild(el('h5', undefined, 'FULFILLMENT'))
+    if (dt.carrier) { const l = el('div', 'kv'); l.appendChild(el('b', undefined, 'Carrier: ')); l.appendChild(txt(dt.carrier)); mid.appendChild(l) }
+    if (dt.tracking) { const l = el('div', 'kv'); l.appendChild(el('b', undefined, 'Tracking: ')); l.appendChild(txt(dt.tracking)); mid.appendChild(l) }
+  }
+  d.appendChild(mid)
+
+  // 3) PRICE BREAKDOWN
   const pc = profitCents(r)
-  d.appendChild(col('PRICING', [['Total', r.price.formatted], ['Cost', r.costCents != null ? fmtCents(r.costCents) : '—'], ['Profit', pc != null ? fmtCents(pc) : '—'], ['SKU', r.skuDesc ?? '—']]))
+  const m = marginPct(r)
+  d.appendChild(col('PRICE BREAKDOWN', [
+    ['Subtotal', dt?.subtotalCents ? fmtCents(dt.subtotalCents) : undefined],
+    ['Shipping', dt?.shippingCents ? fmtCents(dt.shippingCents) : undefined],
+    ['Tax', dt?.taxCents ? fmtCents(dt.taxCents) : undefined],
+    ['Total', r.price.formatted],
+    ['Cost', r.costCents != null ? fmtCents(r.costCents) : '—'],
+    ['Profit', pc != null ? fmtCents(pc) + (m != null ? ` · ${m.toFixed(0)}%` : '') : '—'],
+  ]))
+
+  // full-width strip: live-show tag + open-on-TikTok
+  if (r.liveTag || dt?.orderUrl) {
+    const strip = el('div', 'detail-full detail-strip')
+    if (r.liveTag) strip.appendChild(el('span', 'detail-livetag', r.liveTag + (dt?.isAuction ? ' · AUCTION' : '')))
+    if (dt?.orderUrl) {
+      const a = document.createElement('a')
+      a.href = dt.orderUrl; a.target = '_blank'; a.rel = 'noopener'; a.className = 'detail-link'; a.textContent = 'Open on TikTok ↗'
+      a.addEventListener('click', (e) => e.stopPropagation())
+      strip.appendChild(a)
+    }
+    d.appendChild(strip)
+  }
+
+  // AI PRODUCT DETAILS (full width, editable)
   const t = r.transcript
-  const tx = el('div')
+  const tx = el('div', 'detail-full')
   tx.appendChild(el('h5', undefined, '✦ AI PRODUCT DETAILS'))
   // always show every field (incl. Brand); double-click any value to edit it
   const fields: [keyof LedgerTranscript, string][] = [

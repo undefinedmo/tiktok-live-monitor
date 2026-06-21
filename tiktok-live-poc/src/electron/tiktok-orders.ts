@@ -52,7 +52,13 @@ export interface MappedOrder {
   statusCode: string | null
   buyerHandle: string | null
   buyerName: string | null
+  subtotalCents: number
+  shippingCents: number
+  taxCents: number
   totalCents: number
+  address: string | null
+  carrier: string | null
+  tracking: string | null
   liveTag: string | null
   isAuction: boolean
   isReversed: boolean
@@ -78,6 +84,9 @@ export function mapTiktokOrder(o: Raw): MappedOrder {
     variant: (get(s, 'sku_name') ?? get(s, 'seller_sku_name') ?? null) as string | null,
     quantity: num(get(s, 'quantity')) ?? 0,
   }))
+  // assemble a one-line ship-to from the address parts we have (city/state/region, postal)
+  const region = [addr.city, addr.state || addr.region, addr.zipcode || addr.postal_code].filter(Boolean).join(', ') || null
+  const fm = (get(o, 'fulfillment_module.0') as Raw) || {}
 
   return {
     externalOrderId: String(get(o, 'main_order_id') ?? get(o, 'note_module.main_order_id') ?? ''),
@@ -85,7 +94,13 @@ export function mapTiktokOrder(o: Raw): MappedOrder {
     statusCode: code || null,
     buyerHandle: (get(o, 'buyer_info_module.buyer_nickname') as string) || null,
     buyerName: addr.name || (get(o, 'buyer_info_module.actual_buyer_nickname') as string) || null,
+    subtotalCents: cents(get(o, 'price_module.sub_total')),
+    shippingCents: cents(get(o, 'price_module.shipping_fee')),
+    taxCents: cents(get(o, 'price_module.taxes')),
     totalCents: cents(get(o, 'price_module.grand_total')),
+    address: region,
+    carrier: (fm.shipping_provider_name as string) || (get(o, 'logistics_module.0.shipping_provider_name') as string) || null,
+    tracking: (fm.tracking_number as string) || (get(o, 'logistics_module.0.tracking_number') as string) || null,
     liveTag: liveTagText(o),
     isAuction: !!get(o, 'extra_data_map.auction_tag'),
     isReversed: !!rev,
@@ -110,6 +125,18 @@ export function orderToSale(o: MappedOrder): Sale {
     paymentStatus,
     createdAt: o.placedAt ?? Date.now(),
     liveTag: o.liveTag ?? undefined,
+    detail: {
+      status: o.status,
+      subtotalCents: o.subtotalCents,
+      shippingCents: o.shippingCents,
+      taxCents: o.taxCents,
+      address: o.address ?? undefined,
+      carrier: o.carrier ?? undefined,
+      tracking: o.tracking ?? undefined,
+      items: o.items.map((it) => ({ productName: it.productName ?? '(item)', variant: it.variant ?? undefined, quantity: it.quantity })),
+      isAuction: o.isAuction,
+      orderUrl: `https://seller-us.tiktok.com/order/detail?order_no=${o.externalOrderId}`,
+    },
   }
 }
 
