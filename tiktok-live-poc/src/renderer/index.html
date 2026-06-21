@@ -25,6 +25,11 @@
       .chatrow{font-size:13px;line-height:1.45;}
       .chatname{font-weight:600;}
       .chattext{color:#cdd4e0;}
+      .recap-entry{padding:11px 14px;border-bottom:1px solid #1a1e27;}
+      .recap-head{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.5px;color:#7da8ff;margin-bottom:5px;}
+      .recap-text{font-size:12.5px;line-height:1.45;color:#cdd4e0;}
+      .recap-text.transcribing{color:#ffc56b;font-style:italic;}
+      .recap-text.error{color:#ff8f8f;}
       .videocol{flex:1.6;min-width:0;display:flex;flex-direction:column;padding:14px;}
       /* dynamic bid-feed rows */
       .bidrow{position:relative;display:flex;align-items:center;gap:12px;padding:13px 14px;border-bottom:1px solid #1a1e27;}
@@ -155,6 +160,14 @@
           </div>
           <div id="topBuyerBars" style="display:flex;align-items:end;gap:5px;height:42px;margin-top:14px;"></div>
         </div>
+        <!-- AI auction recap (Gemini transcription) -->
+        <div style="background:#0f131a;border:1px solid #1d212b;border-radius:9px;overflow:hidden;">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #1a1e27;">
+            <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#c4ccd9;">🎙 AUCTION RECAP</span>
+            <span class="mono" id="recapStatus" style="font-size:9.5px;letter-spacing:.5px;padding:3px 8px;border-radius:5px;background:rgba(138,120,255,.18);color:#b9adff;">AI</span>
+          </div>
+          <div id="recapList" class="sf-scroll" style="max-height:240px;overflow-y:auto;"></div>
+        </div>
         <!-- thermal print queue -->
         <div style="background:#0f131a;border:1px solid #1d212b;border-radius:9px;overflow:hidden;">
           <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #1a1e27;">
@@ -218,6 +231,7 @@
           savePrinter: async () => true,
           print: async () => ({ success: true }),
         }
+        window.recapAPI = { enabled: async () => ({ enabled: true, model: 'gemini-2.5-flash' }), transcribe: async () => ({ text: '(demo)' }) }
         const __cbs = []
         window.ttLive = { onEvent: (cb) => __cbs.push(cb) }
         document.addEventListener('DOMContentLoaded', () => {
@@ -246,6 +260,13 @@
           emit({ kind: 'sales', recentSales: sales, newSales: [], byProduct: Object.values(bp), topBuyers, uniqueBuyers: topBuyers.length, totalSales: sales.filter((s) => s.paymentStatus === 'paid').length, totalCents: sales.reduce((a, s) => a + (s.paymentStatus === 'paid' ? s.price.cents : 0), 0), failedPayments: sales.filter((s) => s.paymentStatus === 'failed'), ts: now })
           const comments = [['Latrice', 'love this set! 🔥'], ['M.i', 'what size is bin A?'], ['daysi', 'sending it 🚀'], ['Nicd', 'gl everyone'], ['Bre', 'take my money 💸'], ['Val', 'is it still available?'], ['Kim', 'so cute 😍'], ['Jo', 'first time here!']]
           emit({ kind: 'chat', items: comments.map((c, i) => ({ nickname: c[0], text: c[1], avatarUrl: '', ts: now - i * 5000 })), ts: now })
+          setTimeout(() => {
+            const rl = document.getElementById('recapList')
+            if (rl) rl.innerHTML = [
+              ['#69 · Bin B - Alo Yoga — @janethague', 'Next up Bin B — beautiful Alo Yoga set, size small, brand new with tags. Starting at fifteen, who wants it…'],
+              ['#54 · Bin A - Alo Yoga — @70mendoza_', 'Bin A going out — matching set, medium, super soft, no flaws. Sold to the lady in the front!'],
+            ].map((r) => '<div class="recap-entry"><div class="recap-head">' + r[0] + '</div><div class="recap-text">' + r[1] + '</div></div>').join('')
+          }, 200)
         })
       }
     </script>

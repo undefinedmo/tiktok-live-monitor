@@ -206,6 +206,36 @@ ipcMain.handle('save-printer', (_e, name: string) => {
   try { writeFileSync(PRINTER_FILE, JSON.stringify({ printer: name })) } catch { /* ignore */ }
   return true
 })
+// ── AI transcription (Gemini, mirrors sellerfolio-live's enrichment) ─────────
+const GEMINI_KEY = process.env.GEMINI_API_KEY || ''
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+
+ipcMain.handle('recap-enabled', () => ({ enabled: !!GEMINI_KEY, model: GEMINI_MODEL }))
+
+ipcMain.handle('tt-transcribe', async (_e, payload: { audio?: Uint8Array; productName?: string }) => {
+  if (!GEMINI_KEY) return { error: 'GEMINI_API_KEY not set' }
+  const audio = payload?.audio instanceof Uint8Array ? payload.audio : new Uint8Array(payload?.audio ?? [])
+  if (!audio.byteLength) return { error: 'no audio captured' }
+  const prompt =
+    `This is a short audio clip from a live-shopping auction that just sold an item labeled "${payload?.productName ?? ''}". ` +
+    `Transcribe the seller's speech verbatim. Return ONLY the transcript text — no labels, no commentary.`
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`
+  const body = {
+    contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: 'audio/webm', data: Buffer.from(audio).toString('base64') } }] }],
+    generationConfig: { temperature: 0.1 },
+  }
+  try {
+    const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    const json = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[]; error?: { message?: string } }
+    if (!res.ok) return { error: `gemini ${res.status}: ${json?.error?.message ?? ''}`.slice(0, 200) }
+    const text = (json.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('').trim()
+    debug(`[tt] transcript ${text.length} chars`)
+    return { text }
+  } catch (e) {
+    return { error: (e as Error).message }
+  }
+})
+
 ipcMain.handle('print-label', async (_e, args: { labelData: LabelData; printerName: string; template?: LabelTemplate }) => {
   let win: BrowserWindow | null = null
   try {

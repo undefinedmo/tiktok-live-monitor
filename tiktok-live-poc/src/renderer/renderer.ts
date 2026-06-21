@@ -18,6 +18,10 @@ declare global {
       savePrinter: (name: string) => Promise<boolean>
       print: (labelData: LabelData, printerName: string, template: LabelTemplate) => Promise<{ success: boolean; error?: string }>
     }
+    recapAPI?: {
+      enabled: () => Promise<{ enabled: boolean; model: string }>
+      transcribe: (payload: { audio: Uint8Array; productName?: string }) => Promise<{ text?: string; error?: string }>
+    }
   }
 }
 
@@ -254,9 +258,96 @@ function loadStream(url: string) {
   flvPlayer = flvjs.createPlayer({ type: 'flv', url, isLive: true, cors: true }, { enableStashBuffer: false })
   flvPlayer.attachMediaElement(video)
   flvPlayer.on(flvjs.Events.ERROR, () => { window.setTimeout(() => loadStream(lastStreamUrl), 2500) })
+  video.addEventListener('playing', () => startAudioCapture(), { once: true })
   flvPlayer.load()
   void video.play().catch(() => {})
 }
+
+// ── auction audio → AI transcript (mirrors sellerfolio-live enrichment) ──────
+let astream: MediaStream | null = null
+let rec: MediaRecorder | null = null
+let recChunks: Blob[] = []
+let onStopResolve: ((b: Blob) => void) | null = null
+let recapEnabled = false
+let transcribing = false
+interface Recap { head: string; status: 'transcribing' | 'done' | 'error'; text: string }
+const recaps: Recap[] = []
+
+function cycleRecorder() {
+  if (!astream) return
+  recChunks = []
+  try { rec = new MediaRecorder(astream, { mimeType: 'audio/webm' }) } catch { rec = new MediaRecorder(astream) }
+  rec.ondataavailable = (e) => { if (e.data.size) recChunks.push(e.data) }
+  rec.onstop = () => {
+    const blob = new Blob(recChunks, { type: 'audio/webm' })
+    const r = onStopResolve
+    onStopResolve = null
+    cycleRecorder()
+    if (r) r(blob)
+  }
+  rec.start(1000)
+}
+function startAudioCapture(): void {
+  if (astream) return
+  const video = document.getElementById('live') as (HTMLVideoElement & { captureStream?: () => MediaStream }) | null
+  let stream: MediaStream | undefined
+  try { stream = video?.captureStream?.() } catch { /* ignore */ }
+  const tracks = stream?.getAudioTracks() ?? []
+  if (!tracks.length) return
+  astream = new MediaStream(tracks)
+  cycleRecorder()
+  setInterval(() => { if (rec?.state === 'recording' && !onStopResolve) rec.stop() }, 30000) // rolling ≤30s segments
+}
+function grabClip(): Promise<Blob | null> {
+  if (!rec || rec.state !== 'recording') return Promise.resolve(null)
+  return new Promise((resolve) => { onStopResolve = resolve; rec!.stop() })
+}
+
+function renderRecap() {
+  const list = document.getElementById('recapList')
+  if (!list) return
+  list.replaceChildren()
+  if (!recaps.length) {
+    const e = el('div', 'mono', recapEnabled ? 'transcripts appear as items sell…' : 'set GEMINI_API_KEY to enable')
+    e.style.cssText = 'padding:14px;color:#3a4150;font-size:11px;'
+    list.appendChild(e)
+    return
+  }
+  for (const r of recaps.slice(0, 6)) {
+    const row = el('div', 'recap-entry')
+    row.appendChild(el('div', 'recap-head', r.head))
+    row.appendChild(el('div', 'recap-text ' + r.status, r.status === 'transcribing' ? 'transcribing…' : r.status === 'error' ? '⚠ ' + r.text : r.text))
+    list.appendChild(row)
+  }
+}
+async function transcribeSale(s: Sale) {
+  if (!recapEnabled || transcribing || !window.recapAPI) return
+  const clip = await grabClip()
+  if (!clip || clip.size < 2000) return
+  transcribing = true
+  const entry: Recap = { head: `${s.skuDesc ?? ''} · ${s.productName.slice(0, 28)} — @${s.buyer.handle ?? s.buyer.username}`, status: 'transcribing', text: '' }
+  recaps.unshift(entry)
+  if (recaps.length > 30) recaps.pop()
+  renderRecap()
+  try {
+    const audio = new Uint8Array(await clip.arrayBuffer())
+    const res = await window.recapAPI.transcribe({ audio, productName: s.productName })
+    entry.status = res.text ? 'done' : 'error'
+    entry.text = res.text ?? res.error ?? 'failed'
+  } catch (e) {
+    entry.status = 'error'
+    entry.text = (e as Error).message
+  }
+  transcribing = false
+  renderRecap()
+}
+async function initRecap() {
+  try { recapEnabled = (await window.recapAPI?.enabled())?.enabled ?? false } catch { recapEnabled = false }
+  const st = document.getElementById('recapStatus')
+  if (st) st.textContent = recapEnabled ? 'GEMINI' : 'OFF'
+  renderRecap()
+}
+void initRecap()
 
 // ── label printing ──────────────────────────────────────────────────────────
 let selectedPrinter = ''
@@ -434,10 +525,15 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       if (!gmvFromWs) stats.gmv = `$${(ev.totalCents / 100).toFixed(2)}`
       renderStats()
       $('feedCount').textContent = `${ev.totalSales} · $${(ev.totalCents / 100).toFixed(0)}`
+      // Skip the initial backfill (seed on first poll), then act on genuinely-new sales.
       const maxCreated = ev.recentSales.reduce((m, s) => Math.max(m, s.createdAt), 0)
-      if (seedMaxCreatedAt === null) seedMaxCreatedAt = maxCreated
-      else if (autoPrint && selectedPrinter) {
-        for (const s of ev.newSales) if (s.paymentStatus !== 'failed' && s.createdAt > seedMaxCreatedAt) printSale(s)
+      if (seedMaxCreatedAt === null) {
+        seedMaxCreatedAt = maxCreated
+      } else {
+        const fresh = ev.newSales.filter((s) => s.createdAt > seedMaxCreatedAt! && s.paymentStatus !== 'failed')
+        if (autoPrint && selectedPrinter) for (const s of fresh) printSale(s)
+        const recent = fresh.find((s) => Date.now() - s.createdAt < 60000)
+        if (recent) void transcribeSale(recent) // AI transcript for the latest fresh sale
         seedMaxCreatedAt = Math.max(seedMaxCreatedAt, maxCreated)
       }
       break

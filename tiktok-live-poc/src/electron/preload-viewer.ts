@@ -10,3 +10,8 @@ contextBridge.exposeInMainWorld('labelAPI', {
   print: (labelData: unknown, printerName: string, template?: unknown) =>
     ipcRenderer.invoke('print-label', { labelData, printerName, template }),
 })
+
+contextBridge.exposeInMainWorld('recapAPI', {
+  enabled: () => ipcRenderer.invoke('recap-enabled'),
+  transcribe: (payload: unknown) => ipcRenderer.invoke('tt-transcribe', payload),
+})
