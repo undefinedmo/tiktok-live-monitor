@@ -18,6 +18,50 @@
       @keyframes sfspin{to{transform:rotate(360deg);}}
       #navSync.syncing{animation:sfspin .8s linear infinite;color:#7da8ff;}
       button{cursor:pointer;font:inherit;}
+      .topbar{height:56px;flex:none;display:flex;align-items:center;gap:18px;padding:0 18px;border-bottom:1px solid #15181f;background:linear-gradient(180deg,#0c0e13,#08090d);}
+      .brand{display:flex;align-items:center;gap:10px;min-width:0;}
+      .brand img{width:24px;height:24px;display:block;}
+      .brand span{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;background:linear-gradient(110deg,#5cb0ff,#8a78ff 60%,#9b6cf6);-webkit-background-clip:text;background-clip:text;color:transparent;letter-spacing:.2px;white-space:nowrap;}
+      .livepill{display:flex;align-items:center;gap:8px;padding:5px 11px;border:1px solid #25303f;border-radius:7px;background:#0c1119;font-family:'IBM Plex Mono',monospace;font-size:12px;color:#c4ccd9;min-width:0;}
+      .livepill .sep{color:#5c6473;}
+      #dot{width:7px;height:7px;border-radius:50%;background:#5c6473;flex:none;}
+      #sessionName{max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+      .meter{display:flex;align-items:center;gap:9px;}
+      .meter .label{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1px;color:#5c6473;}
+      .meter .track{width:58px;height:5px;border-radius:3px;background:#1b1f28;overflow:hidden;}
+      .meter .fill{height:100%;background:linear-gradient(90deg,#4da3ff,#7c5cff);}
+      .meter .value{font-family:'IBM Plex Mono',monospace;font-size:12px;color:#aab2c0;}
+      .topicon{position:relative;display:flex;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid #20242e;border-radius:7px;color:#8b93a3;font-size:14px;background:transparent;}
+      .terminal-body{flex:1;display:flex;min-height:0;}
+      .rail{width:56px;flex:none;border-right:1px solid #15181f;display:flex;flex-direction:column;align-items:center;padding-top:14px;gap:6px;background:#090a0e;}
+      .rail-logo{position:relative;width:40px;height:40px;border-radius:9px;background:linear-gradient(135deg,#1a2740,#241d44);border:1px solid #33405c;display:flex;align-items:center;justify-content:center;}
+      .rail-logo img{width:24px;height:24px;display:block;}
+      .monitor{flex:1;display:flex;min-width:0;}
+      .video-col{flex:1.65;min-width:0;display:flex;flex-direction:column;padding:14px;gap:12px;}
+      .stream-card{flex:1;position:relative;border-radius:10px;border:1px solid #1b1f28;overflow:hidden;background:radial-gradient(120% 90% at 30% 20%,#15202e 0%,#0a0d13 55%,#070809 100%);min-height:0;}
+      .stream-card::before{content:'';position:absolute;inset:0;background-image:repeating-linear-gradient(135deg,rgba(255,255,255,.018) 0 2px,transparent 2px 9px);pointer-events:none;z-index:1;}
+      #live{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:transparent;z-index:0;}
+      .stream-badge{position:absolute;top:14px;left:14px;display:flex;align-items:center;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:1px;color:#9aa4b5;background:rgba(8,10,14,.6);border:1px solid #232a36;padding:5px 9px;border-radius:6px;backdrop-filter:blur(6px);z-index:2;}
+      .stream-rate{position:absolute;top:14px;right:14px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#7e8696;background:rgba(8,10,14,.6);border:1px solid #232a36;padding:5px 9px;border-radius:6px;z-index:2;}
+      .stream-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;z-index:1;pointer-events:none;}
+      .stream-empty .thumb{width:128px;height:88px;border-radius:8px;background:repeating-linear-gradient(45deg,#1a2330 0 8px,#161e29 8px 16px);border:1px solid #2a3340;}
+      .stream-empty .hint{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:1.5px;color:#4a525f;}
+      .lot-card{position:absolute;left:16px;bottom:16px;display:none;align-items:center;gap:14px;background:rgba(10,12,17,.82);border:1px solid #262c38;border-radius:10px;padding:12px 16px 12px 12px;backdrop-filter:blur(10px);z-index:2;max-width:calc(100% - 32px);}
+      .lot-thumb{width:56px;height:76px;border-radius:6px;background:repeating-linear-gradient(45deg,#243049 0 6px,#1c2740 6px 12px);border:1px solid #34405c;flex:none;}
+      .bid-cta{flex:none;height:62px;border:none;border-radius:10px;cursor:pointer;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:18px;letter-spacing:1px;color:#fff;background:linear-gradient(110deg,#3fa0ff,#6b56f0 55%,#8a5cf6);box-shadow:0 8px 24px rgba(86,80,240,.4),inset 0 1px 0 rgba(255,255,255,.25);}
+      .chat-col{width:296px;flex:none;border-left:1px solid #15181f;border-right:1px solid #15181f;display:flex;flex-direction:column;background:#08090d;}
+      .section-head{height:50px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid #15181f;}
+      .section-title{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:1.5px;color:#8b93a3;}
+      .chat-input{flex:none;padding:12px 14px;border-top:1px solid #15181f;display:flex;align-items:center;gap:8px;}
+      .chat-placeholder{flex:1;height:36px;border:1px solid #20242e;border-radius:8px;background:#0c0e13;display:flex;align-items:center;padding:0 12px;font-size:13px;color:#5c6473;}
+      .chat-send{width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#3fa0ff,#8a5cf6);display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;}
+      .rightpanel{width:496px;flex:none;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;background:#070809;}
+      .panel{background:#0f131a;border:1px solid #1d212b;border-radius:9px;overflow:hidden;}
+      .panel.pad{padding:14px;}
+      .panel-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #1a1e27;}
+      .footerbar{height:30px;flex:none;display:flex;align-items:center;gap:18px;padding:0 18px;border-top:1px solid #15181f;background:#090a0e;font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.5px;color:#5c6473;}
+      .desktop-screen{flex:1;min-width:0;padding:14px;gap:12px;overflow:hidden;background:#07080b;}
+      .visually-hidden{position:absolute!important;width:1px!important;height:1px!important;overflow:hidden!important;clip:rect(0 0 0 0)!important;white-space:nowrap!important;}
       .stat{background:#0f131a;border:1px solid #1d212b;border-radius:9px;padding:13px 14px;}
       .stat .l{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1.5px;color:#707a8c;}
       .stat .v{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:28px;line-height:1.15;margin-top:4px;}
@@ -25,12 +69,6 @@
       .stat .s{font-size:11px;color:#8b93a3;margin-top:2px;}
       .rightpanel > div{flex:0 0 auto;}
       .bidfeed{max-height:360px;overflow-y:auto;}
-      /* ultra-wide: flow the live sales feed into multiple columns so the freed width is used */
-      @media (min-width:2000px){
-        .bidfeed{display:grid;grid-template-columns:repeat(auto-fill,minmax(500px,1fr));gap:8px;padding:8px;max-height:560px;}
-        .bidfeed .bidrow{border-bottom:none;border:1px solid #1a1e27;border-radius:9px;}
-        .bidfeed > .mono{grid-column:1/-1;}
-      }
       .chatrow{font-size:13px;line-height:1.45;}
       .chatname{font-weight:600;}
       .chattext{color:#cdd4e0;}
@@ -141,113 +179,127 @@
     </style>
   </head>
   <body>
-    <!-- BODY (no global topbar — desktop-style left rail + per-screen headers) -->
-    <div style="flex:1;display:flex;min-height:0;">
-      <!-- icon rail -->
-      <div style="width:56px;flex:none;border-right:1px solid #15181f;display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:8px;background:#090a0e;">
-        <div style="width:40px;height:40px;border-radius:9px;background:linear-gradient(135deg,#1a2740,#241d44);border:1px solid #33405c;display:flex;align-items:center;justify-content:center;"><img src="./sf-logo.png" alt="SF" style="width:24px;height:24px;display:block;" /></div>
-        <div id="dot" title="connecting…" style="width:8px;height:8px;border-radius:50%;background:#5c6473;margin:2px 0 4px;"></div>
-        <div class="navicon active" id="navMonitor" title="Live Monitor">◉</div>
-        <div class="navicon" id="navLedger" title="Order Ledger">▤</div>
-        <div class="navicon" id="navPicklist" title="Picklist / Packlist">✓</div>
-        <div style="flex:1;"></div>
-        <div class="navicon" id="navSync" title="Sync orders now" style="position:relative;">↻<span id="syncDot" style="position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:#5c6473;"></span></div>
-        <div class="navicon" id="navSettings2" title="Label settings">⚙</div>
+    <div class="topbar">
+      <div class="brand"><img src="./sf-logo.png" alt="SellerFolio" /><span>SellerFolio Live</span></div>
+      <div class="livepill">
+        <span id="dot" title="connecting..."></span>
+        <span id="status">connecting...</span><span class="sep">&middot;</span><span id="sessionName">@sellerName</span><span class="sep">&middot;</span><span id="elapsed">--</span>
+      </div>
+      <span id="room" class="visually-hidden">--</span><span id="viewers" class="visually-hidden">--</span>
+      <div style="flex:1;"></div>
+      <div class="meter"><span class="label">CPU</span><div class="track"><div class="fill" style="width:24%;"></div></div><span class="value">24%</span></div>
+      <div class="meter"><span class="label">RAM</span><div class="track"><div class="fill" style="width:52%;"></div></div><span class="value">4.2GB</span></div>
+      <div class="mono" style="font-size:12px;color:#7e8696;padding-left:6px;border-left:1px solid #1f242e;">EST. COST <span style="color:#36d9a4;">$0.12/hr</span></div>
+      <button class="topicon" id="navSync" title="Sync orders now">⌗<span id="syncDot" style="position:absolute;width:0;height:0;overflow:hidden;"></span></button>
+      <button class="topicon" id="navSettings2" title="Label settings">⚙</button>
+    </div>
+
+    <div class="terminal-body">
+      <div class="rail">
+        <div class="navicon active" id="navMonitor" title="Live Monitor"><div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;width:16px;height:16px;"><div style="background:#7da8ff;border-radius:1px;"></div><div style="background:#8a78ff;border-radius:1px;"></div><div style="background:#8a78ff;border-radius:1px;"></div><div style="background:#9b6cf6;border-radius:1px;"></div></div></div>
+        <div class="navicon" id="navLedger" title="Order Ledger">⚒</div>
+        <div class="navicon" id="navPicklist" title="Picklist / Packlist"><div style="display:flex;align-items:end;justify-content:center;gap:2px;height:18px;"><div style="width:3px;height:8px;background:#5c6473;border-radius:1px;"></div><div style="width:3px;height:13px;background:#5c6473;border-radius:1px;"></div><div style="width:3px;height:6px;background:#5c6473;border-radius:1px;"></div></div></div>
+        <div class="navicon" title="Filters"><div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;"><div style="width:16px;height:2px;background:#5c6473;border-radius:2px;position:relative;"><div style="position:absolute;left:3px;top:-2px;width:6px;height:6px;border-radius:50%;background:#5c6473;"></div></div><div style="width:16px;height:2px;background:#5c6473;border-radius:2px;position:relative;"><div style="position:absolute;right:2px;top:-2px;width:6px;height:6px;border-radius:50%;background:#5c6473;"></div></div></div></div>
       </div>
 
-      <!-- ============ MONITOR SCREEN ============ -->
-      <div id="monitorScreen" style="flex:1;display:flex;min-width:0;">
-      <!-- VIDEO column (capped — TikTok live is 9:16 portrait, so a wide box is mostly black) -->
-      <div style="flex:0 1 420px;min-width:300px;max-width:440px;display:flex;flex-direction:column;padding:14px;gap:12px;">
-        <!-- no top bar — live metrics kept hidden for JS; status shows on the rail dot, viewers in the chat header -->
-        <div id="liveStats" style="display:none;"><span id="status"></span><span id="sessionName"></span><span id="room"></span><span id="viewers"></span><span id="elapsed"></span></div>
-        <div style="flex:1;position:relative;border-radius:10px;border:1px solid #1b1f28;overflow:hidden;background:#05060a;min-height:0;">
-          <video id="live" muted autoplay playsinline controls style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#05060a;"></video>
-          <div class="mono" style="position:absolute;top:14px;left:14px;display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:1px;color:#9aa4b5;background:rgba(8,10,14,.6);border:1px solid #232a36;padding:5px 9px;border-radius:6px;backdrop-filter:blur(6px);z-index:2;"><span style="width:7px;height:7px;border-radius:50%;background:#ff5c5c;box-shadow:0 0 8px #ff5c5c;animation:sfpulse 1.4s infinite;"></span>REC · LIVE STREAM</div>
-          <!-- lot overlay -->
-          <div id="lotOverlay" style="position:absolute;left:16px;bottom:16px;right:16px;display:none;align-items:center;gap:14px;background:rgba(10,12,17,.84);border:1px solid #262c38;border-radius:10px;padding:13px 16px;backdrop-filter:blur(10px);z-index:2;">
-            <div style="flex:1;min-width:0;">
-              <div class="mono" style="font-size:10px;letter-spacing:1.5px;color:#7da8ff;margin-bottom:5px;"><span id="lotNum">CURRENT LOT</span> · high bidder <span id="lotBuyer" style="color:#8a78ff;">—</span></div>
-              <div class="grot" id="lotName" style="font-weight:600;font-size:18px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">—</div>
+      <div id="monitorScreen" class="monitor">
+        <div class="video-col">
+          <div id="liveStats" class="visually-hidden"></div>
+          <div class="stream-card">
+            <video id="live" muted autoplay playsinline controls></video>
+            <div class="stream-empty"><div class="thumb"></div><div class="hint">[ STREAM PREVIEW &middot; DROP CAPTURE HERE ]</div></div>
+            <div class="stream-badge"><span style="width:7px;height:7px;border-radius:50%;background:#ff5c5c;box-shadow:0 0 8px #ff5c5c;animation:sfpulse 1.4s infinite;"></span>REC &middot; 1080p60 &middot; LIVE STREAM</div>
+            <div class="stream-rate">8.2 MB/s</div>
+            <div id="lotOverlay" class="lot-card">
+              <div class="lot-thumb"></div>
+              <div style="min-width:0;">
+                <div class="mono" style="font-size:10px;letter-spacing:1.5px;color:#7da8ff;margin-bottom:5px;"><span id="lotNum">CURRENT LOT</span> &middot; high bidder <span id="lotBuyer" style="color:#8a78ff;">--</span></div>
+                <div class="grot" id="lotName" style="font-weight:600;font-size:17px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">--</div>
+                <div style="font-size:13px;color:#9aa4b5;margin-top:3px;"><span class="mono" id="lotBid" style="color:#fff;">--</span> Current Bid &middot; <span id="lotBids">0</span> bids &middot; <span id="lotEnds" style="color:#ff9b6b;">--</span></div>
+              </div>
             </div>
-            <div style="text-align:right;flex:none;"><div style="font-size:11px;color:#8b93a3;">Current Bid · <span id="lotBids">0</span> bids</div><div class="mono" id="lotBid" style="font-weight:600;font-size:24px;background:linear-gradient(110deg,#5cb0ff,#9b6cf6);-webkit-background-clip:text;background-clip:text;color:transparent;">—</div></div>
-            <div style="text-align:right;flex:none;"><div style="font-size:11px;color:#8b93a3;">Ends in</div><div class="mono" id="lotEnds" style="font-weight:600;font-size:24px;color:#ff9b6b;">—</div></div>
           </div>
+          <button class="bid-cta" type="button">CUSTOM BID&nbsp;&nbsp;$450</button>
         </div>
-      </div>
 
-      <!-- CHAT column (placeholder — chat not captured) -->
-      <div style="flex:0 1 640px;min-width:300px;max-width:720px;border-left:1px solid #15181f;border-right:1px solid #15181f;display:flex;flex-direction:column;background:#08090d;">
-        <div style="height:50px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid #15181f;">
-          <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#8b93a3;">LIVE CHAT</span>
-          <span class="mono" style="display:flex;align-items:center;gap:6px;font-size:11px;color:#36d9a4;"><span style="width:6px;height:6px;border-radius:50%;background:#36d9a4;"></span><span id="chatViewers">—</span></span>
+        <div class="chat-col">
+          <div class="section-head">
+            <span class="section-title">LIVE CHAT</span>
+            <span class="mono" style="display:flex;align-items:center;gap:6px;font-size:11px;color:#36d9a4;"><span style="width:6px;height:6px;border-radius:50%;background:#36d9a4;"></span><span id="chatViewers">--</span></span>
+          </div>
+          <div id="chatList" class="sf-scroll" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:16px;">
+            <span class="mono" style="margin:auto;font-size:11px;letter-spacing:1px;color:#3a4150;text-align:center;">waiting for comments...</span>
+          </div>
+          <div class="chat-input"><div class="chat-placeholder">Message...</div><div class="chat-send">➤</div></div>
         </div>
-        <div id="chatList" class="sf-scroll" style="flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:13px;">
-          <span class="mono" style="margin:auto;font-size:11px;letter-spacing:1px;color:#3a4150;text-align:center;">waiting for comments…</span>
-        </div>
-      </div>
 
-      <!-- RIGHT panel (absorbs the freed width on large screens — the ops core) -->
-      <div class="sf-scroll rightpanel" style="flex:1 1 640px;min-width:360px;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;background:#070809;">
-        <!-- stats -->
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;" id="statsGrid"></div>
-        <!-- live bid feed -->
-        <div style="background:#0f131a;border:1px solid #1d212b;border-radius:9px;overflow:hidden;">
-          <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #1a1e27;">
-            <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#c4ccd9;flex:1;"><span style="color:#8a78ff;">⚡</span> LIVE SALES FEED</span>
-            <span class="mono" id="feedCount" style="font-size:11px;color:#5c6473;">—</span>
-            <select id="feedSize" class="mono" style="background:#0c0e13;color:#aab2c0;border:1px solid #20242e;border-radius:6px;padding:3px 5px;font-size:11px;"><option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option></select>
-            <button id="feedPrev" class="qbtn void" style="height:24px;padding:0 8px;">◀</button>
-            <span id="feedPage" class="mono" style="font-size:10px;color:#5c6473;min-width:34px;text-align:center;">1/1</span>
-            <button id="feedNext" class="qbtn void" style="height:24px;padding:0 8px;">▶</button>
+        <div class="sf-scroll rightpanel">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;" id="statsGrid"></div>
+          <div class="panel">
+            <div class="panel-head">
+              <span class="mono" style="display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:1.5px;color:#c4ccd9;"><span style="color:#8a78ff;">⚡</span>LIVE BID FEED</span>
+              <span class="mono" id="feedCount" style="font-size:11px;color:#5c6473;">v1.2.4</span>
+            </div>
+            <div id="bidFeed" class="sf-scroll bidfeed"><div class="mono" style="padding:18px 14px;color:#3a4150;font-size:11px;">Waiting for sales...</div></div>
+            <div class="visually-hidden">
+              <select id="feedSize"><option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option></select>
+              <button id="feedPrev"></button><span id="feedPage">1/1</span><button id="feedNext"></button>
+            </div>
           </div>
-          <div id="bidFeed" class="sf-scroll bidfeed"><div class="mono" style="padding:18px 14px;color:#3a4150;font-size:11px;">Waiting for sales…</div></div>
-        </div>
-        <!-- buyer intel -->
-        <div style="background:#0f131a;border:1px solid #1d212b;border-radius:9px;padding:14px;">
-          <div style="display:flex;align-items:center;gap:11px;">
-            <div style="width:38px;height:38px;border-radius:8px;background:linear-gradient(135deg,#1c2c47,#2a2150);border:1px solid #364663;display:flex;align-items:end;justify-content:center;gap:2px;padding-bottom:9px;"><div style="width:3px;height:8px;background:#7da8ff;border-radius:1px;"></div><div style="width:3px;height:13px;background:#8a78ff;border-radius:1px;"></div><div style="width:3px;height:6px;background:#9b6cf6;border-radius:1px;"></div></div>
-            <div style="flex:1;"><div class="mono" style="font-size:10px;letter-spacing:1px;color:#707a8c;">TOP BUYER</div><div id="topBuyerName" style="font-weight:700;color:#fff;margin-top:2px;">—</div></div>
-            <div id="topBuyerSpend" class="mono" style="font-size:18px;font-weight:600;color:#9b6cf6;">—</div>
+          <div class="panel pad">
+            <div style="display:flex;align-items:center;gap:11px;">
+              <div style="width:38px;height:38px;border-radius:8px;background:linear-gradient(135deg,#1c2c47,#2a2150);border:1px solid #364663;display:flex;align-items:end;justify-content:center;gap:2px;padding-bottom:9px;"><div style="width:3px;height:8px;background:#7da8ff;border-radius:1px;"></div><div style="width:3px;height:13px;background:#8a78ff;border-radius:1px;"></div><div style="width:3px;height:6px;background:#9b6cf6;border-radius:1px;"></div></div>
+              <div style="flex:1;"><div class="mono" style="font-size:10px;letter-spacing:1px;color:#707a8c;">BUYER INTEL</div><div id="topBuyerName" style="font-weight:700;color:#fff;margin-top:2px;">--</div></div>
+              <div id="topBuyerSpend" class="mono" style="font-size:18px;font-weight:600;color:#9b6cf6;">--</div>
+            </div>
+            <div style="display:flex;gap:7px;margin-top:11px;"><span class="tag whale">WHALE STATUS</span><span class="tag" style="background:#161b24;color:#aab2c0;border:1px solid #262c38;">ACTIVE SESSION</span></div>
+            <div id="topBuyerBars" style="display:flex;align-items:end;gap:5px;height:46px;margin-top:14px;"></div>
+            <div style="display:flex;justify-content:space-between;margin-top:8px;font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.5px;color:#5c6473;"><span>SHOW HISTORY</span><span>ACTIVE SESSION</span></div>
           </div>
-          <div id="topBuyerBars" style="display:flex;align-items:end;gap:5px;height:42px;margin-top:14px;"></div>
-        </div>
-        <!-- AI auction recap (Gemini transcription) -->
-        <div style="background:#0f131a;border:1px solid #1d212b;border-radius:9px;overflow:hidden;">
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #1a1e27;">
-            <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#c4ccd9;">🎙 AUCTION RECAP</span>
-            <span class="mono" id="recapStatus" style="font-size:9.5px;letter-spacing:.5px;padding:3px 8px;border-radius:5px;background:rgba(138,120,255,.18);color:#b9adff;">AI</span>
+          <div class="panel" style="padding:15px;background:linear-gradient(180deg,#10131b,#0c0f16);border-color:#2a3142;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#c4ccd9;">CURRENT AUCTION ITEM</span>
+              <span class="chip" id="recapStatus">AI EXTRACTION &middot; 99%</span>
+            </div>
+            <div class="grot" id="auctionPanelName" style="font-weight:600;font-size:21px;color:#fff;margin-top:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Waiting for current lot</div>
+            <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:14px;">
+              <div><div style="font-size:11px;color:#8b93a3;">Current Bid</div><div class="mono" id="auctionPanelBid" style="font-weight:600;font-size:30px;background:linear-gradient(110deg,#5cb0ff,#9b6cf6);-webkit-background-clip:text;background-clip:text;color:transparent;margin-top:3px;">--</div></div>
+              <div><div style="font-size:11px;color:#8b93a3;">Bids</div><div class="mono" id="auctionPanelBids" style="font-weight:600;font-size:30px;color:#fff;margin-top:3px;">0</div></div>
+              <div style="text-align:right;"><div style="font-size:11px;color:#8b93a3;">Ends in</div><div class="mono" id="auctionPanelEnds" style="font-weight:600;font-size:30px;color:#ff9b6b;margin-top:3px;">--</div></div>
+            </div>
+            <div style="height:7px;border-radius:4px;background:#1a1f2a;overflow:hidden;margin-top:14px;"><div style="height:100%;width:64%;background:linear-gradient(90deg,#ff7a59,#ff9b6b);transition:width 1s linear;"></div></div>
+            <div id="recapList" class="visually-hidden"></div>
           </div>
-          <div id="recapList" class="sf-scroll" style="max-height:240px;overflow-y:auto;"></div>
-        </div>
-        <!-- thermal print queue -->
-        <div style="background:#0f131a;border:1px solid #1d212b;border-radius:9px;overflow:hidden;">
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #1a1e27;">
-            <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#c4ccd9;">THERMAL PRINT QUEUE</span>
-            <button id="labelSettingsFooter" class="mono" style="font-size:9.5px;letter-spacing:.5px;padding:3px 9px;border-radius:5px;background:#161b24;color:#aab2c0;border:1px solid #262c38;">⚙ SETTINGS</button>
+          <div class="panel">
+            <div class="panel-head">
+              <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#c4ccd9;">THERMAL PRINT QUEUE</span>
+              <button id="labelSettingsFooter" class="chip amber" style="cursor:pointer;">3 PENDING</button>
+            </div>
+            <div id="printQueue"><div class="mono" style="padding:14px;color:#3a4150;font-size:11px;">No labels yet</div></div>
+            <div class="visually-hidden">
+              <select id="printerSel"><option value="">No printer</option></select>
+              <input type="checkbox" id="autoPrint" />
+              <button id="printNext" disabled></button>
+              <input id="customNum" />
+              <button id="printCustom"></button>
+              <input id="rangeFrom" />
+              <input id="rangeTo" />
+              <button id="printRange"></button>
+              <div id="products"></div>
+            </div>
           </div>
-          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid #1a1e27;font-size:12px;">
-            <select id="printerSel" style="background:#0c0e13;color:#eef1f7;border:1px solid #20242e;border-radius:7px;padding:5px 8px;max-width:150px;"><option value="">No printer</option></select>
-            <label style="display:flex;gap:6px;align-items:center;color:#aab2c0;"><input type="checkbox" id="autoPrint" /> Auto</label>
-            <button id="printNext" class="qbtn void" disabled>Next</button>
-            <input id="customNum" placeholder="#" style="width:46px;background:#0c0e13;color:#eef1f7;border:1px solid #20242e;border-radius:6px;padding:4px 7px;" />
-            <button id="printCustom" class="qbtn print">Print</button>
-            <input id="rangeFrom" placeholder="a" style="width:42px;background:#0c0e13;color:#eef1f7;border:1px solid #20242e;border-radius:6px;padding:4px 7px;" />
-            <input id="rangeTo" placeholder="b" style="width:42px;background:#0c0e13;color:#eef1f7;border:1px solid #20242e;border-radius:6px;padding:4px 7px;" />
-            <button id="printRange" class="qbtn void">Range</button>
+          <div class="panel pad" style="display:flex;align-items:center;gap:16px;">
+            <div><div class="mono" style="font-size:10px;letter-spacing:1px;color:#707a8c;">CAPTURE</div><div class="mono" style="font-size:10px;letter-spacing:1px;color:#707a8c;">ENGINE</div></div>
+            <div style="display:flex;gap:14px;">
+              <span class="mono" style="display:flex;align-items:center;gap:6px;font-size:11px;color:#aab2c0;"><span style="width:6px;height:6px;border-radius:50%;background:#36d9a4;"></span>AUDIO</span>
+              <span class="mono" style="display:flex;align-items:center;gap:6px;font-size:11px;color:#aab2c0;"><span style="width:6px;height:6px;border-radius:50%;background:#36d9a4;"></span>VIDEO</span>
+              <span class="mono" style="display:flex;align-items:center;gap:6px;font-size:11px;color:#aab2c0;"><span style="width:6px;height:6px;border-radius:50%;background:#8a78ff;"></span>VISION</span>
+            </div>
+            <div style="flex:1;"></div>
+            <div style="display:flex;align-items:end;gap:2px;height:22px;"><div style="width:3px;height:40%;background:#3a4252;border-radius:1px;"></div><div style="width:3px;height:80%;background:#5a6bf0;border-radius:1px;"></div><div style="width:3px;height:55%;background:#3a4252;border-radius:1px;"></div><div style="width:3px;height:100%;background:#8a78ff;border-radius:1px;"></div><div style="width:3px;height:65%;background:#3a4252;border-radius:1px;"></div></div>
           </div>
-          <div id="printQueue"><div class="mono" style="padding:14px;color:#3a4150;font-size:11px;">No labels yet</div></div>
-        </div>
-        <!-- products -->
-        <div style="background:#0f131a;border:1px solid #1d212b;border-radius:9px;overflow:hidden;">
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #1a1e27;">
-            <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#c4ccd9;">PRODUCTS</span>
-            <span class="mono" style="font-size:9.5px;color:#5c6473;">SOLD / FAIL / PEND / STOCK</span>
-          </div>
-          <div id="products"></div>
         </div>
       </div>
-      </div><!-- /monitorScreen -->
 
       <!-- ============ LEDGER SCREEN ============ -->
       <div id="ledgerScreen" style="flex:1;display:none;flex-direction:column;min-width:0;padding:14px;gap:12px;overflow:hidden;">
@@ -323,6 +375,14 @@
         </div>
         <div class="body sf-scroll" id="pickGroups" style="flex:1;min-height:0;display:flex;flex-direction:column;gap:12px;overflow-y:auto;"></div>
       </div>
+    </div>
+
+    <div class="footerbar">
+      <span>TERMINAL INSTANCE #US-EAST-01A</span>
+      <span style="color:#36d9a4;">WEBSOCKET: CONNECTED</span>
+      <div style="flex:1;"></div>
+      <span>REDIS: 1.2MS</span>
+      <span style="color:#36d9a4;">CLOUDSYNC: ACTIVE</span>
     </div>
 
     <div id="settingsModal" class="modal hidden">

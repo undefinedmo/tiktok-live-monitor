@@ -152,6 +152,7 @@ export interface Sale {
   paymentStatus: 'paid' | 'failed' | 'pending'
   orderStatus?: number
   createdAt: number // order_create_time (ms)
+  liveTag?: string // Seller-Center live-show tag (from order/list); groups synced orders by show
 }
 
 export interface BuyerAgg {
@@ -196,6 +197,14 @@ export interface StatusEvent {
   detail?: string
 }
 
+/** Synced order book from Seller-Center order/list (cookie auth, no live stream). */
+export interface OrdersEvent {
+  kind: 'orders'
+  orders: Sale[]
+  total: number
+  ts: number
+}
+
 export type LiveEvent =
   | ProductStatsSnapshot
   | SaleEvent
@@ -207,3 +216,4 @@ export type LiveEvent =
   | RosterSnapshot
   | SalesUpdate
   | StatusEvent
+  | OrdersEvent

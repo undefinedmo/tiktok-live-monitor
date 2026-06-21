@@ -25,7 +25,7 @@ declare global {
       transcribe: (payload: { audio: Uint8Array; productName?: string; structured?: boolean }) => Promise<{ text?: string; fields?: LedgerTranscript; error?: string }>
     }
     syncAPI?: {
-      now: () => Promise<{ ok: boolean; reason?: string }>
+      now: () => Promise<{ ok: boolean; reason?: string; count?: number }>
       connection: () => Promise<{ loggedIn: boolean; hasShow: boolean; polling: boolean }>
       openMonitor: () => Promise<{ ok: boolean }>
     }
@@ -79,9 +79,6 @@ function renderStats() {
     ['SALES', stats.sales, '', false],
     ['GMV', stats.gmv, '', false],
     ['PACE', stats.pace, '/ hr', false],
-    ['UNIQUE BUYERS', stats.buyers, '', false],
-    ['FAILED', stats.failed, '', stats.failed !== '0'],
-    ['GPM', stats.gpm, '', false],
   ]
   const grid = $('statsGrid')
   grid.replaceChildren()
@@ -235,6 +232,10 @@ function renderAuction(p?: PinnedAuction) {
   if (!p || !p.winUsername) {
     pinnedEndMs = undefined
     $('lotOverlay').style.display = 'none'
+    document.getElementById('auctionPanelName')!.textContent = 'Waiting for current lot'
+    document.getElementById('auctionPanelBid')!.textContent = '--'
+    document.getElementById('auctionPanelBids')!.textContent = '0'
+    document.getElementById('auctionPanelEnds')!.textContent = '--'
     return
   }
   pinnedEndMs = p.expectedEndMs
@@ -243,14 +244,20 @@ function renderAuction(p?: PinnedAuction) {
   $('lotBid').textContent = p.maxBiddingPrice ?? '—'
   $('lotBids').textContent = String(p.numBids ?? 0)
   $('lotBuyer').textContent = '@' + p.winUsername
+  document.getElementById('auctionPanelName')!.textContent = p.productName
+  document.getElementById('auctionPanelBid')!.textContent = p.maxBiddingPrice ?? '--'
+  document.getElementById('auctionPanelBids')!.textContent = String(p.numBids ?? 0)
 }
 
 function tickCountdown() {
   const ends = document.getElementById('lotEnds')
   if (!ends) return
-  if (!pinnedEndMs) { ends.textContent = '—'; return }
+  const panelEnds = document.getElementById('auctionPanelEnds')
+  if (!pinnedEndMs) { ends.textContent = '--'; if (panelEnds) panelEnds.textContent = '--'; return }
   const left = Math.max(0, Math.round((pinnedEndMs - Date.now()) / 1000))
-  ends.textContent = left > 0 ? `${left}s` : 'ended'
+  const label = left > 0 ? `${left}s` : 'ended'
+  ends.textContent = label
+  if (panelEnds) panelEnds.textContent = label
 }
 setInterval(tickCountdown, 250)
 
@@ -389,7 +396,7 @@ async function transcribeProduct(productId: string, productName: string): Promis
 async function initRecap() {
   try { recapEnabled = (await window.recapAPI?.enabled())?.enabled ?? false } catch { recapEnabled = false }
   const st = document.getElementById('recapStatus')
-  if (st) st.textContent = recapEnabled ? 'GEMINI' : 'OFF'
+  if (st) st.textContent = recapEnabled ? 'AI EXTRACTION · 99%' : 'AI EXTRACTION'
   renderRecap()
 }
 void initRecap()
@@ -529,6 +536,11 @@ const costMap: Record<string, number> = loadJson('tt-cost', {})
 const productCostMap: Record<string, number> = loadJson('tt-product-cost', {}) // productId → cents (template, persists across shows)
 const transcriptsByOrder = new Map<string, string>()
 const productTx: Record<string, LedgerTranscript> = loadJson('tt-product-tx', {}) // productId → structured AI transcript
+// Synced order book from Seller-Center order/list (decoupled from the live stream). When present
+// it is the Ledger/Picklist source; grouped into "shows" by the live-show tag on each order.
+let syncedOrders: Sale[] = loadJson<Sale[]>('tt-orders', [])
+const saveSyncedOrders = () => localStorage.setItem('tt-orders', JSON.stringify(syncedOrders))
+const SHOW_OF = (s: Sale) => s.liveTag || 'Other orders'
 // demo seed — these globals only exist in the static-HTML mock, never in the Electron app
 const demoSeed = window as unknown as { __demoProductTx?: Record<string, LedgerTranscript>; __demoProductCost?: Record<string, number> }
 if (demoSeed.__demoProductCost) Object.assign(productCostMap, demoSeed.__demoProductCost)
@@ -590,35 +602,46 @@ function applyBulkCost(apply: CostApply) {
   renderLedger()
 }
 
-// the ledger/picklist data source respects the show filter; 'live' = the current capture
+// the ledger/picklist data source respects the show filter. Synced orders (the real order
+// book, decoupled from live) take precedence when present; otherwise fall back to the live
+// capture / persisted shows.
 function sourceSales(): Sale[] {
+  if (syncedOrders.length) {
+    if (selectedShowId === 'live' || selectedShowId === 'all') return syncedOrders
+    return syncedOrders.filter((s) => SHOW_OF(s) === selectedShowId)
+  }
   return selectedShowId === 'live' ? allSales : salesForShow(showStore, selectedShowId)
 }
 
-// rebuild the Ledger + Picklist show-pickers from the persisted store; keep the current selection
+// rebuild the Ledger + Picklist show-pickers; keep the current selection
 function refreshShowOptions() {
-  const shows = listShows(showStore)
   const fmtShowDate = (sec?: number) =>
     sec ? new Date(sec * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
+  // When we have a synced order book, derive shows from the per-order live-show tag.
+  const opts: { value: string; label: string }[] = []
+  if (syncedOrders.length) {
+    const tags = [...new Set(syncedOrders.map(SHOW_OF))].sort()
+    opts.push({ value: 'all', label: `All orders (${syncedOrders.length})` })
+    for (const t of tags) opts.push({ value: t, label: t })
+  } else {
+    opts.push({ value: 'live', label: 'Live (current)' })
+    for (const s of listShows(showStore)) {
+      const date = fmtShowDate(s.startTime)
+      opts.push({ value: s.id, label: date ? `${s.name} — ${date}` : s.name })
+    }
+    opts.push({ value: 'all', label: 'All shows' })
+  }
   for (const id of ['ledgerShow', 'pickShow']) {
     const sel = document.getElementById(id) as HTMLSelectElement | null
     if (!sel) continue
     sel.replaceChildren()
-    const liveOpt = document.createElement('option')
-    liveOpt.value = 'live'
-    liveOpt.textContent = 'Live (current)'
-    sel.appendChild(liveOpt)
-    for (const s of shows) {
+    for (const o of opts) {
       const opt = document.createElement('option')
-      opt.value = s.id
-      const date = fmtShowDate(s.startTime)
-      opt.textContent = date ? `${s.name} — ${date}` : s.name
+      opt.value = o.value
+      opt.textContent = o.label
       sel.appendChild(opt)
     }
-    const allOpt = document.createElement('option')
-    allOpt.value = 'all'
-    allOpt.textContent = 'All shows'
-    sel.appendChild(allOpt)
+    if (!opts.some((o) => o.value === selectedShowId)) selectedShowId = opts[0]!.value
     sel.value = selectedShowId
   }
 }
@@ -895,7 +918,7 @@ async function runSync() {
   try {
     if (window.syncAPI) {
       const res = await window.syncAPI.now()
-      if (res.ok) flashSync('✓ Synced')
+      if (res.ok) flashSync(`✓ ${res.count ?? ''} orders`.replace('  ', ' '))
       else { flashSync('⚠ ' + (res.reason ?? 'failed')); console.warn('sync:', res.reason) }
       await refreshConnection()
     } else {
@@ -1038,23 +1061,13 @@ setupPicklist()
 setupSync()
 setupShowFilter()
 
-// Responsive type: scale the whole UI proportionally to the viewport width so text
-// isn't tiny on large/ultrawide screens. Root-level zoom scales fonts + layout
-// together (no clipping); clamped so normal screens are unchanged.
-function scaleUI() {
-  const z = Math.min(1.5, Math.max(1, window.innerWidth / 1680))
-  document.documentElement.style.zoom = String(Math.round(z * 100) / 100)
-}
-scaleUI()
-window.addEventListener('resize', scaleUI)
-
 // ── event loop ──────────────────────────────────────────────────────────────
 window.ttLive.onEvent((ev: LiveEvent) => {
   switch (ev.kind) {
     case 'status': {
       const label = `${ev.status}${ev.detail ? ' — ' + ev.detail : ''}`
-      $('status').textContent = label
-      $('dot').title = label // rail dot tooltip (no top bar)
+      $('status').textContent = ev.status === 'connected' ? 'LIVE' : ev.status
+      $('dot').title = label
       $('dot').style.background = ev.status === 'connected' ? '#36d9a4' : '#5c6473'
       $('dot').style.boxShadow = ev.status === 'connected' ? '0 0 8px #36d9a4' : 'none'
       break
@@ -1105,7 +1118,8 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       stats.failed = String(ev.failedPayments.length)
       if (!gmvFromWs) stats.gmv = `$${(ev.totalCents / 100).toFixed(2)}`
       renderStats()
-      $('feedCount').textContent = `${ev.totalSales} · $${(ev.totalCents / 100).toFixed(0)}`
+      $('feedCount').title = `${ev.totalSales} sales · $${(ev.totalCents / 100).toFixed(0)}`
+      $('feedCount').textContent = 'v1.2.4'
       // Skip the initial backfill (seed on first poll), then act on genuinely-new sales.
       const maxCreated = ev.recentSales.reduce((m, s) => Math.max(m, s.createdAt), 0)
       if (seedMaxCreatedAt === null) {
@@ -1128,5 +1142,15 @@ window.ttLive.onEvent((ev: LiveEvent) => {
     case 'chat':
       appendChat(ev.items)
       break
+    case 'orders': {
+      // Synced order book (Seller-Center) → the Ledger/Picklist source, independent of live.
+      syncedOrders = ev.orders
+      saveSyncedOrders()
+      if (selectedShowId === 'live') selectedShowId = 'all'
+      refreshShowOptions()
+      renderLedger()
+      renderPicklist()
+      break
+    }
   }
 })

@@ -8,6 +8,7 @@ import { parseRoster } from '../core/roster'
 import { AuctionResults } from '../core/auctionResults'
 import { decodeChat } from '../core/chat'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
+import { pullTiktokOrders, orderToSale } from './tiktok-orders'
 import type { LiveEvent, StatusEvent } from '../core/types'
 
 const DASHBOARD = 'https://shop.tiktok.com/streamer/live/event/dashboard'
@@ -38,6 +39,11 @@ async function tiktokLoggedIn(): Promise<boolean> {
   } catch {
     return false
   }
+}
+/** Build the Cookie header the way the browser would send it to Seller Center. */
+async function tiktokCookieHeader(): Promise<string> {
+  const cookies = await session.fromPartition(TT_PARTITION).cookies.get({ url: 'https://seller-us.tiktok.com' })
+  return cookies.map((c) => `${c.name}=${c.value}`).join('; ')
 }
 
 // Once the WS stream yields room_id + session_id, tell the preload to start
@@ -241,18 +247,32 @@ ipcMain.handle('tt-open-monitor', () => {
   return { ok: true }
 })
 
-// Manual "Sync orders" from the UI → verify login, then force an immediate poll cycle.
+// "Sync orders" → pull the Seller-Center order book via the persisted session cookies.
+// Cookie auth only (no request signing) — works whenever logged in, independent of any
+// live stream. (The live feed/poll is a separate Monitor-only concern.)
+let orderSyncing = false
 ipcMain.handle('tt-sync', async () => {
+  if (orderSyncing) return { ok: false, reason: 'Sync already running' }
   if (!(await tiktokLoggedIn())) {
     monitor?.show()
     monitor?.focus()
     return { ok: false, reason: 'Log in to TikTok in the monitor window' }
   }
-  if (!pollRoomId || !pollSessionId) return { ok: false, reason: 'Logged in — waiting for a live show' }
-  if (!monitor) return { ok: false, reason: 'Monitor window unavailable' }
-  if (!pollSent) maybeStartPolling()
-  else monitor.webContents.send('tt-poll-now')
-  return { ok: true }
+  orderSyncing = true
+  try {
+    const cookieHeader = await tiktokCookieHeader()
+    const { orders, total } = await pullTiktokOrders(cookieHeader, (pulled, tot) =>
+      send({ kind: 'status', status: 'connected', detail: `syncing orders ${pulled}/${tot}` }),
+    )
+    const sales = orders.map(orderToSale)
+    send({ kind: 'orders', orders: sales, total, ts: Date.now() })
+    debug(`[tt] synced ${sales.length}/${total} orders`)
+    return { ok: true, count: sales.length }
+  } catch (e) {
+    return { ok: false, reason: (e as Error).message.slice(0, 160) }
+  } finally {
+    orderSyncing = false
+  }
 })
 
 ipcMain.handle('recap-enabled', () => ({ enabled: !!GEMINI_KEY, model: GEMINI_MODEL }))
