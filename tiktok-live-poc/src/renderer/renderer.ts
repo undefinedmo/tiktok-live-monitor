@@ -526,10 +526,9 @@ function setupSettings() {
     document.getElementById(id)?.addEventListener('change', apply)
   }
   preview()
-  const open = () => document.getElementById('settingsModal')?.classList.remove('hidden')
+  const open = () => showScreen('settings')
   document.getElementById('labelSettings')?.addEventListener('click', open)
   document.getElementById('labelSettingsFooter')?.addEventListener('click', open)
-  document.getElementById('closeSettings')?.addEventListener('click', () => document.getElementById('settingsModal')?.classList.add('hidden'))
 }
 setupSettings()
 setupFeed()
@@ -556,7 +555,7 @@ if (demoSeed.__demoProductTx) Object.assign(productTx, demoSeed.__demoProductTx)
 let ledgerFilters: LedgerFilters = { q: '', status: '', cost: '', profit: '', min: null, max: null }
 let ledgerSort: { key: SortKey; dir: 1 | -1 } = { key: 'date', dir: -1 }
 let ledgerExpanded: string | null = null
-let currentScreen: 'monitor' | 'ledger' | 'picklist' = 'monitor'
+let currentScreen: 'monitor' | 'ledger' | 'picklist' | 'settings' = 'monitor'
 const fmtCents = (c: number) => '$' + (c / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 // bulk-selection + cost state
@@ -897,14 +896,17 @@ function renderLedger() {
   updateBulkBar()
 }
 
-function showScreen(s: 'monitor' | 'ledger' | 'picklist') {
+function showScreen(s: 'monitor' | 'ledger' | 'picklist' | 'settings') {
   currentScreen = s
   $('monitorScreen').style.display = s === 'monitor' ? 'flex' : 'none'
   $('ledgerScreen').style.display = s === 'ledger' ? 'flex' : 'none'
   $('picklistScreen').style.display = s === 'picklist' ? 'flex' : 'none'
+  const settings = document.getElementById('settingsScreen')
+  if (settings) settings.style.display = s === 'settings' ? 'flex' : 'none'
   $('navMonitor').classList.toggle('active', s === 'monitor')
   $('navLedger').classList.toggle('active', s === 'ledger')
   $('navPicklist').classList.toggle('active', s === 'picklist')
+  document.getElementById('navSettings2')?.classList.toggle('active', s === 'settings')
   // live status (connecting…) + room/viewers/elapsed only make sense on the Live Monitor
   const meters = document.getElementById('liveMeters')
   if (meters) meters.style.display = s === 'monitor' ? 'flex' : 'none'
@@ -1067,7 +1069,7 @@ function segActive(segId: string, attr: 'cost' | 'profit', val: string) {
 function setupLedger() {
   $('navMonitor').addEventListener('click', () => showScreen('monitor'))
   $('navLedger').addEventListener('click', () => showScreen('ledger'))
-  document.getElementById('navSettings2')?.addEventListener('click', () => document.getElementById('settingsModal')?.classList.remove('hidden'))
+  document.getElementById('navSettings2')?.addEventListener('click', () => showScreen('settings'))
   ;($('ledgerSearch') as HTMLInputElement).addEventListener('input', (e) => { ledgerFilters = { ...ledgerFilters, q: (e.target as HTMLInputElement).value }; renderLedger() })
   ;($('ledgerStatus') as HTMLSelectElement).addEventListener('change', (e) => { ledgerFilters = { ...ledgerFilters, status: (e.target as HTMLSelectElement).value }; renderLedger() })
 

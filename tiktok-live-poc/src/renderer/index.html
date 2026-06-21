@@ -395,31 +395,33 @@
         </div>
         <div class="body sf-scroll" id="pickGroups" style="flex:1;min-height:0;display:flex;flex-direction:column;gap:12px;overflow-y:auto;"></div>
       </div>
-    </div>
 
-    <div id="settingsModal" class="modal hidden">
-      <div class="modal-box">
-        <h3>Label Settings</h3>
-        <label>Label size
-          <select id="setSize">
-            <option value="1x1">1 × 1 in</option>
-            <option value="2x1">2 × 1 in</option>
-            <option value="2.25x1.25">2.25 × 1.25 in</option>
-          </select>
-        </label>
-        <div class="fields">
-          <label><input type="checkbox" id="setItemNumber" /> Item number (#)</label>
-          <label><input type="checkbox" id="setBuyer" /> Buyer</label>
-          <label><input type="checkbox" id="setProductName" /> Product name (full)</label>
-          <label><input type="checkbox" id="setPrice" /> Price</label>
-          <label><input type="checkbox" id="setCustom" /> Custom (regex extract)</label>
+      <!-- ============ SETTINGS SCREEN ============ -->
+      <div id="settingsScreen" style="flex:1;display:none;flex-direction:column;min-width:0;padding:14px;gap:12px;overflow:hidden;">
+        <span class="grot" style="font-weight:600;font-size:18px;flex:none;">Label Settings</span>
+        <div class="body sf-scroll" style="flex:1;min-height:0;overflow-y:auto;">
+          <div class="modal-box" style="max-width:620px;margin:0;box-shadow:none;">
+            <label>Label size
+              <select id="setSize">
+                <option value="1x1">1 × 1 in</option>
+                <option value="2x1">2 × 1 in</option>
+                <option value="2.25x1.25">2.25 × 1.25 in</option>
+              </select>
+            </label>
+            <div class="fields">
+              <label><input type="checkbox" id="setItemNumber" /> Item number (#)</label>
+              <label><input type="checkbox" id="setBuyer" /> Buyer</label>
+              <label><input type="checkbox" id="setProductName" /> Product name (full)</label>
+              <label><input type="checkbox" id="setPrice" /> Price</label>
+              <label><input type="checkbox" id="setCustom" /> Custom (regex extract)</label>
+            </div>
+            <div class="custom-row">
+              <input type="text" id="setRegex" placeholder="regex, e.g. (#\d+)" />
+              <input type="text" id="setFlags" placeholder="flags" />
+            </div>
+            <div class="preview">Sample: <span id="sampleTitle"></span> → extracts <b id="extractPreview">—</b></div>
+          </div>
         </div>
-        <div class="custom-row">
-          <input type="text" id="setRegex" placeholder="regex, e.g. (Bin [A-Z])" />
-          <input type="text" id="setFlags" placeholder="flags" />
-        </div>
-        <div class="preview">Sample: <span id="sampleTitle"></span> → extracts <b id="extractPreview">—</b></div>
-        <div class="modal-actions"><button id="closeSettings">Done</button></div>
       </div>
     </div>
     <!-- Static/demo mock data — runs ONLY when opened without the Electron
