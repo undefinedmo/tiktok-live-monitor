@@ -9,7 +9,7 @@ import { AuctionResults } from '../core/auctionResults'
 import { decodeChat } from '../core/chat'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
 import { pullTiktokOrders, orderToSale, fetchOrderDetails } from './tiktok-orders'
-import { buildAudioClip, buildFrames } from './clip'
+import { buildClipMedia } from './clip'
 import type { LiveEvent, StatusEvent } from '../core/types'
 
 const DASHBOARD = 'https://shop.tiktok.com/streamer/live/event/dashboard'
@@ -432,9 +432,11 @@ ipcMain.handle('tt-transcribe-orders', async (_e, items: { orderId: string; prod
   const details = await fetchOrderDetails(ids, cookieHeader)
   const results: { orderId: string; fields: TranscriptFields }[] = []
   const errors: { orderId: string; error: string }[] = []
-  for (let i = 0; i < items.length; i++) {
-    const it = items[i]!
-    progress(i, it.orderId, 'start')
+  let completed = 0
+
+  // process one order: ONE ffmpeg pass (audio + 5 frames) → Gemini
+  const processOne = async (it: { orderId: string; productName?: string; placedAtMs?: number }) => {
+    progress(completed, it.orderId, 'start')
     let ok = false
     try {
       const d = details.get(it.orderId)
@@ -442,18 +444,12 @@ ipcMain.handle('tt-transcribe-orders', async (_e, items: { orderId: string; prod
         errors.push({ orderId: it.orderId, error: 'no video receipt' })
       } else {
         // seek by the ORDER's placed-at epoch (the sale moment) — same as live-ledger.
-        // (video_receipt_timestamp is a different value and gives the wrong clip window.)
         const atSec = it.placedAtMs != null ? Math.floor(it.placedAtMs / 1000) : null
-        const audio = await buildAudioClip(d.videoUrl, atSec)
+        const { audio, frames } = await buildClipMedia(d.videoUrl, atSec, 5)
         if (!audio || audio.byteLength < 1000) {
           errors.push({ orderId: it.orderId, error: 'clip failed' })
         } else {
-          // 5 frames give Gemini visual context (color/size/brand) + the audio for speech
-          const frames = await buildFrames(d.videoUrl, atSec, 5)
-          const media = [
-            ...frames.map((f) => ({ mimeType: 'image/jpeg', data: f })),
-            { mimeType: 'audio/aac', data: audio },
-          ]
+          const media = [...frames.map((f) => ({ mimeType: 'image/jpeg', data: f })), { mimeType: 'audio/aac', data: audio }]
           const r = await geminiStructured(media, it.productName ?? '')
           if (r.fields && Object.keys(r.fields).length) { results.push({ orderId: it.orderId, fields: r.fields }); ok = true }
           else if (r.text) { results.push({ orderId: it.orderId, fields: { summary: r.text } }); ok = true }
@@ -463,8 +459,17 @@ ipcMain.handle('tt-transcribe-orders', async (_e, items: { orderId: string; prod
     } catch (e) {
       errors.push({ orderId: it.orderId, error: String((e as Error).message).slice(0, 120) })
     }
-    progress(i + 1, it.orderId, 'done', ok)
+    progress(++completed, it.orderId, 'done', ok)
   }
+
+  // run with bounded concurrency (ffmpeg + Gemini are I/O-bound; keep it modest for rate limits)
+  const CONCURRENCY = Math.min(4, items.length)
+  let next = 0
+  await Promise.all(
+    Array.from({ length: CONCURRENCY }, async () => {
+      while (next < items.length) { const i = next++; await processOne(items[i]!) }
+    }),
+  )
   return { results, errors }
 })
 

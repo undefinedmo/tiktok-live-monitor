@@ -57,6 +57,49 @@ export async function buildAudioClip(m3u8Url: string, atEpochSec: number | null)
   }
 }
 
+/** ONE ffmpeg pass → both the audio clip AND `frameCount` JPEG frames, with a single m3u8
+ *  seek fetch. Far cheaper than running ffmpeg twice per order. */
+export async function buildClipMedia(
+  m3u8Url: string,
+  atEpochSec: number | null,
+  frameCount = 5,
+): Promise<{ audio: Uint8Array | null; frames: Uint8Array[] }> {
+  let ss = 0
+  if (atEpochSec) {
+    try { ss = parseSeekFromM3u8(await (await fetch(m3u8Url)).text(), atEpochSec) } catch { ss = 0 }
+  }
+  const dir = join(tmpdir(), `tt-clip-${process.pid}-${clipCounter++}`)
+  mkdirSync(dir, { recursive: true })
+  const audioOut = join(dir, 'a.aac')
+  const args = [
+    '-nostdin', '-loglevel', 'error', '-y',
+    ...(ss > 0 ? ['-ss', String(ss)] : []),
+    '-i', m3u8Url, '-t', String(CLIP_SECONDS),
+    // output 1: audio (AAC/ADTS)
+    '-map', '0:a?', '-vn', '-c:a', 'aac', '-b:a', '96k', '-f', 'adts', audioOut,
+    // output 2: frames spread across the clip
+    '-map', '0:v?', '-vf', `fps=${frameCount}/${CLIP_SECONDS},scale=480:-2`, '-frames:v', String(frameCount), '-q:v', '4', join(dir, 'f_%02d.jpg'),
+  ]
+  const code = await new Promise<number>((resolve) => {
+    const p = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    p.on('error', () => resolve(-1))
+    p.on('close', (c) => resolve(c ?? -1))
+  })
+  let audio: Uint8Array | null = null
+  const frames: Uint8Array[] = []
+  try {
+    if (code === 0) {
+      if (existsSync(audioOut) && statSync(audioOut).size > 0) audio = new Uint8Array(readFileSync(audioOut))
+      for (const n of readdirSync(dir).filter((x) => x.endsWith('.jpg')).sort()) {
+        try { frames.push(new Uint8Array(readFileSync(join(dir, n)))) } catch { /* ignore */ }
+      }
+    }
+  } finally {
+    try { rmSync(dir, { recursive: true, force: true }) } catch { /* ignore */ }
+  }
+  return { audio, frames }
+}
+
 /** Extract `count` JPEG frames spread across the ~60s clip (the last one ~at the sale moment)
  *  so Gemini gets visual context (color/size/brand) without the cost of full video. */
 export async function buildFrames(m3u8Url: string, atEpochSec: number | null, count = 5): Promise<Uint8Array[]> {
