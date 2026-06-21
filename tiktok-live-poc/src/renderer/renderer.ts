@@ -802,6 +802,9 @@ function showScreen(s: 'monitor' | 'ledger' | 'picklist') {
   $('navMonitor').classList.toggle('active', s === 'monitor')
   $('navLedger').classList.toggle('active', s === 'ledger')
   $('navPicklist').classList.toggle('active', s === 'picklist')
+  // room/viewers/elapsed only make sense on the live monitor — keep them off the Ledger/Picklist
+  const meters = document.getElementById('liveMeters')
+  if (meters) meters.style.display = s === 'monitor' ? 'flex' : 'none'
   if (s === 'ledger') renderLedger()
   if (s === 'picklist') renderPicklist()
 }
