@@ -4,6 +4,7 @@
 // the authoritative per-sale source). Portable: no electron/DOM.
 
 import type { PinnedAuction, RosterProduct, RosterSnapshot } from './types'
+import { parseLatestAuctionItem } from './auctionItem'
 
 type Json = Record<string, unknown>
 const obj = (v: unknown): Json | undefined =>
@@ -40,22 +41,11 @@ function toProduct(a: Json): RosterProduct {
 }
 
 function toPinned(p: Json): PinnedAuction {
-  const item = obj(p['latest_auction_item']) ?? {}
-  const actualStart = num(item['actual_start_time'])
-  const actualEnd = num(item['actual_end_time'])
   return {
     productId: str(p['product_id']) ?? '',
     productName: str(p['product_name']) ?? '',
-    winUsername: str(item['win_username']),
-    winAvatarUrl: str(item['win_user_profile_image_url']),
-    maxBiddingPrice: str(item['max_bidding_price']),
-    numBids: num(item['num_of_bids']),
-    status: num(item['status']),
-    expectedEndMs: Number(str(item['expected_end_time_ms'])) || undefined,
     skuId: str(p['sku_id']),
-    actualStartMs: actualStart && actualStart > 0 ? actualStart * 1000 : undefined,
-    actualEndMs: actualEnd !== undefined ? actualEnd * 1000 : undefined,
-    auctionBidTimestampMs: Number(str(item['auction_bid_timestamp'])) || undefined,
+    ...parseLatestAuctionItem(p),
   }
 }
 
