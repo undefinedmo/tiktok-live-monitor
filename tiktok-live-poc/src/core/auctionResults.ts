@@ -31,17 +31,20 @@ function toSale(r: Json): Sale | null {
     handle: str(r['user_display_id']),
     avatarUrl: str(r['user_profile_image_url']),
   }
+  const endTs = num(r['auction_end_timestamp'])
   return {
     orderId,
     buyer,
     productId: str(r['product_id']) ?? '',
     productName: str(r['product_name']) ?? '',
     productImageUrl: str(r['product_image_url']),
+    skuId: str(r['sku_id']),
     skuDesc: str(r['sku_desc']),
     price: parseMoney(str(r['selling_price']) ?? ''),
     paymentStatus: paymentStatusOf(r),
     orderStatus: num(r['order_status']),
     createdAt: num(r['order_create_time']) ?? 0,
+    ...(endTs !== undefined && endTs > 0 ? { auctionEndMs: endTs } : {}),
   }
 }
 
@@ -51,7 +54,8 @@ export class AuctionResults {
   private byOrder = new Map<string, Sale>()
 
   ingest(raw: unknown, ts: number): SalesUpdate {
-    const rows = arr(obj(raw)?.['auction_result_data'])
+    const rawObj = obj(raw)
+    const rows = arr(rawObj?.['auction_result_data'])
     const newSales: Sale[] = []
     for (const row of rows) {
       const sale = toSale(obj(row) ?? {})
@@ -108,6 +112,7 @@ export class AuctionResults {
     }
     const byProduct = [...rollups.values()].sort((a, b) => b.paid - a.paid)
 
+    const totalResultCount = num(rawObj?.['total_result_count'])
     return {
       kind: 'sales',
       newSales,
@@ -119,6 +124,7 @@ export class AuctionResults {
       totalCents: successful.reduce((n, s) => n + s.price.cents, 0),
       failedPayments: all.filter((s) => s.paymentStatus === 'failed'),
       ts,
+      ...(totalResultCount !== undefined ? { totalResultCount } : {}),
     }
   }
 }

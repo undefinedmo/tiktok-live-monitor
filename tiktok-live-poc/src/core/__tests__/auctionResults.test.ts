@@ -107,4 +107,26 @@ describe('AuctionResults', () => {
     const times = u.recentSales.map((s) => s.createdAt)
     expect([...times]).toEqual([...times].sort((a, b) => b - a))
   })
+
+  // Phase 4 Unit B: enriched fields
+  it('populates skuId on a paid row', () => {
+    const { newSales } = new AuctionResults().ingest(wrap([rows[0]]), 1000)
+    // first row is order 577442704719844041 (Cristina)
+    expect(newSales[0]!.skuId).toBe('1732451642461426659')
+  })
+
+  it('populates auctionEndMs only when > 0 (failed row has timestamp; paid rows have 0 → undefined)', () => {
+    const u = new AuctionResults().ingest(wrap(rows), 1000)
+    const failed = u.recentSales.find((s) => s.orderId === '577442705728508863')!
+    expect(failed.auctionEndMs).toBe(1781991300607)
+    // first paid row has auction_end_timestamp 0 → should be undefined
+    const paid = u.recentSales.find((s) => s.orderId === '577442704719844041')!
+    expect(paid.auctionEndMs).toBeUndefined()
+  })
+
+  it('puts totalResultCount from response-level total_result_count onto SalesUpdate', () => {
+    const input = { auction_result_data: rest.auctionResultRows, total_result_count: rest.auctionResultTotal }
+    const u = new AuctionResults().ingest(input, 1000)
+    expect(u.totalResultCount).toBe(88)
+  })
 })
