@@ -120,3 +120,30 @@ export function getSnapshot(db: Db): DbSnapshot {
   const showsRow = db.prepare("SELECT v FROM meta WHERE k = 'shows'").get() as { v: string } | undefined
   return { orders, costs, productCosts, orderTx, productTx, picked, shows: showsRow ? JSON.parse(showsRow.v) : {} }
 }
+
+export function setCost(db: Db, scope: 'order' | 'product', key: string, cents: number | null, now: number): void {
+  if (cents == null) db.prepare('DELETE FROM costs WHERE scope=? AND key=?').run(scope, key)
+  else db.prepare('INSERT INTO costs (scope,key,cents,updated_at) VALUES (?,?,?,?) ON CONFLICT(scope,key) DO UPDATE SET cents=excluded.cents,updated_at=excluded.updated_at').run(scope, key, cents, now)
+}
+
+export function setTranscript(db: Db, scope: 'order' | 'product', key: string, t: LedgerTranscript | null, now: number): void {
+  if (t == null) { db.prepare('DELETE FROM transcripts WHERE scope=? AND key=?').run(scope, key); return }
+  db.prepare(`INSERT INTO transcripts (scope,key,brand,item,color,size,retail_price,summary,updated_at)
+    VALUES (@scope,@key,@brand,@item,@color,@size,@retail_price,@summary,@now)
+    ON CONFLICT(scope,key) DO UPDATE SET brand=excluded.brand,item=excluded.item,color=excluded.color,size=excluded.size,retail_price=excluded.retail_price,summary=excluded.summary,updated_at=excluded.updated_at`)
+    .run({ scope, key, brand: t.brand ?? null, item: t.item ?? null, color: t.color ?? null, size: t.size ?? null, retail_price: t.retailPrice ?? null, summary: t.summary ?? null, now })
+}
+
+export function setPicked(db: Db, orderId: string, picked: boolean, now: number): void {
+  if (picked) db.prepare('INSERT OR IGNORE INTO picks (order_id,picked_at) VALUES (?,?)').run(orderId, now)
+  else db.prepare('DELETE FROM picks WHERE order_id=?').run(orderId)
+}
+
+export function getShows(db: Db): unknown {
+  const r = db.prepare("SELECT v FROM meta WHERE k = 'shows'").get() as { v: string } | undefined
+  return r ? JSON.parse(r.v) : {}
+}
+
+export function setShows(db: Db, store: unknown): void {
+  db.prepare("INSERT INTO meta (k,v) VALUES ('shows',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").run(JSON.stringify(store))
+}
