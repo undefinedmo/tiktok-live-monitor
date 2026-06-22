@@ -4,6 +4,7 @@ import { computeKpis, filterRows, sortRows, profitCents, marginPct, statusLabel,
 import { upsertShow, listShows, salesForShow, type ShowMeta, type ShowStore } from '../core/shows'
 import { urgency } from '../core/urgency'
 import { classifyException } from '../core/exceptions'
+import { labelHtml, LABEL_SIZES } from '../electron/label' // portable (no electron deps) — renders the real print HTML for the preview
 
 // One source of truth for how an urgency bucket renders (CSS class + human label),
 // shared by the Ledger row pill and the expanded-detail line.
@@ -440,6 +441,11 @@ const printQueue: { label: string; status: 'printing' | 'printed' | 'error' }[] 
 function renderQueue() {
   const q = $('printQueue')
   q.replaceChildren()
+  // The header badge reflects real state, not a hardcoded count: in-flight prints,
+  // else a nudge to pick a printer, else the settings affordance.
+  const printing = printQueue.filter((i) => i.status === 'printing').length
+  const badge = document.getElementById('labelSettingsFooter')
+  if (badge) badge.textContent = printing > 0 ? `${printing} PRINTING` : selectedPrinter ? 'LABEL SETTINGS' : 'SET PRINTER'
   if (!printQueue.length) { q.appendChild(el('div', 'mono', 'No labels yet')); q.firstElementChild!.setAttribute('style', 'padding:14px;color:#3a4150;font-size:11px;'); return }
   for (const item of printQueue.slice(0, 8)) {
     const row = el('div', 'qrow')
@@ -496,11 +502,13 @@ async function setupPrinting() {
   }
   selectedPrinter = saved || printers.find((p) => p.isDefault)?.name || ''
   sel.value = selectedPrinter
+  const printerHint = () => { const h = document.getElementById('printerSaved'); if (h) h.textContent = selectedPrinter ? '· current: ' + selectedPrinter : '· none selected yet' }
+  printerHint()
   autoPrint = localStorage.getItem('tt-autoprint') === '1'
   ;($('autoPrint') as HTMLInputElement).checked = autoPrint
   updatePrintNext()
   renderQueue()
-  sel.addEventListener('change', () => { selectedPrinter = sel.value; void window.labelAPI.savePrinter(selectedPrinter); updatePrintNext() })
+  sel.addEventListener('change', () => { selectedPrinter = sel.value; void window.labelAPI.savePrinter(selectedPrinter); updatePrintNext(); renderQueue(); printerHint() })
   ;($('autoPrint') as HTMLInputElement).addEventListener('change', (e) => { autoPrint = (e.target as HTMLInputElement).checked; localStorage.setItem('tt-autoprint', autoPrint ? '1' : '0') })
   $('printNext').addEventListener('click', () => { if (lastPrintedNumber !== null) void printLabel({ itemNumber: String(lastPrintedNumber + 1) }) })
   $('printCustom').addEventListener('click', () => { const v = ($('customNum') as HTMLInputElement).value.replace(/^#/, '').trim(); if (v) void printLabel({ itemNumber: v }) })
@@ -512,6 +520,24 @@ async function setupPrinting() {
   })
 }
 void setupPrinting()
+
+// ── label print preview ──────────────────────────────────────────────────────
+// Renders the REAL print HTML (labelHtml) for a representative sale, scaled up, so the
+// user sees exactly how the thermal label will print as they change the template.
+const sampleLabel: LabelData = { itemNumber: '141', buyer: 'Sarah D.', productName: 'Alo Yoga & More — No Cancels', price: '$82.00', title: '#141 Bin A - Alo Yoga and More, No Cancels' }
+function renderLabelPreview() {
+  const ifr = document.getElementById('labelPreview') as HTMLIFrameElement | null
+  if (!ifr) return
+  const size = LABEL_SIZES[labelTemplate.labelSize] ?? LABEL_SIZES['2x1']
+  const scale = 2.4
+  const wPx = Math.round(size.widthIn * 96), hPx = Math.round(size.heightIn * 96)
+  ifr.style.width = wPx + 'px'; ifr.style.height = hPx + 'px'
+  ifr.style.transformOrigin = 'top left'; ifr.style.transform = `scale(${scale})`
+  const wrap = document.getElementById('labelPreviewWrap')
+  if (wrap) { wrap.style.width = Math.round(wPx * scale) + 'px'; wrap.style.height = Math.round(hPx * scale) + 'px' }
+  ifr.srcdoc = labelHtml(sampleLabel, labelTemplate)
+  const sz = document.getElementById('labelPreviewSize'); if (sz) sz.textContent = `${size.widthIn}″ × ${size.heightIn}″`
+}
 
 // ── label settings modal ────────────────────────────────────────────────────
 function setupSettings() {
@@ -543,13 +569,14 @@ function setupSettings() {
       productName: inp('setProductName').checked, price: inp('setPrice').checked,
       custom: { enabled: inp('setCustom').checked, regex: inp('setRegex').value, flags: inp('setFlags').value },
     }
-    saveTemplate(); preview()
+    saveTemplate(); preview(); renderLabelPreview()
   }
   for (const id of ['setSize', 'setItemNumber', 'setBuyer', 'setProductName', 'setPrice', 'setCustom', 'setRegex', 'setFlags']) {
     document.getElementById(id)?.addEventListener('input', apply)
     document.getElementById(id)?.addEventListener('change', apply)
   }
   preview()
+  renderLabelPreview()
   const open = () => showScreen('settings')
   document.getElementById('labelSettings')?.addEventListener('click', open)
   document.getElementById('labelSettingsFooter')?.addEventListener('click', open)

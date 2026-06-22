@@ -303,12 +303,10 @@
           <div class="panel">
             <div class="panel-head">
               <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#c4ccd9;">THERMAL PRINT QUEUE</span>
-              <button id="labelSettingsFooter" class="chip amber" style="cursor:pointer;">3 PENDING</button>
+              <button id="labelSettingsFooter" class="chip amber" style="cursor:pointer;">LABEL SETTINGS</button>
             </div>
             <div id="printQueue"><div class="mono" style="padding:14px;color:#3a4150;font-size:11px;">No labels yet</div></div>
             <div class="visually-hidden">
-              <select id="printerSel"><option value="">No printer</option></select>
-              <input type="checkbox" id="autoPrint" />
               <button id="printNext" disabled></button>
               <input id="customNum" />
               <button id="printCustom"></button>
@@ -408,9 +406,16 @@
 
       <!-- ============ SETTINGS SCREEN ============ -->
       <div id="settingsScreen" style="flex:1;display:none;flex-direction:column;min-width:0;padding:14px;gap:12px;overflow:hidden;">
-        <span class="grot" style="font-weight:600;font-size:18px;flex:none;">Label Settings</span>
+        <span class="grot" style="font-weight:600;font-size:18px;flex:none;">Printing &amp; Labels</span>
         <div class="body sf-scroll" style="flex:1;min-height:0;overflow-y:auto;">
-          <div class="modal-box" style="max-width:620px;margin:0;box-shadow:none;">
+          <div class="modal-box" style="max-width:620px;margin:0 0 12px;box-shadow:none;">
+            <label>Printer
+              <select id="printerSel"><option value="">No printer</option></select>
+            </label>
+            <div class="preview" style="margin-top:2px;">Default printer is preselected; your choice is saved. <span id="printerSaved" style="color:#7fd6a6;"></span></div>
+            <label style="display:flex;gap:8px;align-items:center;margin-top:10px;"><input type="checkbox" id="autoPrint" /> Auto-print a label when an item sells</label>
+          </div>
+          <div class="modal-box" style="max-width:620px;margin:0 0 12px;box-shadow:none;">
             <label>Label size
               <select id="setSize">
                 <option value="1x1">1 × 1 in</option>
@@ -430,6 +435,12 @@
               <input type="text" id="setFlags" placeholder="flags" />
             </div>
             <div class="preview">Sample: <span id="sampleTitle"></span> → extracts <b id="extractPreview">—</b></div>
+          </div>
+          <div class="modal-box" style="max-width:620px;margin:0;box-shadow:none;">
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1px;color:#707a8c;margin-bottom:10px;">PRINT PREVIEW — exactly how this label prints <span id="labelPreviewSize" style="color:#5c6473;margin-left:6px;"></span></div>
+            <div id="labelPreviewWrap" style="background:#fff;border-radius:4px;box-shadow:0 2px 12px rgba(0,0,0,.45);overflow:hidden;">
+              <iframe id="labelPreview" title="label preview" scrolling="no" style="border:0;display:block;background:#fff;"></iframe>
+            </div>
           </div>
         </div>
       </div>
