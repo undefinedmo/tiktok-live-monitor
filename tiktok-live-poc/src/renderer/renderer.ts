@@ -92,7 +92,8 @@ let labelTemplate: LabelTemplate = (() => {
 const saveTemplate = () => localStorage.setItem('tt-label-template', JSON.stringify(labelTemplate))
 
 // ── state ───────────────────────────────────────────────────────────────────
-let sessionStart: number | undefined
+let sessionStart: number | undefined // current_session.start_time (scheduled)
+let liveStartedAt: number | undefined // room create_timestamp (actual go-live) — drives the elapsed timer
 let pinnedEndMs: number | undefined
 let serverTimeOffsetMs = 0 // from pin/get (resp_server_time − client clock); corrects the auction countdown
 let gmvFromWs = false
@@ -300,8 +301,10 @@ function fmtClock(unixSec: number): string {
   return new Date(unixSec * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 setInterval(() => {
-  if (!sessionStart) return
-  const s = Math.max(0, Math.floor(Date.now() / 1000 - sessionStart))
+  // count from the ACTUAL go-live (room create_timestamp), not the scheduled session start
+  const start = liveStartedAt ?? sessionStart
+  if (!start) return
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - start))
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60)
   $('elapsed').textContent = h ? `${h}h ${m}m` : `${m}m`
 }, 1000)
@@ -310,10 +313,20 @@ setInterval(() => {
 let flvPlayer: flvjs.Player | null = null
 let lastStreamUrl = ''
 let flvCatchup: number | null = null
+let liveSeekBound = false
+const seekToLiveEdge = (video: HTMLVideoElement, minBehind: number) => {
+  const b = video.buffered
+  if (b.length && !video.seeking && b.end(b.length - 1) - video.currentTime > minBehind) video.currentTime = b.end(b.length - 1) - 0.4
+}
 function loadStream(url: string) {
   lastStreamUrl = url
   const video = document.getElementById('live') as HTMLVideoElement | null
   if (!video || !flvjs.isSupported()) return
+  if (!liveSeekBound) {
+    liveSeekBound = true
+    // on every resume after a stall, snap to the live edge (flv.js otherwise resumes behind)
+    video.addEventListener('playing', () => seekToLiveEdge(video, 1))
+  }
   if (flvCatchup !== null) { clearInterval(flvCatchup); flvCatchup = null }
   if (flvPlayer) { try { flvPlayer.destroy() } catch { /* ignore */ } flvPlayer = null }
   flvPlayer = flvjs.createPlayer(
@@ -326,13 +339,8 @@ function loadStream(url: string) {
   flvPlayer.load()
   void video.play().catch(() => {})
   // flv.js (unlike the mpegts.js fork) does NOT chase the live edge, so latency accumulates
-  // after any rebuffer. Manually jump back toward the live edge when we fall too far behind.
-  flvCatchup = window.setInterval(() => {
-    const b = video.buffered
-    if (!b.length || video.seeking || video.paused) return
-    const edge = b.end(b.length - 1)
-    if (edge - video.currentTime > 2) video.currentTime = edge - 0.4
-  }, 2000)
+  // after any rebuffer. Periodically jump back toward the live edge when too far behind.
+  flvCatchup = window.setInterval(() => { if (!video.paused) seekToLiveEdge(video, 2) }, 2000)
 }
 
 // ── auction audio → AI transcript (mirrors sellerfolio-live enrichment) ──────
@@ -1457,6 +1465,7 @@ window.ttLive.onEvent((ev: LiveEvent) => {
     }
     case 'room':
       $('room').textContent = ev.roomId.slice(-8)
+      if (ev.createdAt) liveStartedAt = ev.createdAt // actual go-live for the elapsed timer
       break
     case 'session':
       $('sessionName').textContent = ev.name ?? '—'

@@ -80,6 +80,7 @@ export interface SessionEvent {
 export interface RoomEvent {
   kind: 'room'
   roomId: string
+  createdAt?: number // room create_timestamp (unix s) — the ACTUAL go-live, vs the scheduled session start_time
   ts: number
 }
 

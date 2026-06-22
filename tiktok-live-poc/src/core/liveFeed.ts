@@ -41,7 +41,7 @@ export class LiveFeed {
     // room — wrapped `live_room_info`, or a bare `{room_id, create_timestamp}`.
     const room = obj(root['live_room_info']) ?? (root['room_id'] && root['create_timestamp'] ? root : undefined)
     const roomId = str(room?.['room_id'])
-    if (roomId) events.push({ kind: 'room', roomId, ts } satisfies RoomEvent)
+    if (roomId) events.push({ kind: 'room', roomId, createdAt: numStr(room?.['create_timestamp']), ts } satisfies RoomEvent)
 
     // core stats — wrapped `live_core_stats`, or a bare top-level stats frame.
     const core = obj(root['live_core_stats']) ?? (root['current_viewers'] !== undefined ? root : undefined)
