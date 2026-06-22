@@ -56,6 +56,7 @@ async function tiktokCookieHeader(): Promise<string> {
 let pollRoomId: string | undefined
 let pollSessionId: string | undefined
 let pollSent = false
+let lastSalePollNow = 0 // debounce WS-sale-triggered immediate polls
 function maybeStartPolling() {
   if (pollSent || !pollRoomId || !pollSessionId || !monitor) return
   pollSent = true
@@ -180,6 +181,11 @@ ipcMain.on('tt-ws-frame', (_e, msg: { url?: string; data?: Uint8Array }) => {
     } else if (ev.kind === 'session' && ev.id) {
       pollSessionId = ev.id
       maybeStartPolling()
+    } else if (ev.kind === 'sale' && pollSent) {
+      // a product's sold-count just ticked up on the WS → fetch the new sale immediately
+      // (don't wait for the 3s poll cycle) so the label prints right away. Debounced.
+      const t = Date.now()
+      if (t - lastSalePollNow > 600) { lastSalePollNow = t; monitor?.webContents.send('tt-poll-now') }
     }
     send(ev)
   }
