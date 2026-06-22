@@ -35,6 +35,7 @@ function endpointOf(url: string): string | null {
   if (/live_auction\/auction_result\/get/.test(url)) return 'auction_result'
   if (/added_auction_product\/list/.test(url)) return 'roster'
   if (/live\/detail\/room\/status/.test(url)) return 'room_status'
+  if (/pin\/get/.test(url)) return 'pin'
   return null
 }
 

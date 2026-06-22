@@ -5,6 +5,7 @@ import { gunzipSync } from 'node:zlib'
 import { parsePushFrame } from '../core/pushFrame'
 import { LiveFeed } from '../core/liveFeed'
 import { parseRoster } from '../core/roster'
+import { parsePin } from '../core/pin'
 import { AuctionResults } from '../core/auctionResults'
 import { decodeChat } from '../core/chat'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
@@ -215,6 +216,8 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
       debug(`[tt] stream ${url.slice(0, 70)}`)
       send({ kind: 'stream', url, ts: now })
     }
+  } else if (msg?.endpoint === 'pin') {
+    send(parsePin(json, now))
   }
 })
 
