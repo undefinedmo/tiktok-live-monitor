@@ -10,6 +10,15 @@ export interface LabelData {
   title?: string // full title for the regex (e.g. "#54 Bin A - Alo Yoga…")
 }
 
+/** Per-field text-size multipliers (1 = the field's default size). */
+export interface LabelScale {
+  itemNumber?: number
+  custom?: number
+  buyer?: number
+  productName?: number
+  price?: number
+}
+
 export interface LabelTemplate {
   labelSize: '1x1' | '2x1' | '2.25x1.25'
   itemNumber: boolean
@@ -17,6 +26,7 @@ export interface LabelTemplate {
   productName: boolean
   price: boolean
   custom: { enabled: boolean; regex: string; flags?: string }
+  scale?: LabelScale // per-field text-size multipliers; absent/undefined ⇒ 1×
 }
 
 export const DEFAULT_TEMPLATE: LabelTemplate = {
@@ -26,6 +36,7 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
   productName: true,
   price: false,
   custom: { enabled: false, regex: '', flags: '' },
+  scale: { itemNumber: 1, custom: 1, buyer: 1, productName: 1, price: 1 },
 }
 
 export const LABEL_SIZES = {
@@ -61,6 +72,9 @@ const esc = (s: string) =>
 
 export function labelHtml(data: LabelData, template: LabelTemplate = DEFAULT_TEMPLATE): string {
   const size = LABEL_SIZES[template.labelSize] ?? LABEL_SIZES['2x1']
+  const sc = template.scale ?? {}
+  // each field's point size = its default × the field's multiplier (1× when unset)
+  const pt = (k: keyof LabelScale, base: number) => +(base * (sc[k] ?? 1)).toFixed(1)
   const rows: string[] = []
   if (template.itemNumber) {
     const n = parseItemNumber(data.itemNumber)
@@ -78,10 +92,10 @@ export function labelHtml(data: LabelData, template: LabelTemplate = DEFAULT_TEM
   @page { size: ${size.widthIn}in ${size.heightIn}in; margin: 0; }
   html,body { margin:0; padding:0; width:${size.widthIn}in; height:${size.heightIn}in; }
   body { font-family: Arial, sans-serif; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; overflow:hidden; }
-  .num { font-size:${size.num}pt; font-weight:800; line-height:1; }
-  .custom { font-size:13pt; font-weight:700; margin-top:2pt; }
-  .buyer { font-size:9pt; font-weight:600; margin-top:2pt; max-width:96%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-  .prod { font-size:6.5pt; color:#333; max-width:96%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-  .price { font-size:9pt; font-weight:700; margin-top:1pt; }
+  .num { font-size:${pt('itemNumber', size.num)}pt; font-weight:800; line-height:1; }
+  .custom { font-size:${pt('custom', 13)}pt; font-weight:700; margin-top:2pt; }
+  .buyer { font-size:${pt('buyer', 9)}pt; font-weight:600; margin-top:2pt; max-width:96%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  .prod { font-size:${pt('productName', 6.5)}pt; color:#333; max-width:96%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  .price { font-size:${pt('price', 9)}pt; font-weight:700; margin-top:1pt; }
   </style></head><body>${rows.join('')}</body></html>`
 }

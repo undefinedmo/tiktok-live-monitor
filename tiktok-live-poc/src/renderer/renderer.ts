@@ -16,6 +16,7 @@ function urgencyBadge(u: Urgency): { cls: string; label: string } | null {
 }
 
 interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string; title?: string }
+type LabelField = 'itemNumber' | 'custom' | 'buyer' | 'productName' | 'price'
 interface LabelTemplate {
   labelSize: '1x1' | '2x1' | '2.25x1.25'
   itemNumber: boolean
@@ -23,6 +24,7 @@ interface LabelTemplate {
   productName: boolean
   price: boolean
   custom: { enabled: boolean; regex: string; flags: string }
+  scale?: Partial<Record<LabelField, number>>
 }
 declare global {
   interface Window {
@@ -82,6 +84,7 @@ function ago(ms: number): string {
 const DEFAULT_TEMPLATE: LabelTemplate = {
   labelSize: '2x1', itemNumber: true, buyer: true, productName: true, price: false,
   custom: { enabled: false, regex: '', flags: '' },
+  scale: { itemNumber: 1, custom: 1, buyer: 1, productName: 1, price: 1 },
 }
 let labelTemplate: LabelTemplate = (() => {
   try { return { ...DEFAULT_TEMPLATE, ...JSON.parse(localStorage.getItem('tt-label-template') || '{}') } } catch { return DEFAULT_TEMPLATE }
@@ -539,6 +542,21 @@ function renderLabelPreview() {
   const sz = document.getElementById('labelPreviewSize'); if (sz) sz.textContent = `${size.widthIn}″ × ${size.heightIn}″`
 }
 
+// ── per-field text size (−/+ multipliers, applied by labelHtml + the preview) ──
+const SCALE_FIELDS: LabelField[] = ['itemNumber', 'custom', 'buyer', 'productName', 'price']
+const scaleOf = (f: LabelField): number => labelTemplate.scale?.[f] ?? 1
+function updateScaleLabels() {
+  for (const f of SCALE_FIELDS) {
+    const lbl = document.getElementById('sz-' + f)
+    if (lbl) lbl.textContent = Math.round(scaleOf(f) * 100) + '%'
+  }
+}
+function applyScale(f: LabelField, delta: number) {
+  const next = Math.min(3, Math.max(0.4, +(scaleOf(f) + delta).toFixed(2)))
+  labelTemplate.scale = { ...(labelTemplate.scale ?? {}), [f]: next }
+  saveTemplate(); updateScaleLabels(); renderLabelPreview()
+}
+
 // ── label settings modal ────────────────────────────────────────────────────
 function setupSettings() {
   const inp = (id: string) => document.getElementById(id) as HTMLInputElement
@@ -575,6 +593,10 @@ function setupSettings() {
     document.getElementById(id)?.addEventListener('input', apply)
     document.getElementById(id)?.addEventListener('change', apply)
   }
+  document.querySelectorAll<HTMLButtonElement>('.sizestep button').forEach((b) => {
+    b.addEventListener('click', () => applyScale(b.dataset.size as LabelField, Number(b.dataset.d) * 0.1))
+  })
+  updateScaleLabels()
   preview()
   renderLabelPreview()
   const open = () => showScreen('settings')
