@@ -2,6 +2,8 @@ import flvjs from 'flv.js'
 import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuction, ChatMessage } from '../core/types'
 import { computeKpis, filterRows, sortRows, profitCents, marginPct, statusLabel, applyCost, toCsv, parseRetailCents, groupForPicklist, type LedgerRow, type LedgerFilters, type LedgerTranscript, type SortKey, type CostApply, type PickGroup } from '../core/ledger'
 import { upsertShow, listShows, salesForShow, type ShowMeta, type ShowStore } from '../core/shows'
+import { urgency } from '../core/urgency'
+import { classifyException } from '../core/exceptions'
 
 interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string; title?: string }
 interface LabelTemplate {
@@ -749,6 +751,18 @@ function ledgerRowEl(r: LedgerRow): HTMLElement {
   const lbl = statusLabel(r)
   const pill = el('div', 'statuspill' + (/fail|refund|cancel/i.test(lbl) ? ' bad' : ''), lbl)
   if (r.transcript) pill.appendChild(el('span', 'ai', '✦'))
+  const urg = urgency(r.deadlines, Date.now())
+  if (urg !== 'ok') {
+    const cls = urg === 'ship-soon' ? 'soon' : urg === 'auto-cancel-risk' ? 'cancel' : 'overdue'
+    const label = urg === 'ship-soon' ? 'SHIP SOON' : urg === 'auto-cancel-risk' ? 'CANCEL RISK' : 'OVERDUE'
+    pill.appendChild(el('span', 'urg ' + cls, label))
+  }
+  const exc = classifyException(r.flags, r.paymentStatus)
+  if (exc.needsAttention) {
+    const ex = el('span', 'lc-exc', '⚠')
+    ex.title = 'Needs attention: ' + exc.reasons.join(', ')
+    pill.appendChild(ex)
+  }
   row.appendChild(pill)
   row.addEventListener('click', () => { ledgerExpanded = ledgerExpanded === r.orderId ? null : r.orderId; renderLedger() })
   return row
@@ -788,10 +802,32 @@ function ledgerDetailEl(r: LedgerRow): HTMLElement {
   for (const it of itemList) {
     mid.appendChild(el('div', 'kv', `${it.quantity}× ${it.productName}${it.variant ? ' · ' + it.variant : ''}`))
   }
-  if (dt?.carrier || dt?.tracking) {
+  const ff = r.fulfillment
+  const dl = r.deadlines
+  const fmtWhen = (ms?: number) => (ms ? new Date(ms).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : undefined)
+  const fulfillKvs: [string, string | undefined][] = [
+    ['Carrier', dt?.carrier ?? ff?.logisticsProviderName],
+    ['Service', ff?.shippingServiceName],
+    ['Tracking', dt?.tracking ?? ff?.trackingNo],
+    ['Package', ff?.packageId],
+    ['Warehouse', ff?.warehouseName],
+    ['Ship by (RTS)', fmtWhen(dl?.latestRtsMs)],
+    ['Ship by (TTS)', fmtWhen(dl?.latestTtsMs)],
+    ['Auto-cancel', fmtWhen(dl?.autoCancelMs)],
+    ['Delivery SLA', dl?.deliverySla],
+  ]
+  if (fulfillKvs.some(([, v]) => v)) {
     mid.appendChild(el('h5', undefined, 'FULFILLMENT'))
-    if (dt.carrier) { const l = el('div', 'kv'); l.appendChild(el('b', undefined, 'Carrier: ')); l.appendChild(txt(dt.carrier)); mid.appendChild(l) }
-    if (dt.tracking) { const l = el('div', 'kv'); l.appendChild(el('b', undefined, 'Tracking: ')); l.appendChild(txt(dt.tracking)); mid.appendChild(l) }
+    for (const [k, v] of fulfillKvs) {
+      if (!v) continue
+      const l = el('div', 'kv'); l.appendChild(el('b', undefined, k + ': ')); l.appendChild(txt(v)); mid.appendChild(l)
+    }
+    const u = urgency(dl, Date.now())
+    if (u !== 'ok') {
+      const l = el('div', 'kv'); l.appendChild(el('b', undefined, 'Urgency: '))
+      l.appendChild(el('span', 'flag-chip ' + (u === 'ship-soon' ? 'warn' : 'risk'), u))
+      mid.appendChild(l)
+    }
   }
   d.appendChild(mid)
 
@@ -806,6 +842,26 @@ function ledgerDetailEl(r: LedgerRow): HTMLElement {
     ['Cost', r.costCents != null ? fmtCents(r.costCents) : '—'],
     ['Profit', pc != null ? fmtCents(pc) + (m != null ? ` · ${m.toFixed(0)}%` : '') : '—'],
   ]))
+
+  // FLAGS / EXCEPTIONS (full width) — risk / replacement / notes / insurance + payment failures
+  const fl = r.flags
+  const chips: [string, string][] = []
+  if (r.paymentStatus === 'failed') chips.push(['fail', 'payment failed'])
+  if (fl?.isRiskOrder) chips.push(['risk', 'risk order'])
+  if (fl?.isReplacement) chips.push(['warn', 'replacement'])
+  if (fl?.hasBuyerNote) chips.push(['note', 'buyer note'])
+  if (fl?.hasSellerNote) chips.push(['note', 'seller note'])
+  if (fl?.hasSellerFlag) chips.push(['warn', 'seller flag'])
+  if (fl?.hasInsurance) chips.push(['ok', 'insured'])
+  if (chips.length) {
+    const exc2 = classifyException(r.flags, r.paymentStatus)
+    const strip = el('div', 'detail-full')
+    strip.appendChild(el('h5', undefined, exc2.needsAttention ? '⚠ EXCEPTIONS' : 'FLAGS'))
+    const wrap = el('div', 'flag-chips')
+    for (const [cls, label] of chips) wrap.appendChild(el('span', 'flag-chip ' + cls, label))
+    strip.appendChild(wrap)
+    d.appendChild(strip)
+  }
 
   // full-width strip: live-show tag + open-on-TikTok
   if (r.liveTag || dt?.orderUrl) {

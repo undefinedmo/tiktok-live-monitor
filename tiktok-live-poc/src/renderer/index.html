@@ -108,6 +108,16 @@
       .statuspill{font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.5px;padding:3px 8px;border-radius:5px;background:#161b24;color:#aab2c0;border:1px solid #262c38;justify-self:start;}
       .statuspill.bad{background:rgba(255,92,92,.16);color:#ff8f8f;border-color:rgba(255,92,92,.34);}
       .statuspill .ai{color:#b9adff;margin-left:6px;}
+      .statuspill .urg{margin-left:6px;font-size:9px;padding:1px 6px;border-radius:4px;letter-spacing:.4px;}
+      .urg.overdue,.urg.cancel{background:rgba(255,92,92,.18);color:#ff8f8f;border:1px solid rgba(255,92,92,.36);}
+      .urg.soon{background:rgba(245,181,74,.16);color:#f5c172;border:1px solid rgba(245,181,74,.34);}
+      .statuspill .lc-exc{margin-left:6px;color:#f5c172;cursor:help;}
+      .flag-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
+      .flag-chip{font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.4px;padding:2px 8px;border-radius:5px;background:#161b24;color:#aab2c0;border:1px solid #262c38;}
+      .flag-chip.fail,.flag-chip.risk{background:rgba(255,92,92,.14);color:#ff8f8f;border-color:rgba(255,92,92,.3);}
+      .flag-chip.warn{background:rgba(245,181,74,.14);color:#f5c172;border-color:rgba(245,181,74,.3);}
+      .flag-chip.note{background:rgba(124,131,255,.14);color:#b9adff;border-color:rgba(124,131,255,.3);}
+      .flag-chip.ok{background:rgba(74,200,140,.13);color:#7fd6a6;border-color:rgba(74,200,140,.3);}
       .ledger-detail{padding:14px 16px;background:#0a0d13;border-bottom:1px solid #1a1e27;display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:18px;}
       .ledger-detail h5{margin:0 0 8px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1px;color:#707a8c;font-weight:500;}
       .ledger-detail .kv{font-size:12px;color:#cdd4e0;line-height:1.7;} .ledger-detail .kv b{color:#8b93a3;font-weight:500;}
