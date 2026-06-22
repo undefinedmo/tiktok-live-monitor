@@ -442,7 +442,10 @@
             <div class="preview">Sample: <span id="sampleTitle"></span> → extracts <b id="extractPreview">—</b></div>
           </div>
           <div class="modal-box" style="max-width:620px;margin:0;box-shadow:none;">
-            <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1px;color:#707a8c;margin-bottom:10px;">PRINT PREVIEW — exactly how this label prints <span id="labelPreviewSize" style="color:#5c6473;margin-left:6px;"></span></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:12px;">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1px;color:#707a8c;">PRINT PREVIEW — exactly how this label prints <span id="labelPreviewSize" style="color:#5c6473;margin-left:6px;"></span></span>
+              <button id="printSample" class="chip amber" type="button" style="cursor:pointer;flex:none;" disabled>Print sample</button>
+            </div>
             <div id="labelPreviewWrap" style="background:#fff;border-radius:4px;box-shadow:0 2px 12px rgba(0,0,0,.45);overflow:hidden;">
               <iframe id="labelPreview" title="label preview" scrolling="no" style="border:0;display:block;background:#fff;"></iframe>
             </div>

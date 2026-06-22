@@ -507,11 +507,12 @@ async function setupPrinting() {
   sel.value = selectedPrinter
   const printerHint = () => { const h = document.getElementById('printerSaved'); if (h) h.textContent = selectedPrinter ? '· current: ' + selectedPrinter : '· none selected yet' }
   printerHint()
+  updateSampleBtn()
   autoPrint = localStorage.getItem('tt-autoprint') === '1'
   ;($('autoPrint') as HTMLInputElement).checked = autoPrint
   updatePrintNext()
   renderQueue()
-  sel.addEventListener('change', () => { selectedPrinter = sel.value; void window.labelAPI.savePrinter(selectedPrinter); updatePrintNext(); renderQueue(); printerHint() })
+  sel.addEventListener('change', () => { selectedPrinter = sel.value; void window.labelAPI.savePrinter(selectedPrinter); updatePrintNext(); renderQueue(); printerHint(); updateSampleBtn() })
   ;($('autoPrint') as HTMLInputElement).addEventListener('change', (e) => { autoPrint = (e.target as HTMLInputElement).checked; localStorage.setItem('tt-autoprint', autoPrint ? '1' : '0') })
   $('printNext').addEventListener('click', () => { if (lastPrintedNumber !== null) void printLabel({ itemNumber: String(lastPrintedNumber + 1) }) })
   $('printCustom').addEventListener('click', () => { const v = ($('customNum') as HTMLInputElement).value.replace(/^#/, '').trim(); if (v) void printLabel({ itemNumber: v }) })
@@ -540,6 +541,14 @@ function renderLabelPreview() {
   if (wrap) { wrap.style.width = Math.round(wPx * scale) + 'px'; wrap.style.height = Math.round(hPx * scale) + 'px' }
   ifr.srcdoc = labelHtml(sampleLabel, labelTemplate)
   const sz = document.getElementById('labelPreviewSize'); if (sz) sz.textContent = `${size.widthIn}″ × ${size.heightIn}″`
+}
+
+// "Print sample" — sends the preview's sample label to the selected printer (a test print).
+function updateSampleBtn() {
+  const b = document.getElementById('printSample') as HTMLButtonElement | null
+  if (!b) return
+  b.disabled = !selectedPrinter
+  b.title = selectedPrinter ? `Print a test label to ${selectedPrinter}` : 'Select a printer first'
 }
 
 // ── per-field text size (−/+ multipliers, applied by labelHtml + the preview) ──
@@ -596,7 +605,9 @@ function setupSettings() {
   document.querySelectorAll<HTMLButtonElement>('.sizestep button').forEach((b) => {
     b.addEventListener('click', () => applyScale(b.dataset.size as LabelField, Number(b.dataset.d) * 0.1))
   })
+  document.getElementById('printSample')?.addEventListener('click', () => void printLabel(sampleLabel))
   updateScaleLabels()
+  updateSampleBtn()
   preview()
   renderLabelPreview()
   const open = () => showScreen('settings')
