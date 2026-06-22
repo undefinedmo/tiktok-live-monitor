@@ -9,6 +9,7 @@ import { AuctionResults } from '../core/auctionResults'
 import { decodeChat } from '../core/chat'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
 import { pullTiktokOrders, orderToSale, fetchOrderDetails } from './tiktok-orders'
+import { openDb, upsertOrders, getSnapshot, setCost, setTranscript, setPicked, getShows, setShows, importLegacy, rekeyProductTemplates, type LegacyBlob } from './db'
 import { buildClipMedia } from './clip'
 import type { LiveEvent, StatusEvent } from '../core/types'
 
@@ -20,6 +21,7 @@ const LOGIN_RE = /\/(login|passport|account\/login)/
 const CHROME_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36'
 
+let db: ReturnType<typeof openDb> | null = null
 let viewer: BrowserWindow | null = null
 let monitor: BrowserWindow | null = null
 let seller: BrowserWindow | null = null // Seller-Center login window for order Sync (independent of the Live Monitor)
@@ -247,6 +249,17 @@ ipcMain.handle('save-printer', (_e, name: string) => {
   try { writeFileSync(PRINTER_FILE, JSON.stringify({ printer: name })) } catch { /* ignore */ }
   return true
 })
+
+// ── SQLite DB IPC handlers ────────────────────────────────────────────────────
+ipcMain.handle('tt-db:getSnapshot', () => (db ? getSnapshot(db) : { orders: [], costs: {}, productCosts: {}, orderTx: {}, productTx: {}, picked: [], shows: {} }))
+ipcMain.handle('tt-db:setCost', (_e, p: { orderId: string; cents: number | null }) => { if (db) setCost(db, 'order', p.orderId, p.cents, Date.now()); return true })
+ipcMain.handle('tt-db:setProductCost', (_e, p: { productId: string; cents: number | null }) => { if (db) setCost(db, 'product', p.productId, p.cents, Date.now()); return true })
+ipcMain.handle('tt-db:setTranscript', (_e, p: { scope: 'order' | 'product'; key: string; transcript: unknown | null }) => { if (db) setTranscript(db, p.scope, p.key, p.transcript as never, Date.now()); return true })
+ipcMain.handle('tt-db:setPicked', (_e, p: { orderId: string; picked: boolean }) => { if (db) setPicked(db, p.orderId, p.picked, Date.now()); return true })
+ipcMain.handle('tt-db:getShows', () => (db ? getShows(db) : {}))
+ipcMain.handle('tt-db:setShows', (_e, store: unknown) => { if (db) setShows(db, store); return true })
+ipcMain.handle('tt-db:importLegacy', (_e, blob: LegacyBlob) => { if (db) importLegacy(db, blob, Date.now()); return true })
+
 // ── AI transcription (Gemini, mirrors sellerfolio-live's enrichment) ─────────
 // Key resolution: env var wins, else a local gitignored `gemini.key` file in the PoC root
 // (same convention as live-ledger). __dirname is dist/, so '..' is the project root.
@@ -287,13 +300,12 @@ ipcMain.handle('tt-sync', async () => {
   try {
     const cookieHeader = await tiktokCookieHeader()
     const { orders, total } = await pullTiktokOrders(cookieHeader)
-    const sales = orders.map(orderToSale)
-    send({ kind: 'orders', orders: sales, total, ts: Date.now() })
-    debug(`[tt] synced ${sales.length}/${total} orders`)
-    return { ok: true, count: sales.length }
+    const now = Date.now()
+    if (db) { upsertOrders(db, orders, now); rekeyProductTemplates(db, now) }
+    debug(`[tt] synced ${orders.length}/${total} orders`)
+    return { ok: true, count: orders.length }
   } catch (e) {
     const msg = (e as Error).message
-    // an auth/session failure on the order endpoint → prompt a Seller-Center re-login
     if (/code\s|HTTP 401|session may be expired/i.test(msg)) openSellerLogin()
     return { ok: false, reason: msg.slice(0, 160) }
   } finally {
@@ -505,6 +517,7 @@ app.whenReady().then(() => {
   app.userAgentFallback = CHROME_UA
   Menu.setApplicationMenu(null) // remove the native File/Edit/View/Window/Help menu bar
   nativeTheme.themeSource = 'dark' // dark native title bar (min/max/close) to match the body
+  db = openDb(join(app.getPath('userData'), 'tiktok.db'))
   createViewer()
   if (process.env.TT_REPLAY) {
     setTimeout(replayFixtures, 1200)
