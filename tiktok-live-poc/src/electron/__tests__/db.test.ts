@@ -17,6 +17,19 @@ describe('db: orders', () => {
     db.close()
   })
 
+  it('does not persist the address (PII) into sale_json', () => {
+    const db = openDb(':memory:')
+    upsertOrders(db, [mapTiktokOrder(fixture)], 1000)
+    // the address must not be present in the stored blob...
+    const row = db.prepare('SELECT sale_json FROM orders').get() as { sale_json: string }
+    expect(row.sale_json).not.toContain('Austin')
+    // ...but other detail fields survive
+    const snap = getSnapshot(db)
+    expect(snap.orders[0]!.detail?.address).toBeUndefined()
+    expect(snap.orders[0]!.detail?.status).toBeDefined()
+    db.close()
+  })
+
   it('upsert is idempotent (re-sync updates, never duplicates)', () => {
     const db = openDb(':memory:')
     upsertOrders(db, [mapTiktokOrder(fixture)], 1000)

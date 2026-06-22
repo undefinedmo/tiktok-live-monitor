@@ -7,6 +7,11 @@ import type { LedgerTranscript } from '../core/ledger'
 
 export type Db = Database.Database
 
+/** Remove address PII before persisting — we never store addresses on disk. */
+function stripForStorage(sale: Sale): Sale {
+  return sale.detail?.address == null ? sale : { ...sale, detail: { ...sale.detail, address: undefined } }
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS orders (
@@ -86,7 +91,7 @@ export function upsertOrders(db: Db, orders: MappedOrder[], now: number): void {
         live_tag: o.liveTag, room_id: o.roomId,
         is_auction: o.isAuction ? 1 : 0, is_reversed: o.isReversed ? 1 : 0,
         placed_at: o.placedAt, video_receipt_ts: o.videoReceiptTs,
-        payment_status: sale.paymentStatus, sale_json: JSON.stringify(sale), synced_at: now,
+        payment_status: sale.paymentStatus, sale_json: JSON.stringify(stripForStorage(sale)), synced_at: now,
       })
       delItems.run(o.externalOrderId)
       o.items.forEach((it, i) =>
@@ -175,7 +180,7 @@ export function importLegacy(db: Db, blob: LegacyBlob, now: number): void {
     // cached orders: keep the Sale blob so the ledger renders before the first re-sync.
     const ins = db.prepare("INSERT INTO orders (order_id,total_cents,payment_status,live_tag,placed_at,is_auction,is_reversed,sale_json,synced_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(order_id) DO NOTHING")
     for (const s of blob.orders ?? []) {
-      ins.run(s.orderId, s.price.cents, s.paymentStatus, s.liveTag ?? null, s.createdAt, s.detail?.isAuction ? 1 : 0, 0, JSON.stringify(s), now)
+      ins.run(s.orderId, s.price.cents, s.paymentStatus, s.liveTag ?? null, s.createdAt, s.detail?.isAuction ? 1 : 0, 0, JSON.stringify(stripForStorage(s)), now)
     }
     db.prepare("INSERT INTO meta (k,v) VALUES ('legacy_migrated','1') ON CONFLICT(k) DO UPDATE SET v='1'").run()
   })
