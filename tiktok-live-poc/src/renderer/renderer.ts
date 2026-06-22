@@ -509,28 +509,6 @@ function printSale(s: Sale) {
   printLabel({ itemNumber: num, buyer: s.buyer.username || s.buyer.handle, productName: s.productName, price: s.price.formatted, title })
 }
 
-// Auto-print at AUCTION-END: when the pinned lot changes, the previous lot just closed →
-// print its winner straight from the roster (the winner is known at bid-close, BEFORE any
-// payment, so this is payment-agnostic and fires as soon as the auction ends). Dedup by
-// auction_config_id; seed on the first roster so connecting mid-show doesn't reprint.
-let lastPinnedAuction: PinnedAuction | null = null
-let pinnedSeeded = false
-const printedAuctionIds = new Set<string>()
-function maybePrintEndedAuction(pinned?: PinnedAuction) {
-  if (!pinnedSeeded) { pinnedSeeded = true; lastPinnedAuction = pinned ?? null; return }
-  const prev = lastPinnedAuction
-  if (prev?.auctionConfigId && prev.auctionConfigId !== pinned?.auctionConfigId) printEndedAuction(prev)
-  if (pinned) lastPinnedAuction = pinned
-}
-function printEndedAuction(a: PinnedAuction) {
-  if (!a.auctionConfigId || !a.winUsername) return // no lot id, or no winner (no bids) → nothing sold
-  if (printedAuctionIds.has(a.auctionConfigId)) return
-  printedAuctionIds.add(a.auctionConfigId)
-  if (!autoPrint || !selectedPrinter) return
-  const item = (a.variantDesc ?? '').replace(/^#/, '')
-  void printLabel({ itemNumber: item, buyer: a.winUsername, productName: a.productName, price: a.maxBiddingPrice, title: `${a.variantDesc ? a.variantDesc + ' ' : ''}${a.productName}` })
-}
-
 function updatePrintNext() {
   const btn = $('printNext') as HTMLButtonElement
   btn.textContent = lastPrintedNumber !== null ? `Next #${lastPrintedNumber + 1}` : 'Next'
@@ -1490,7 +1468,6 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       for (const p of ev.products) rosterProducts.set(p.productId, p)
       renderProductsTable()
       renderAuction(ev.pinned)
-      maybePrintEndedAuction(ev.pinned) // print the winner the instant the lot closes
       stats.sales = String(ev.totalSold)
       renderStats()
       break
@@ -1524,12 +1501,14 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       if (seedMaxCreatedAt === null) {
         seedMaxCreatedAt = maxCreated
       } else {
-        // NB: auto-print now fires at auction-END via maybePrintEndedAuction (roster),
-        // not here — the auction_result feed lags and is payment-gated. This path only
-        // drives the AI transcript of the latest fresh sale.
-        const fresh = ev.newSales.filter((s) => s.createdAt > seedMaxCreatedAt! && s.paymentStatus !== 'failed')
-        const recent = fresh.find((s) => Date.now() - s.createdAt < 60000)
-        if (recent) void transcribeSale(recent) // AI transcript for the latest fresh sale
+        // Auto-print every genuinely-new sale (skip the connect-time backlog). Print
+        // regardless of payment — label at the win, even if payment later fails. The roster's
+        // pinned card does NOT advance per lot, so auction_result newSales is the reliable
+        // per-sale signal (verified live: it emits +1 per sale; the pinned stays put).
+        const freshSales = ev.newSales.filter((s) => s.createdAt > seedMaxCreatedAt!)
+        if (autoPrint && selectedPrinter) for (const s of freshSales) printSale(s)
+        const recent = freshSales.find((s) => s.paymentStatus !== 'failed' && Date.now() - s.createdAt < 60000)
+        if (recent) void transcribeSale(recent) // AI transcript for the latest fresh non-failed sale
         seedMaxCreatedAt = Math.max(seedMaxCreatedAt, maxCreated)
       }
       renderLedger()
