@@ -27,6 +27,28 @@
     "sku_total_price": { "price_val": "75.00" },
     "order_line_ids": ["577000000000000001-1"]
   }],
-  "trade_order_module": { "create_time": 1718900000 },
+  "trade_order_module": {
+    "create_time": 1718900000,
+    "latest_rts_time": 1718995000,
+    "latest_tts_time": 1719081400,
+    "ship_cancellation_plan_time": 1719254200,
+    "delivery_sla": "Ship by Jun 21",
+    "split_combined_tag": 0,
+    "is_smart_combined": false
+  },
+  "fulfillment_module": [{
+    "shipping_provider_name": "USPS",
+    "tracking_number": "9400100000000000000000",
+    "fulfill_unit_id": "7301000000000000001",
+    "package_id": "1152921000000000001",
+    "warehouse_id": "7200000000000000001",
+    "warehouse_name": "Main Warehouse",
+    "shipping_service_name": "USPS Ground Advantage",
+    "package_status": 1,
+    "label_status": 0,
+    "picking_list_status": 0,
+    "packing_list_status": 0
+  }],
+  "processing_time_info_module": { "processing_time_info": { "latest_processing_timestamp": 1718995000, "processing_time": 86400, "extend_limit": 1 } },
   "extra_data_map": { "auction_tag": "1", "sales_source_live_tag": { "value": { "v_dynamic_express": { "items": [{ "message_content": "LIVE 6/20" }] } } } }
 }

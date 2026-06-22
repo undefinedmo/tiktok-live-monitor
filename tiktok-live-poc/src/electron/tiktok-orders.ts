@@ -4,7 +4,7 @@
 // real order book headlessly from Electron's main process. This is independent of any
 // live stream: it's the seller's order history, the source for the Order Ledger.
 
-import type { Sale } from '../core/types'
+import type { Sale, OrderDeadlines, FulfillmentInfo } from '../core/types'
 
 type Raw = Record<string, unknown>
 
@@ -69,6 +69,8 @@ export interface MappedOrder {
   placedAt: number | null
   roomId: string | null
   videoReceiptTs: number | null
+  deadlines?: OrderDeadlines
+  fulfillment?: FulfillmentInfo
   items: {
     productId: string | null
     skuId: string | null
@@ -110,6 +112,33 @@ export function mapTiktokOrder(o: Raw): MappedOrder {
   const region = [addr.city, addr.state || addr.region, addr.zipcode || addr.postal_code].filter(Boolean).join(', ') || null
   const fm = (get(o, 'fulfillment_module.0') as Raw) || {}
 
+  const deadlines: OrderDeadlines = {
+    latestRtsMs: ts(get(o, 'trade_order_module.latest_rts_time')) ?? undefined,
+    latestTtsMs: ts(get(o, 'trade_order_module.latest_tts_time')) ?? undefined,
+    autoCancelMs: ts(get(o, 'trade_order_module.ship_cancellation_plan_time')) ?? undefined,
+    deliverySla: (get(o, 'trade_order_module.delivery_sla') as string | undefined) ?? undefined,
+    processingDueMs: ts(get(o, 'processing_time_info_module.processing_time_info.latest_processing_timestamp')) ?? undefined,
+  }
+
+  const isSplitOrCombined: boolean =
+    !!get(o, 'trade_order_module.is_smart_combined') ||
+    (num(get(o, 'trade_order_module.split_combined_tag')) !== null && num(get(o, 'trade_order_module.split_combined_tag')) !== 0)
+
+  const fulfillment: FulfillmentInfo = {
+    packageId: (fm.package_id as string | undefined) ?? undefined,
+    fulfillUnitId: (fm.fulfill_unit_id as string | undefined) ?? undefined,
+    trackingNo: (fm.tracking_number as string | undefined) ?? undefined,
+    warehouseId: (fm.warehouse_id as string | undefined) ?? undefined,
+    warehouseName: (fm.warehouse_name as string | undefined) ?? undefined,
+    logisticsProviderName: (fm.shipping_provider_name as string | undefined) ?? undefined,
+    shippingServiceName: (fm.shipping_service_name as string | undefined) ?? undefined,
+    packageStatus: num(fm.package_status) ?? undefined,
+    labelStatus: num(fm.label_status) ?? undefined,
+    pickingListStatus: num(fm.picking_list_status) ?? undefined,
+    packingListStatus: num(fm.packing_list_status) ?? undefined,
+    isSplitOrCombined,
+  }
+
   return {
     externalOrderId: String(get(o, 'main_order_id') ?? get(o, 'note_module.main_order_id') ?? ''),
     status,
@@ -133,6 +162,8 @@ export function mapTiktokOrder(o: Raw): MappedOrder {
     placedAt: ts(get(o, 'trade_order_module.create_time') ?? get(o, 'fulfillment_module.0.create_time')),
     roomId: get(o, 'auction_module.live_room_id') != null ? String(get(o, 'auction_module.live_room_id')) : null,
     videoReceiptTs: num(get(o, 'auction_module.video_receipt_timestamp')) != null ? Math.round(num(get(o, 'auction_module.video_receipt_timestamp'))!) : null,
+    deadlines,
+    fulfillment,
     items,
   }
 }
@@ -166,6 +197,8 @@ export function orderToSale(o: MappedOrder): Sale {
     paymentStatus,
     createdAt: o.placedAt ?? Date.now(),
     liveTag: o.liveTag ?? undefined,
+    deadlines: o.deadlines,
+    fulfillment: o.fulfillment,
     detail: {
       status: o.status,
       subtotalCents: o.subtotalCents,

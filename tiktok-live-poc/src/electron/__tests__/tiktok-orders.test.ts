@@ -89,3 +89,61 @@ describe('orderToSale — stable identity + breakdown', () => {
     expect(orderToSale(mapTiktokOrder(noId)).productId).toBe('Legacy Bin')
   })
 })
+
+describe('orderToSale — fulfillment + SLA deadlines (Phase 2)', () => {
+  const fixture = JSON.parse(readFileSync(join(__dirname, '../../../fixtures/order-list-sample.json'), 'utf8'))
+
+  it('promotes second-timestamps to ms for deadline fields', () => {
+    const sale = orderToSale(mapTiktokOrder(fixture))
+    expect(sale.deadlines?.latestRtsMs).toBe(1718995000 * 1000)
+    expect(sale.deadlines?.autoCancelMs).toBe(1719254200 * 1000)
+    expect(sale.deadlines?.deliverySla).toBe('Ship by Jun 21')
+  })
+
+  it('parses fulfillment package + warehouse fields', () => {
+    const sale = orderToSale(mapTiktokOrder(fixture))
+    expect(sale.fulfillment?.packageId).toBe('1152921000000000001')
+    expect(sale.fulfillment?.fulfillUnitId).toBe('7301000000000000001')
+    expect(sale.fulfillment?.warehouseName).toBe('Main Warehouse')
+    expect(sale.fulfillment?.logisticsProviderName).toBe('USPS')
+  })
+
+  it('isSplitOrCombined is false when tag=0 and is_smart_combined=false', () => {
+    const sale = orderToSale(mapTiktokOrder(fixture))
+    expect(sale.fulfillment?.isSplitOrCombined).toBe(false)
+  })
+
+  it('isSplitOrCombined is true when split_combined_tag is nonzero', () => {
+    const modified = {
+      ...fixture,
+      trade_order_module: { ...fixture.trade_order_module, split_combined_tag: 1, is_smart_combined: false },
+    }
+    const sale = orderToSale(mapTiktokOrder(modified))
+    expect(sale.fulfillment?.isSplitOrCombined).toBe(true)
+  })
+
+  it('isSplitOrCombined is true when is_smart_combined=true', () => {
+    const modified = {
+      ...fixture,
+      trade_order_module: { ...fixture.trade_order_module, split_combined_tag: 0, is_smart_combined: true },
+    }
+    const sale = orderToSale(mapTiktokOrder(modified))
+    expect(sale.fulfillment?.isSplitOrCombined).toBe(true)
+  })
+
+  it('deadlines and fulfillment are defined even when optional modules are absent', () => {
+    const bare = {
+      main_order_id: '9990000000001',
+      order_status_module: [{ main_order_status: 101 }],
+      price_module: { grand_total: { price_val: '10.00' } },
+      sku_module: [],
+    }
+    const sale = orderToSale(mapTiktokOrder(bare))
+    // With no trade_order_module at all, deadlines fields are undefined but object is defined
+    expect(sale.deadlines?.latestRtsMs).toBeUndefined()
+    expect(sale.deadlines?.deliverySla).toBeUndefined()
+    // With no fulfillment_module, all fulfillment fields are undefined
+    expect(sale.fulfillment?.packageId).toBeUndefined()
+    expect(sale.fulfillment?.isSplitOrCombined).toBe(false)
+  })
+})
