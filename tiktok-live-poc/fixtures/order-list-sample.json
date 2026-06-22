@@ -50,5 +50,6 @@
     "packing_list_status": 0
   }],
   "processing_time_info_module": { "processing_time_info": { "latest_processing_timestamp": 1718995000, "processing_time": 86400, "extend_limit": 1 } },
-  "extra_data_map": { "auction_tag": "1", "sales_source_live_tag": { "value": { "v_dynamic_express": { "items": [{ "message_content": "LIVE 6/20" }] } } } }
+  "extra_data_map": { "auction_tag": "1", "sales_source_live_tag": { "value": { "v_dynamic_express": { "items": [{ "message_content": "LIVE 6/20" }] } } }, "risk_order_tag_v1": { "value": "1" }, "gift_insurance_tag": { "value": "1" } },
+  "note_module": { "has_buyer_note": true, "has_seller_note": false, "has_seller_flag": true }
 }

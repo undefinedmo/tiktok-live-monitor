@@ -90,6 +90,35 @@ describe('orderToSale — stable identity + breakdown', () => {
   })
 })
 
+describe('orderToSale — order flags (Phase 3 Unit F)', () => {
+  const fixture = JSON.parse(readFileSync(join(__dirname, '../../../fixtures/order-list-sample.json'), 'utf8'))
+
+  it('parses note_module flags from fixture', () => {
+    const sale = orderToSale(mapTiktokOrder(fixture))
+    expect(sale.flags?.hasBuyerNote).toBe(true)
+    expect(sale.flags?.hasSellerNote).toBe(false)
+    expect(sale.flags?.hasSellerFlag).toBe(true)
+  })
+
+  it('parses extra_data_map flags from fixture', () => {
+    const sale = orderToSale(mapTiktokOrder(fixture))
+    expect(sale.flags?.isRiskOrder).toBe(true)
+    expect(sale.flags?.isReplacement).toBe(false) // tag absent in fixture
+    expect(sale.flags?.hasInsurance).toBe(true)
+  })
+
+  it('returns all-false flags for a stripped order without throwing', () => {
+    const bare = { main_order_id: 'X', sku_module: [] }
+    const sale = orderToSale(mapTiktokOrder(bare))
+    expect(sale.flags?.isRiskOrder).toBe(false)
+    expect(sale.flags?.isReplacement).toBe(false)
+    expect(sale.flags?.hasInsurance).toBe(false)
+    expect(sale.flags?.hasBuyerNote).toBe(false)
+    expect(sale.flags?.hasSellerNote).toBe(false)
+    expect(sale.flags?.hasSellerFlag).toBe(false)
+  })
+})
+
 describe('orderToSale — fulfillment + SLA deadlines (Phase 2)', () => {
   const fixture = JSON.parse(readFileSync(join(__dirname, '../../../fixtures/order-list-sample.json'), 'utf8'))
 

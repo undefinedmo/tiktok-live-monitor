@@ -4,7 +4,7 @@
 // real order book headlessly from Electron's main process. This is independent of any
 // live stream: it's the seller's order history, the source for the Order Ledger.
 
-import type { Sale, OrderDeadlines, FulfillmentInfo } from '../core/types'
+import type { Sale, OrderDeadlines, FulfillmentInfo, OrderFlags } from '../core/types'
 
 type Raw = Record<string, unknown>
 
@@ -71,6 +71,7 @@ export interface MappedOrder {
   videoReceiptTs: number | null
   deadlines?: OrderDeadlines
   fulfillment?: FulfillmentInfo
+  flags?: OrderFlags
   items: {
     productId: string | null
     skuId: string | null
@@ -164,6 +165,14 @@ export function mapTiktokOrder(o: Raw): MappedOrder {
     videoReceiptTs: num(get(o, 'auction_module.video_receipt_timestamp')) != null ? Math.round(num(get(o, 'auction_module.video_receipt_timestamp'))!) : null,
     deadlines,
     fulfillment,
+    flags: {
+      isRiskOrder: !!get(o, 'extra_data_map.risk_order_tag_v1'),
+      isReplacement: !!get(o, 'extra_data_map.replacement_order_tag_v1'),
+      hasInsurance: !!get(o, 'extra_data_map.gift_insurance_tag'),
+      hasBuyerNote: !!get(o, 'note_module.has_buyer_note'),
+      hasSellerNote: !!get(o, 'note_module.has_seller_note'),
+      hasSellerFlag: !!get(o, 'note_module.has_seller_flag'),
+    },
     items,
   }
 }
@@ -199,6 +208,7 @@ export function orderToSale(o: MappedOrder): Sale {
     liveTag: o.liveTag ?? undefined,
     deadlines: o.deadlines,
     fulfillment: o.fulfillment,
+    flags: o.flags,
     detail: {
       status: o.status,
       subtotalCents: o.subtotalCents,
