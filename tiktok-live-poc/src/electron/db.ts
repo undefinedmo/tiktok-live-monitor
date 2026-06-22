@@ -147,3 +147,61 @@ export function getShows(db: Db): unknown {
 export function setShows(db: Db, store: unknown): void {
   db.prepare("INSERT INTO meta (k,v) VALUES ('shows',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").run(JSON.stringify(store))
 }
+
+export interface LegacyBlob {
+  cost?: Record<string, number>
+  productCost?: Record<string, number>
+  orderTx?: Record<string, LedgerTranscript>
+  productTx?: Record<string, LedgerTranscript>
+  orders?: Sale[]
+  shows?: unknown
+  picked?: string[]
+}
+
+export function isMigrated(db: Db): boolean {
+  const r = db.prepare("SELECT v FROM meta WHERE k = 'legacy_migrated'").get() as { v: string } | undefined
+  return r?.v === '1'
+}
+
+export function importLegacy(db: Db, blob: LegacyBlob, now: number): void {
+  if (isMigrated(db)) return
+  const run = db.transaction(() => {
+    for (const [k, c] of Object.entries(blob.cost ?? {})) setCost(db, 'order', k, c, now)
+    for (const [k, c] of Object.entries(blob.productCost ?? {})) setCost(db, 'product', k, c, now)
+    for (const [k, t] of Object.entries(blob.orderTx ?? {})) setTranscript(db, 'order', k, t, now)
+    for (const [k, t] of Object.entries(blob.productTx ?? {})) setTranscript(db, 'product', k, t, now)
+    for (const id of blob.picked ?? []) setPicked(db, id, true, now)
+    if (blob.shows) setShows(db, blob.shows)
+    // cached orders: keep the Sale blob so the ledger renders before the first re-sync.
+    const ins = db.prepare("INSERT INTO orders (order_id,total_cents,payment_status,live_tag,placed_at,is_auction,is_reversed,sale_json,synced_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(order_id) DO NOTHING")
+    for (const s of blob.orders ?? []) {
+      ins.run(s.orderId, s.price.cents, s.paymentStatus, s.liveTag ?? null, s.createdAt, s.detail?.isAuction ? 1 : 0, 0, JSON.stringify(s), now)
+    }
+    db.prepare("INSERT INTO meta (k,v) VALUES ('legacy_migrated','1') ON CONFLICT(k) DO UPDATE SET v='1'").run()
+  })
+  run()
+}
+
+/** After an enriched sync, re-key name-keyed product cost/transcript rows to product_id. */
+export function rekeyProductTemplates(db: Db, now: number): void {
+  const rows = db.prepare('SELECT DISTINCT product_name, product_id FROM order_items WHERE product_id IS NOT NULL AND product_name IS NOT NULL').all() as { product_name: string; product_id: string }[]
+  const run = db.transaction(() => {
+    for (const { product_name: name, product_id: pid } of rows) {
+      if (name === pid) continue
+      const c = db.prepare("SELECT cents FROM costs WHERE scope='product' AND key=?").get(name) as { cents: number } | undefined
+      if (c) {
+        db.prepare("INSERT INTO costs (scope,key,cents,updated_at) VALUES ('product',?,?,?) ON CONFLICT(scope,key) DO UPDATE SET cents=excluded.cents,updated_at=excluded.updated_at").run(pid, c.cents, now)
+        db.prepare("DELETE FROM costs WHERE scope='product' AND key=?").run(name)
+      }
+      const t = db.prepare("SELECT * FROM transcripts WHERE scope='product' AND key=?").get(name) as TxRow | undefined
+      if (t) {
+        db.prepare(`INSERT INTO transcripts (scope,key,brand,item,color,size,retail_price,summary,updated_at) VALUES ('product',?,?,?,?,?,?,?,?)
+          ON CONFLICT(scope,key) DO UPDATE SET brand=excluded.brand,item=excluded.item,color=excluded.color,size=excluded.size,retail_price=excluded.retail_price,summary=excluded.summary,updated_at=excluded.updated_at`)
+          .run(pid, t.brand, t.item, t.color, t.size, t.retail_price, t.summary, now)
+        db.prepare("DELETE FROM transcripts WHERE scope='product' AND key=?").run(name)
+      }
+      db.prepare("INSERT OR IGNORE INTO product_aliases (name,product_id,created_at) VALUES (?,?,?)").run(name, pid, now)
+    }
+  })
+  run()
+}

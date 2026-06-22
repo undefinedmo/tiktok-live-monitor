@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { openDb, upsertOrders, getSnapshot, setCost, setTranscript, setPicked, getShows, setShows } from '../db'
+import { openDb, upsertOrders, getSnapshot, setCost, setTranscript, setPicked, getShows, setShows, importLegacy, isMigrated, rekeyProductTemplates } from '../db'
 import { mapTiktokOrder } from '../tiktok-orders'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -52,6 +52,34 @@ describe('db: user-owned data', () => {
     expect(getSnapshot(db).productTx.P1).toBeUndefined()
     setPicked(db, 'O9', false, 2)
     expect(getSnapshot(db).picked).not.toContain('O9')
+    db.close()
+  })
+})
+
+describe('db: legacy migration + re-key', () => {
+  it('imports localStorage blobs once and is idempotent', () => {
+    const db = openDb(':memory:')
+    const blob = { cost: { O1: 500 }, productCost: { 'Bin A - Alo Yoga': 2000 }, productTx: { 'Bin A - Alo Yoga': { brand: 'Alo' } }, picked: ['O1'], shows: { a: 1 } }
+    expect(isMigrated(db)).toBe(false)
+    importLegacy(db, blob, 1)
+    importLegacy(db, blob, 2) // second call is a no-op
+    expect(isMigrated(db)).toBe(true)
+    const snap = getSnapshot(db)
+    expect(snap.costs.O1).toBe(500)
+    expect(snap.productCosts['Bin A - Alo Yoga']).toBe(2000)
+    expect(snap.picked).toEqual(['O1'])
+    db.close()
+  })
+
+  it('re-keys name-keyed product templates to product_id after a sync', () => {
+    const db = openDb(':memory:')
+    importLegacy(db, { productCost: { 'Bin A - Alo Yoga': 2000 }, productTx: { 'Bin A - Alo Yoga': { brand: 'Alo' } } }, 1)
+    upsertOrders(db, [mapTiktokOrder(fixture)], 1) // order_items now maps "Bin A - Alo Yoga" -> 1729500000000000001
+    rekeyProductTemplates(db, 2)
+    const snap = getSnapshot(db)
+    expect(snap.productCosts['1729500000000000001']).toBe(2000)
+    expect(snap.productCosts['Bin A - Alo Yoga']).toBeUndefined()
+    expect(snap.productTx['1729500000000000001']!.brand).toBe('Alo')
     db.close()
   })
 })
