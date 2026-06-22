@@ -24,7 +24,7 @@ function toCurrent(c: Json): PinnedAuction {
     numBids: num(item['num_of_bids']),
     status: num(item['status']),
     expectedEndMs: Number(str(item['expected_end_time_ms'])) || undefined,
-    actualEndMs: actualEndSec != null ? actualEndSec * 1000 : undefined,
+    actualEndMs: actualEndSec != null && actualEndSec > 0 ? actualEndSec * 1000 : undefined,
     actualStartMs: actualStartSec != null && actualStartSec > 0 ? actualStartSec * 1000 : undefined,
     auctionBidTimestampMs: Number(str(item['auction_bid_timestamp'])) || undefined,
   }
