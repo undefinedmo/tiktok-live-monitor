@@ -1,9 +1,18 @@
 import flvjs from 'flv.js'
-import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuction, ChatMessage } from '../core/types'
+import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuction, ChatMessage, Urgency } from '../core/types'
 import { computeKpis, filterRows, sortRows, profitCents, marginPct, statusLabel, applyCost, toCsv, parseRetailCents, groupForPicklist, type LedgerRow, type LedgerFilters, type LedgerTranscript, type SortKey, type CostApply, type PickGroup } from '../core/ledger'
 import { upsertShow, listShows, salesForShow, type ShowMeta, type ShowStore } from '../core/shows'
 import { urgency } from '../core/urgency'
 import { classifyException } from '../core/exceptions'
+
+// One source of truth for how an urgency bucket renders (CSS class + human label),
+// shared by the Ledger row pill and the expanded-detail line.
+function urgencyBadge(u: Urgency): { cls: string; label: string } | null {
+  if (u === 'ok') return null
+  if (u === 'ship-soon') return { cls: 'soon', label: 'SHIP SOON' }
+  if (u === 'auto-cancel-risk') return { cls: 'cancel', label: 'CANCEL RISK' }
+  return { cls: 'overdue', label: 'OVERDUE' }
+}
 
 interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string; title?: string }
 interface LabelTemplate {
@@ -751,16 +760,13 @@ function ledgerRowEl(r: LedgerRow): HTMLElement {
   const lbl = statusLabel(r)
   const pill = el('div', 'statuspill' + (/fail|refund|cancel/i.test(lbl) ? ' bad' : ''), lbl)
   if (r.transcript) pill.appendChild(el('span', 'ai', '✦'))
-  const urg = urgency(r.deadlines, Date.now())
-  if (urg !== 'ok') {
-    const cls = urg === 'ship-soon' ? 'soon' : urg === 'auto-cancel-risk' ? 'cancel' : 'overdue'
-    const label = urg === 'ship-soon' ? 'SHIP SOON' : urg === 'auto-cancel-risk' ? 'CANCEL RISK' : 'OVERDUE'
-    pill.appendChild(el('span', 'urg ' + cls, label))
-  }
-  const exc = classifyException(r.flags, r.paymentStatus)
-  if (exc.needsAttention) {
+  const ub = urgencyBadge(urgency(r.deadlines, Date.now()))
+  if (ub) pill.appendChild(el('span', 'urg ' + ub.cls, ub.label))
+  // ⚠ flags exceptions BEYOND a failed payment — the red status pill already signals that one.
+  const otherReasons = classifyException(r.flags, r.paymentStatus).reasons.filter((x) => x !== 'payment-failed')
+  if (otherReasons.length) {
     const ex = el('span', 'lc-exc', '⚠')
-    ex.title = 'Needs attention: ' + exc.reasons.join(', ')
+    ex.title = 'Needs attention: ' + otherReasons.join(', ')
     pill.appendChild(ex)
   }
   row.appendChild(pill)
@@ -804,6 +810,7 @@ function ledgerDetailEl(r: LedgerRow): HTMLElement {
   }
   const ff = r.fulfillment
   const dl = r.deadlines
+  // `ms ?` intentionally treats 0 as "not set" — TikTok sends 0 for unscheduled deadlines (don't render Jan 1 1970).
   const fmtWhen = (ms?: number) => (ms ? new Date(ms).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : undefined)
   const fulfillKvs: [string, string | undefined][] = [
     ['Carrier', dt?.carrier ?? ff?.logisticsProviderName],
@@ -822,10 +829,10 @@ function ledgerDetailEl(r: LedgerRow): HTMLElement {
       if (!v) continue
       const l = el('div', 'kv'); l.appendChild(el('b', undefined, k + ': ')); l.appendChild(txt(v)); mid.appendChild(l)
     }
-    const u = urgency(dl, Date.now())
-    if (u !== 'ok') {
+    const ub = urgencyBadge(urgency(dl, Date.now()))
+    if (ub) {
       const l = el('div', 'kv'); l.appendChild(el('b', undefined, 'Urgency: '))
-      l.appendChild(el('span', 'flag-chip ' + (u === 'ship-soon' ? 'warn' : 'risk'), u))
+      l.appendChild(el('span', 'flag-chip ' + (ub.cls === 'soon' ? 'warn' : 'risk'), ub.label))
       mid.appendChild(l)
     }
   }
