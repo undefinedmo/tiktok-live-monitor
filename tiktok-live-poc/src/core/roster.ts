@@ -45,6 +45,8 @@ function toPinned(p: Json): PinnedAuction {
     productId: str(p['product_id']) ?? '',
     productName: str(p['product_name']) ?? '',
     skuId: str(p['sku_id']),
+    auctionConfigId: str(p['auction_config_id']),
+    variantDesc: str(p['variant_desc']),
     ...parseLatestAuctionItem(p),
   }
 }

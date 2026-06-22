@@ -309,17 +309,30 @@ setInterval(() => {
 // ── live video (HTTP-FLV via flv.js) ────────────────────────────────────────
 let flvPlayer: flvjs.Player | null = null
 let lastStreamUrl = ''
+let flvCatchup: number | null = null
 function loadStream(url: string) {
   lastStreamUrl = url
   const video = document.getElementById('live') as HTMLVideoElement | null
   if (!video || !flvjs.isSupported()) return
+  if (flvCatchup !== null) { clearInterval(flvCatchup); flvCatchup = null }
   if (flvPlayer) { try { flvPlayer.destroy() } catch { /* ignore */ } flvPlayer = null }
-  flvPlayer = flvjs.createPlayer({ type: 'flv', url, isLive: true, cors: true }, { enableStashBuffer: false })
+  flvPlayer = flvjs.createPlayer(
+    { type: 'flv', url, isLive: true, cors: true },
+    { enableStashBuffer: false, autoCleanupSourceBuffer: true }, // low initial latency; drop old buffered data
+  )
   flvPlayer.attachMediaElement(video)
   flvPlayer.on(flvjs.Events.ERROR, () => { window.setTimeout(() => loadStream(lastStreamUrl), 2500) })
   video.addEventListener('playing', () => startAudioCapture(), { once: true })
   flvPlayer.load()
   void video.play().catch(() => {})
+  // flv.js (unlike the mpegts.js fork) does NOT chase the live edge, so latency accumulates
+  // after any rebuffer. Manually jump back toward the live edge when we fall too far behind.
+  flvCatchup = window.setInterval(() => {
+    const b = video.buffered
+    if (!b.length || video.seeking || video.paused) return
+    const edge = b.end(b.length - 1)
+    if (edge - video.currentTime > 2) video.currentTime = edge - 0.4
+  }, 2000)
 }
 
 // ── auction audio → AI transcript (mirrors sellerfolio-live enrichment) ──────
@@ -486,6 +499,28 @@ function printSale(s: Sale) {
   const num = (s.skuDesc ?? '').replace(/^#/, '')
   const title = `${s.skuDesc ? s.skuDesc + ' ' : ''}${s.productName}`
   printLabel({ itemNumber: num, buyer: s.buyer.username || s.buyer.handle, productName: s.productName, price: s.price.formatted, title })
+}
+
+// Auto-print at AUCTION-END: when the pinned lot changes, the previous lot just closed →
+// print its winner straight from the roster (the winner is known at bid-close, BEFORE any
+// payment, so this is payment-agnostic and fires as soon as the auction ends). Dedup by
+// auction_config_id; seed on the first roster so connecting mid-show doesn't reprint.
+let lastPinnedAuction: PinnedAuction | null = null
+let pinnedSeeded = false
+const printedAuctionIds = new Set<string>()
+function maybePrintEndedAuction(pinned?: PinnedAuction) {
+  if (!pinnedSeeded) { pinnedSeeded = true; lastPinnedAuction = pinned ?? null; return }
+  const prev = lastPinnedAuction
+  if (prev?.auctionConfigId && prev.auctionConfigId !== pinned?.auctionConfigId) printEndedAuction(prev)
+  if (pinned) lastPinnedAuction = pinned
+}
+function printEndedAuction(a: PinnedAuction) {
+  if (!a.auctionConfigId || !a.winUsername) return // no lot id, or no winner (no bids) → nothing sold
+  if (printedAuctionIds.has(a.auctionConfigId)) return
+  printedAuctionIds.add(a.auctionConfigId)
+  if (!autoPrint || !selectedPrinter) return
+  const item = (a.variantDesc ?? '').replace(/^#/, '')
+  void printLabel({ itemNumber: item, buyer: a.winUsername, productName: a.productName, price: a.maxBiddingPrice, title: `${a.variantDesc ? a.variantDesc + ' ' : ''}${a.productName}` })
 }
 
 function updatePrintNext() {
@@ -1446,6 +1481,7 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       for (const p of ev.products) rosterProducts.set(p.productId, p)
       renderProductsTable()
       renderAuction(ev.pinned)
+      maybePrintEndedAuction(ev.pinned) // print the winner the instant the lot closes
       stats.sales = String(ev.totalSold)
       renderStats()
       break
@@ -1479,8 +1515,10 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       if (seedMaxCreatedAt === null) {
         seedMaxCreatedAt = maxCreated
       } else {
+        // NB: auto-print now fires at auction-END via maybePrintEndedAuction (roster),
+        // not here — the auction_result feed lags and is payment-gated. This path only
+        // drives the AI transcript of the latest fresh sale.
         const fresh = ev.newSales.filter((s) => s.createdAt > seedMaxCreatedAt! && s.paymentStatus !== 'failed')
-        if (autoPrint && selectedPrinter) for (const s of fresh) printSale(s)
         const recent = fresh.find((s) => Date.now() - s.createdAt < 60000)
         if (recent) void transcribeSale(recent) // AI transcript for the latest fresh sale
         seedMaxCreatedAt = Math.max(seedMaxCreatedAt, maxCreated)

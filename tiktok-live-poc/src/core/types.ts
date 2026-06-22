@@ -139,6 +139,8 @@ export interface PinnedAuction {
   status?: number
   expectedEndMs?: number // latest_auction_item.expected_end_time_ms — for a countdown
   // ── Phase 4 enrichment ──
+  auctionConfigId?: string // the lot's unique id — identifies/dedupes an ended auction
+  variantDesc?: string // the lot number, e.g. "#35"
   skuId?: string
   actualStartMs?: number // latest_auction_item.actual_start_time (sec→ms; 0 = not started)
   actualEndMs?: number // latest_auction_item.actual_end_time (sec→ms)

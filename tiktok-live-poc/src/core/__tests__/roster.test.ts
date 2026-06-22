@@ -66,6 +66,9 @@ describe('parseRoster', () => {
     expect(pin.actualEndMs).toBe(1781991035000)
     // auction_bid_timestamp is a string "1781991030496" → number
     expect(pin.auctionBidTimestampMs).toBe(1781991030496)
+    // lot identity for end-of-auction print trigger
+    expect(pin.auctionConfigId).toBe('1047740030982')
+    expect(pin.variantDesc).toBe('#35')
   })
 
   it('returns an empty snapshot for a missing/garbage payload', () => {
