@@ -22,6 +22,13 @@ describe('urgency()', () => {
     expect(urgency({ autoCancelMs: now + 12 * H, latestRtsMs: now - H }, now)).toBe('auto-cancel-risk')
   })
 
+  it('a PAST autoCancelMs is not "at risk" — falls through to overdue/ok', () => {
+    // past the cancel deadline AND past the ship deadline → overdue, not auto-cancel-risk
+    expect(urgency({ autoCancelMs: now - H, latestRtsMs: now - H }, now)).toBe('overdue')
+    // past cancel deadline, no ship deadline → nothing actionable → ok
+    expect(urgency({ autoCancelMs: now - H }, now)).toBe('ok')
+  })
+
   it('returns overdue when latestRtsMs is in the past (no autoCancelMs)', () => {
     expect(urgency({ latestRtsMs: now - H }, now)).toBe('overdue')
   })

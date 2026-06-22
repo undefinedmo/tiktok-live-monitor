@@ -15,7 +15,9 @@ export function urgency(d: OrderDeadlines | undefined, now: number, w: UrgencyWi
   if (!d) return 'ok'
   const shipSoonWin = w.shipSoonMs ?? DAY
   const autoCancelWin = w.autoCancelMs ?? DAY
-  if (d.autoCancelMs != null && d.autoCancelMs - now <= autoCancelWin) return 'auto-cancel-risk'
+  // auto-cancel-risk = the cancel deadline is still ahead but imminent. A past deadline
+  // isn't "at risk" (the order already cancelled / is overdue) — let it fall through.
+  if (d.autoCancelMs != null && d.autoCancelMs > now && d.autoCancelMs - now <= autoCancelWin) return 'auto-cancel-risk'
   if (d.latestRtsMs != null && now > d.latestRtsMs) return 'overdue'
   if (d.latestRtsMs != null && d.latestRtsMs - now <= shipSoonWin) return 'ship-soon'
   return 'ok'

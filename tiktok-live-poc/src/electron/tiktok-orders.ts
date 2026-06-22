@@ -120,9 +120,9 @@ export function mapTiktokOrder(o: Raw): MappedOrder {
     processingDueMs: ts(get(o, 'processing_time_info_module.processing_time_info.latest_processing_timestamp')) ?? undefined,
   }
 
+  const splitTag = num(get(o, 'trade_order_module.split_combined_tag'))
   const isSplitOrCombined: boolean =
-    !!get(o, 'trade_order_module.is_smart_combined') ||
-    (num(get(o, 'trade_order_module.split_combined_tag')) !== null && num(get(o, 'trade_order_module.split_combined_tag')) !== 0)
+    !!get(o, 'trade_order_module.is_smart_combined') || (splitTag !== null && splitTag !== 0)
 
   const fulfillment: FulfillmentInfo = {
     packageId: (fm.package_id as string | undefined) ?? undefined,
