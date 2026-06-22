@@ -46,6 +46,11 @@ window.fetch = function (this: unknown, input: RequestInfo | URL, init?: Request
   const ep = endpointOf(url)
   const p = OrigFetch.apply(this as never, arguments as never) as Promise<Response>
   if (ep) p.then((res) => res.clone().text().then((body) => ipcRenderer.send('tt-rest-data', { endpoint: ep, body })).catch(() => {})).catch(() => {})
+  // The chat protobuf (webcast/im/fetch) is fetched via window.fetch, not XHR — capture it here
+  // too (the XHR hook below only catches the arraybuffer-responseType case).
+  else if (/webcast\/im\/fetch/.test(url)) {
+    p.then((res) => res.clone().arrayBuffer().then((buf) => { if (buf.byteLength) ipcRenderer.send('tt-im-frame', new Uint8Array(buf)) }).catch(() => {})).catch(() => {})
+  }
   return p
 } as typeof window.fetch
 
