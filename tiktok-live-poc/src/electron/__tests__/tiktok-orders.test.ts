@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { mapTiktokOrder, orderToSale } from '../tiktok-orders'
 
 const raw = {
@@ -42,5 +44,30 @@ describe('orderToSale', () => {
   it('falls back to format_price when price_val is absent', () => {
     const s = orderToSale(mapTiktokOrder({ ...raw, price_module: { grand_total: { format_price: '$1,250.00' } } }))
     expect(s.price.cents).toBe(125000)
+  })
+})
+
+describe('mapTiktokOrder — enriched fields', () => {
+  const fixture = JSON.parse(readFileSync(join(__dirname, '../../../fixtures/order-list-sample.json'), 'utf8'))
+
+  it('parses stable product/sku identity and per-item prices', () => {
+    const m = mapTiktokOrder(fixture)
+    const it = m.items[0]!
+    expect(it.productId).toBe('1729500000000000001')
+    expect(it.skuId).toBe('1729500000000099001')
+    expect(it.orderLineIds).toEqual(['577000000000000001-1'])
+    expect(it.imageUrl).toBe('https://example.invalid/img/a.jpg')
+    expect(it.unitPriceCents).toBe(7500)
+    expect(it.totalPriceCents).toBe(7500)
+  })
+
+  it('parses the price breakdown', () => {
+    const m = mapTiktokOrder(fixture)
+    expect(m.subtotalCents).toBe(7500)
+    expect(m.shippingCents).toBe(600)
+    expect(m.taxCents).toBe(100)
+    expect(m.sellerDiscountCents).toBe(500)
+    expect(m.platformDiscountCents).toBe(0)
+    expect(m.originSaleCents).toBe(8000)
   })
 })

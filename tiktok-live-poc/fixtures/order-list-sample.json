@@ -1,0 +1,32 @@
+{
+  "main_order_id": "577000000000000001",
+  "order_status_module": [{ "main_order_status": 101 }],
+  "buyer_info_module": {
+    "buyer_nickname": "shopper_demo",
+    "shipping_address": { "items": [{ "key": "name", "value": "Demo Buyer" }, { "key": "city", "value": "Austin" }, { "key": "state", "value": "TX" }, { "key": "zipcode", "value": "78701" }] }
+  },
+  "price_module": {
+    "grand_total": { "price_val": "82.00" },
+    "sub_total": { "price_val": "75.00" },
+    "shipping_fee": { "price_val": "6.00" },
+    "shipping_discount": { "price_val": "0.00" },
+    "taxes": { "price_val": "1.00" },
+    "seller_discount": { "price_val": "5.00" },
+    "platform_discount": { "price_val": "0.00" },
+    "origin_sale_price": { "price_val": "80.00" }
+  },
+  "sku_module": [{
+    "product_id": "1729500000000000001",
+    "sku_id": "1729500000000099001",
+    "product_name": "Bin A - Alo Yoga",
+    "sku_name": "M",
+    "seller_sku_name": "ALO-M",
+    "quantity": 1,
+    "product_image": { "url_list": ["https://example.invalid/img/a.jpg"] },
+    "sku_unit_price": { "price_val": "75.00" },
+    "sku_total_price": { "price_val": "75.00" },
+    "order_line_ids": ["577000000000000001-1"]
+  }],
+  "trade_order_module": { "create_time": 1718900000 },
+  "extra_data_map": { "auction_tag": "1", "sales_source_live_tag": { "value": { "v_dynamic_express": { "items": [{ "message_content": "LIVE 6/20" }] } } } }
+}

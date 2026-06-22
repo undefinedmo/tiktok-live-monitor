@@ -54,7 +54,11 @@ export interface MappedOrder {
   buyerName: string | null
   subtotalCents: number
   shippingCents: number
+  shippingDiscountCents: number
+  platformDiscountCents: number
+  sellerDiscountCents: number
   taxCents: number
+  originSaleCents: number
   totalCents: number
   address: string | null
   carrier: string | null
@@ -63,7 +67,19 @@ export interface MappedOrder {
   isAuction: boolean
   isReversed: boolean
   placedAt: number | null
-  items: { productName: string | null; variant: string | null; quantity: number }[]
+  roomId: string | null
+  videoReceiptTs: number | null
+  items: {
+    productId: string | null
+    skuId: string | null
+    productName: string | null
+    variant: string | null
+    quantity: number
+    unitPriceCents: number
+    totalPriceCents: number
+    imageUrl: string | null
+    orderLineIds: string[]
+  }[]
 }
 
 export function mapTiktokOrder(o: Raw): MappedOrder {
@@ -80,9 +96,15 @@ export function mapTiktokOrder(o: Raw): MappedOrder {
 
   const skus = (Array.isArray(o.sku_module) ? o.sku_module : []) as Raw[]
   const items = skus.map((s) => ({
+    productId: (get(s, 'product_id') ?? null) as string | null,
+    skuId: (get(s, 'sku_id') ?? null) as string | null,
     productName: (get(s, 'product_name') ?? null) as string | null,
     variant: (get(s, 'sku_name') ?? get(s, 'seller_sku_name') ?? null) as string | null,
     quantity: num(get(s, 'quantity')) ?? 0,
+    unitPriceCents: cents(get(s, 'sku_unit_price')),
+    totalPriceCents: cents(get(s, 'sku_total_price')),
+    imageUrl: (get(s, 'product_image.url_list.0') ?? null) as string | null,
+    orderLineIds: Array.isArray(get(s, 'order_line_ids')) ? (get(s, 'order_line_ids') as unknown[]).map(String) : [],
   }))
   // assemble a one-line ship-to from the address parts we have (city/state/region, postal)
   const region = [addr.city, addr.state || addr.region, addr.zipcode || addr.postal_code].filter(Boolean).join(', ') || null
@@ -96,7 +118,11 @@ export function mapTiktokOrder(o: Raw): MappedOrder {
     buyerName: addr.name || (get(o, 'buyer_info_module.actual_buyer_nickname') as string) || null,
     subtotalCents: cents(get(o, 'price_module.sub_total')),
     shippingCents: cents(get(o, 'price_module.shipping_fee')),
+    shippingDiscountCents: cents(get(o, 'price_module.shipping_discount')),
+    platformDiscountCents: cents(get(o, 'price_module.platform_discount')),
+    sellerDiscountCents: cents(get(o, 'price_module.seller_discount')),
     taxCents: cents(get(o, 'price_module.taxes')),
+    originSaleCents: cents(get(o, 'price_module.origin_sale_price')),
     totalCents: cents(get(o, 'price_module.grand_total')),
     address: region,
     carrier: (fm.shipping_provider_name as string) || (get(o, 'logistics_module.0.shipping_provider_name') as string) || null,
@@ -105,6 +131,8 @@ export function mapTiktokOrder(o: Raw): MappedOrder {
     isAuction: !!get(o, 'extra_data_map.auction_tag'),
     isReversed: !!rev,
     placedAt: ts(get(o, 'trade_order_module.create_time') ?? get(o, 'fulfillment_module.0.create_time')),
+    roomId: get(o, 'auction_module.live_room_id') != null ? String(get(o, 'auction_module.live_room_id')) : null,
+    videoReceiptTs: num(get(o, 'auction_module.video_receipt_timestamp')) != null ? Math.round(num(get(o, 'auction_module.video_receipt_timestamp'))!) : null,
     items,
   }
 }
