@@ -17,6 +17,7 @@ function coverUrl(a: Json): string | undefined {
 }
 
 function toProduct(a: Json): RosterProduct {
+  const errMsg = str(a['auction_product_status_error_message'])
   return {
     productId: str(a['product_id']) ?? '',
     auctionConfigId: str(a['auction_config_id']) ?? '',
@@ -27,11 +28,21 @@ function toProduct(a: Json): RosterProduct {
     numFailed: num(a['num_failed']) ?? 0,
     stockNum: num(a['stock_num']),
     startingBid: str(a['formatted_starting_bid_price']),
+    skuId: str(a['sku_id']),
+    durationSec: num(a['duration']),
+    extendedDurationSec: num(a['extended_auction_duration']),
+    auctionMode: num(a['auction_mode']),
+    auctionConfigType: num(a['auction_config_type']),
+    auctionCardType: num(a['auction_card_type']),
+    productStatus: num(a['productStatus']),
+    statusError: errMsg || undefined,
   }
 }
 
 function toPinned(p: Json): PinnedAuction {
   const item = obj(p['latest_auction_item']) ?? {}
+  const actualStart = num(item['actual_start_time'])
+  const actualEnd = num(item['actual_end_time'])
   return {
     productId: str(p['product_id']) ?? '',
     productName: str(p['product_name']) ?? '',
@@ -41,6 +52,10 @@ function toPinned(p: Json): PinnedAuction {
     numBids: num(item['num_of_bids']),
     status: num(item['status']),
     expectedEndMs: Number(str(item['expected_end_time_ms'])) || undefined,
+    skuId: str(p['sku_id']),
+    actualStartMs: actualStart && actualStart > 0 ? actualStart * 1000 : undefined,
+    actualEndMs: actualEnd !== undefined ? actualEnd * 1000 : undefined,
+    auctionBidTimestampMs: Number(str(item['auction_bid_timestamp'])) || undefined,
   }
 }
 

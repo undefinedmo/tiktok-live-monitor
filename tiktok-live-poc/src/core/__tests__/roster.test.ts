@@ -44,6 +44,30 @@ describe('parseRoster', () => {
     expect(snap.pinned!.expectedEndMs).toBe(1781991035496) // for the countdown timer
   })
 
+  it('populates new auction fields on products', () => {
+    const snap = parseRoster(rest.roster, 1000)
+    const p0 = snap.products[0]!
+    expect(p0.skuId).toBe('1732451642461557731')
+    expect(p0.durationSec).toBe(10)
+    expect(p0.extendedDurationSec).toBe(5)
+    expect(p0.auctionMode).toBe(1)
+    expect(p0.productStatus).toBe(2)
+    // empty string error message → undefined
+    expect(p0.statusError).toBeUndefined()
+  })
+
+  it('populates new auction fields on pinned', () => {
+    const snap = parseRoster(rest.roster, 1000)
+    const pin = snap.pinned!
+    expect(pin.skuId).toBe('1732451642461557731')
+    // actual_start_time = 0 → undefined
+    expect(pin.actualStartMs).toBeUndefined()
+    // actual_end_time = 1781991035 (seconds) → ms
+    expect(pin.actualEndMs).toBe(1781991035000)
+    // auction_bid_timestamp is a string "1781991030496" → number
+    expect(pin.auctionBidTimestampMs).toBe(1781991030496)
+  })
+
   it('returns an empty snapshot for a missing/garbage payload', () => {
     const snap = parseRoster({}, 1000) as RosterSnapshot
     expect(snap.products).toEqual([])
