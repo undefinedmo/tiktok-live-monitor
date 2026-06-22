@@ -90,6 +90,7 @@ const saveTemplate = () => localStorage.setItem('tt-label-template', JSON.string
 // ── state ───────────────────────────────────────────────────────────────────
 let sessionStart: number | undefined
 let pinnedEndMs: number | undefined
+let serverTimeOffsetMs = 0 // from pin/get (resp_server_time − client clock); corrects the auction countdown
 let gmvFromWs = false
 let seedMaxCreatedAt: number | null = null
 const rosterProducts = new Map<string, RosterProduct>()
@@ -282,7 +283,8 @@ function tickCountdown() {
   if (!ends) return
   const panelEnds = document.getElementById('auctionPanelEnds')
   if (!pinnedEndMs) { ends.textContent = '--'; if (panelEnds) panelEnds.textContent = '--'; return }
-  const left = Math.max(0, Math.round((pinnedEndMs - Date.now()) / 1000))
+  // expectedEndMs is in server time; correct the client clock by the pin/get offset.
+  const left = Math.max(0, Math.round((pinnedEndMs - (Date.now() + serverTimeOffsetMs)) / 1000))
   const label = left > 0 ? `${left}s` : 'ended'
   ends.textContent = label
   if (panelEnds) panelEnds.textContent = label
@@ -1386,6 +1388,12 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       renderAuction(ev.pinned)
       stats.sales = String(ev.totalSold)
       renderStats()
+      break
+    case 'pin':
+      // pin/get is the lower-latency current-auction source; capture its server-time anchor
+      // for an accurate countdown, and refresh the lot's bid state when it carries a winner.
+      if (typeof ev.serverTimeOffsetMs === 'number') serverTimeOffsetMs = ev.serverTimeOffsetMs
+      if (ev.current?.winUsername) renderAuction(ev.current)
       break
     case 'sales': {
       lastByProduct = ev.byProduct
