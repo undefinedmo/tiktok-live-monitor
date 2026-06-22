@@ -1,7 +1,7 @@
 import flvjs from 'flv.js'
 import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuction, ChatMessage } from '../core/types'
 import { computeKpis, filterRows, sortRows, profitCents, marginPct, statusLabel, applyCost, toCsv, parseRetailCents, groupForPicklist, type LedgerRow, type LedgerFilters, type LedgerTranscript, type SortKey, type CostApply, type PickGroup } from '../core/ledger'
-import { loadShows, upsertShow, listShows, salesForShow, type ShowMeta, type ShowStore } from '../core/shows'
+import { upsertShow, listShows, salesForShow, type ShowMeta, type ShowStore } from '../core/shows'
 
 interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string; title?: string }
 interface LabelTemplate {
@@ -30,6 +30,16 @@ declare global {
       now: () => Promise<{ ok: boolean; reason?: string; count?: number }>
       connection: () => Promise<{ loggedIn: boolean; hasShow: boolean; polling: boolean }>
       openMonitor: () => Promise<{ ok: boolean }>
+    }
+    dbAPI?: {
+      getSnapshot: () => Promise<{ orders: Sale[]; costs: Record<string, number>; productCosts: Record<string, number>; orderTx: Record<string, LedgerTranscript>; productTx: Record<string, LedgerTranscript>; picked: string[]; shows: unknown }>
+      setCost: (orderId: string, cents: number | null) => Promise<boolean>
+      setProductCost: (productId: string, cents: number | null) => Promise<boolean>
+      setTranscript: (scope: 'order' | 'product', key: string, transcript: unknown | null) => Promise<boolean>
+      setPicked: (orderId: string, picked: boolean) => Promise<boolean>
+      getShows: () => Promise<unknown>
+      setShows: (store: unknown) => Promise<boolean>
+      importLegacy: (blob: unknown) => Promise<boolean>
     }
   }
 }
@@ -94,7 +104,8 @@ function renderStats() {
 }
 
 // ── per-show persistence + show filter ──────────────────────────────────────
-let showStore: ShowStore = loadShows(localStorage.getItem('tt-shows'))
+// hydrated from the DB (meta 'shows' blob) in hydrateFromDb(); persisted via dbAPI.setShows
+let showStore: ShowStore = {}
 let currentShow: ShowMeta | null = null
 let selectedShowId = 'live'
 
@@ -389,7 +400,7 @@ async function transcribeProduct(productId: string, productName: string): Promis
     if (res.fields && Object.keys(res.fields).length) productTx[productId] = res.fields
     else if (res.text) productTx[productId] = { summary: res.text }
     else return false
-    saveProductTx()
+    void window.dbAPI?.setTranscript('product', productId, productTx[productId])
     renderLedger(); renderProductsTable(); renderPicklist()
     return true
   } catch { return false } finally {
@@ -535,18 +546,17 @@ setupFeed()
 renderStats()
 
 // ── Order Ledger screen (ported from live-ledger viewmodel) ─────────────────
-const loadJson = <T,>(k: string, fb: T): T => { try { return JSON.parse(localStorage.getItem(k) || '') as T } catch { return fb } }
+// All order/cost/transcript/pick/show data lives in SQLite now (Task 4-7); these maps start
+// EMPTY and are hydrated from the DB in hydrateFromDb() (called by boot() before first render).
 // order-level overrides win; product/bin-level values cascade to every order of that product
-const costMap: Record<string, number> = loadJson('tt-cost', {})
-const productCostMap: Record<string, number> = loadJson('tt-product-cost', {}) // productId → cents (template, persists across shows)
+const costMap: Record<string, number> = {}
+const productCostMap: Record<string, number> = {} // productId → cents (template, persists across shows)
 const transcriptsByOrder = new Map<string, string>()
-const productTx: Record<string, LedgerTranscript> = loadJson('tt-product-tx', {}) // productId → structured AI transcript
-const orderTx: Record<string, LedgerTranscript> = loadJson('tt-order-tx', {}) // orderId → per-ITEM structured transcript (from its video receipt)
-const saveOrderTx = () => localStorage.setItem('tt-order-tx', JSON.stringify(orderTx))
+const productTx: Record<string, LedgerTranscript> = {} // productId → structured AI transcript
+const orderTx: Record<string, LedgerTranscript> = {} // orderId → per-ITEM structured transcript (from its video receipt)
 // Synced order book from Seller-Center order/list (decoupled from the live stream). When present
 // it is the Ledger/Picklist source; grouped into "shows" by the live-show tag on each order.
-let syncedOrders: Sale[] = loadJson<Sale[]>('tt-orders', [])
-const saveSyncedOrders = () => localStorage.setItem('tt-orders', JSON.stringify(syncedOrders))
+let syncedOrders: Sale[] = []
 const SHOW_OF = (s: Sale) => s.liveTag || 'Other orders'
 // demo seed — these globals only exist in the static-HTML mock, never in the Electron app
 const demoSeed = window as unknown as { __demoProductTx?: Record<string, LedgerTranscript>; __demoProductCost?: Record<string, number> }
@@ -564,9 +574,9 @@ const transcribingOrders = new Set<string>() // orderIds currently being transcr
 let bulkMode: 'flat' | 'percent' | 'retail' = 'percent'
 let bulkWholeProduct = false // when on, cost edits cascade to the whole product/bin
 let visibleRows: LedgerRow[] = []
-const saveCosts = () => localStorage.setItem('tt-cost', JSON.stringify(costMap))
-const saveProductCosts = () => localStorage.setItem('tt-product-cost', JSON.stringify(productCostMap))
-const saveProductTx = () => localStorage.setItem('tt-product-tx', JSON.stringify(productTx))
+// NOTE: cost/transcript/pick/show persistence now happens per-edit via dbAPI at each mutation
+// site (editCost / applyBulkCost / transcribeProduct / editAiField / bulkTranscribe / pick toggle
+// / show upsert). There are no more localStorage save* writers for these data keys.
 
 function updateBulkBar() {
   const n = selected.size
@@ -592,11 +602,10 @@ function applyBulkCost(apply: CostApply) {
       const c = applyCost(sample, apply)
       if (c == null) delete productCostMap[pid]
       else productCostMap[pid] = c
+      void window.dbAPI?.setProductCost(pid, productCostMap[pid] ?? null)
       // drop per-order overrides for this bin so the template shows through uniformly
-      for (const r of rows) if (r.productId === pid) delete costMap[r.orderId]
+      for (const r of rows) if (r.productId === pid && r.orderId in costMap) { delete costMap[r.orderId]; void window.dbAPI?.setCost(r.orderId, null) }
     }
-    saveProductCosts()
-    saveCosts()
   } else {
     for (const id of selected) {
       const r = byId.get(id)
@@ -604,8 +613,8 @@ function applyBulkCost(apply: CostApply) {
       const c = applyCost(r, apply)
       if (c == null) delete costMap[id]
       else costMap[id] = c
+      void window.dbAPI?.setCost(id, costMap[id] ?? null)
     }
-    saveCosts()
   }
   renderLedger()
 }
@@ -691,7 +700,7 @@ function editCost(r: LedgerRow, cell: HTMLElement) {
     const v = parseFloat(input.value)
     if (Number.isFinite(v) && v >= 0) costMap[r.orderId] = Math.round(v * 100)
     else delete costMap[r.orderId]
-    saveCosts()
+    void window.dbAPI?.setCost(r.orderId, costMap[r.orderId] ?? null)
     renderLedger()
   }
   input.addEventListener('blur', commit)
@@ -855,7 +864,7 @@ function editAiField(r: LedgerRow, key: keyof LedgerTranscript, node: HTMLElemen
     if (v) next[key] = v
     else delete next[key]
     orderTx[r.orderId] = next
-    saveOrderTx()
+    void window.dbAPI?.setTranscript('order', r.orderId, next)
     renderLedger()
   }
   input.addEventListener('blur', commit)
@@ -930,8 +939,8 @@ function showScreen(s: 'monitor' | 'ledger' | 'picklist' | 'settings') {
 
 // ── Picklist / packlist screen ──────────────────────────────────────────────
 let pickBy: 'show' | 'buyer' = 'show'
-const pickedOrders = new Set<string>(loadJson<string[]>('tt-picked', []))
-const savePicked = () => localStorage.setItem('tt-picked', JSON.stringify([...pickedOrders]))
+// hydrated from the DB in hydrateFromDb(); per-toggle persistence goes through dbAPI.setPicked
+const pickedOrders = new Set<string>()
 
 function renderPicklist() {
   if (currentScreen !== 'picklist') return
@@ -971,7 +980,7 @@ function renderPicklist() {
       cb.addEventListener('change', () => {
         if (cb.checked) pickedOrders.add(r.orderId)
         else pickedOrders.delete(r.orderId)
-        savePicked()
+        void window.dbAPI?.setPicked(r.orderId, cb.checked)
         renderPicklist()
       })
       item.appendChild(cb)
@@ -1044,7 +1053,12 @@ async function runSync() {
   try {
     if (window.syncAPI) {
       const res = await window.syncAPI.now()
-      if (res.ok) flashSync(`✓ ${res.count ?? ''} orders`.replace('  ', ' '))
+      if (res.ok) {
+        await hydrateFromDb()
+        if (selectedShowId === 'live' && syncedOrders.length) selectedShowId = 'all'
+        refreshShowOptions(); renderLedger(); renderPicklist()
+        flashSync(`✓ ${res.count ?? ''} orders`.replace('  ', ' '))
+      }
       else { flashSync('⚠ ' + (res.reason ?? 'failed')); console.warn('sync:', res.reason) }
       await refreshConnection()
     } else {
@@ -1071,7 +1085,12 @@ function setupPicklist() {
     $('pickBySeg').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b))
     renderPicklist()
   }))
-  $('pickReset').addEventListener('click', () => { pickedOrders.clear(); savePicked(); renderPicklist() })
+  $('pickReset').addEventListener('click', () => {
+    const cleared = [...pickedOrders]
+    pickedOrders.clear()
+    for (const id of cleared) void window.dbAPI?.setPicked(id, false)
+    renderPicklist()
+  })
 }
 
 function segActive(segId: string, attr: 'cost' | 'profit', val: string) {
@@ -1175,8 +1194,7 @@ function setupLedger() {
       const res = await window.recapAPI.transcribeOrders(items)
       if (res.error) { btn.textContent = '⚠ ' + res.error.slice(0, 28) }
       else {
-        for (const r of res.results) orderTx[r.orderId] = r.fields
-        saveOrderTx()
+        for (const r of res.results) { orderTx[r.orderId] = r.fields; void window.dbAPI?.setTranscript('order', r.orderId, r.fields) }
         renderLedger()
         renderPicklist()
         const fail = res.errors?.length ?? 0
@@ -1205,6 +1223,48 @@ setupLedger()
 setupPicklist()
 setupSync()
 setupShowFilter()
+
+// ── boot: one-shot legacy import → hydrate from SQLite → first render ─────────
+// All order/cost/transcript/pick/show data is read from and written to SQLite via dbAPI.
+// On first launch we migrate any pre-existing localStorage values into the DB (once), then
+// hydrate the in-memory maps from the DB so the Ledger/Picklist render from the canonical store.
+async function migrateLegacyOnce(): Promise<void> {
+  if (!window.dbAPI || localStorage.getItem('tt-migrated') === '1') return
+  const ls = <T,>(k: string, fb: T): T => { try { return JSON.parse(localStorage.getItem(k) || '') as T } catch { return fb } }
+  const blob = {
+    cost: ls('tt-cost', {}), productCost: ls('tt-product-cost', {}),
+    orderTx: ls('tt-order-tx', {}), productTx: ls('tt-product-tx', {}),
+    orders: ls('tt-orders', [] as Sale[]), shows: ls('tt-shows', {}), picked: ls('tt-picked', [] as string[]),
+  }
+  await window.dbAPI.importLegacy(blob)
+  localStorage.setItem('tt-migrated', '1') // keep old keys one release as backup
+}
+
+async function hydrateFromDb(): Promise<void> {
+  if (!window.dbAPI) return
+  const s = await window.dbAPI.getSnapshot()
+  syncedOrders = s.orders
+  // costMap/productCostMap/orderTx/productTx are the live mirrors of the DB — clear before
+  // assigning so a re-hydrate (e.g. after sync) drops rows that no longer exist in the store.
+  for (const k of Object.keys(costMap)) delete costMap[k]
+  for (const k of Object.keys(productCostMap)) delete productCostMap[k]
+  for (const k of Object.keys(orderTx)) delete orderTx[k]
+  for (const k of Object.keys(productTx)) delete productTx[k]
+  Object.assign(costMap, s.costs)
+  Object.assign(productCostMap, s.productCosts)
+  Object.assign(orderTx, s.orderTx)
+  Object.assign(productTx, s.productTx)
+  pickedOrders.clear(); for (const id of s.picked) pickedOrders.add(id)
+  showStore = s.shows && typeof s.shows === 'object' && !Array.isArray(s.shows) ? (s.shows as ShowStore) : {}
+}
+
+async function boot(): Promise<void> {
+  await migrateLegacyOnce()
+  await hydrateFromDb()
+  if (selectedShowId === 'live' && syncedOrders.length) selectedShowId = 'all'
+  refreshShowOptions(); renderLedger(); renderPicklist()
+}
+void boot()
 
 // live transcription progress → highlight the row being worked + update the button count
 function markRowTx(orderId: string, on: boolean) {
@@ -1271,7 +1331,7 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       // persist this show's sales so it can be re-selected in the Ledger/Picklist filter later
       if (currentShow) {
         showStore = upsertShow(showStore, currentShow, ev.recentSales, Date.now())
-        localStorage.setItem('tt-shows', JSON.stringify(showStore))
+        void window.dbAPI?.setShows(showStore)
         refreshShowOptions()
       }
       currentTopSet = new Set(ev.topBuyers.slice(0, 5).map((b) => b.ttuid || b.username))
@@ -1305,15 +1365,8 @@ window.ttLive.onEvent((ev: LiveEvent) => {
     case 'chat':
       appendChat(ev.items)
       break
-    case 'orders': {
-      // Synced order book (Seller-Center) → the Ledger/Picklist source, independent of live.
-      syncedOrders = ev.orders
-      saveSyncedOrders()
-      if (selectedShowId === 'live') selectedShowId = 'all'
-      refreshShowOptions()
-      renderLedger()
-      renderPicklist()
+    case 'orders':
+      // Orders are persisted in SQLite and hydrated via dbAPI; no live-event handling needed.
       break
-    }
   }
 })

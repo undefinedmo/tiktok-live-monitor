@@ -23,3 +23,14 @@ contextBridge.exposeInMainWorld('syncAPI', {
   connection: () => ipcRenderer.invoke('tt-connection'),
   openMonitor: () => ipcRenderer.invoke('tt-open-monitor'),
 })
+
+contextBridge.exposeInMainWorld('dbAPI', {
+  getSnapshot: () => ipcRenderer.invoke('tt-db:getSnapshot'),
+  setCost: (orderId: string, cents: number | null) => ipcRenderer.invoke('tt-db:setCost', { orderId, cents }),
+  setProductCost: (productId: string, cents: number | null) => ipcRenderer.invoke('tt-db:setProductCost', { productId, cents }),
+  setTranscript: (scope: 'order' | 'product', key: string, transcript: unknown | null) => ipcRenderer.invoke('tt-db:setTranscript', { scope, key, transcript }),
+  setPicked: (orderId: string, picked: boolean) => ipcRenderer.invoke('tt-db:setPicked', { orderId, picked }),
+  getShows: () => ipcRenderer.invoke('tt-db:getShows'),
+  setShows: (store: unknown) => ipcRenderer.invoke('tt-db:setShows', store),
+  importLegacy: (blob: unknown) => ipcRenderer.invoke('tt-db:importLegacy', blob),
+})
