@@ -117,6 +117,15 @@ export interface RosterProduct {
   numFailed: number
   stockNum?: number
   startingBid?: string
+  // ── Phase 4 enrichment (added_auction_product/list) ──
+  skuId?: string
+  durationSec?: number // auction window length
+  extendedDurationSec?: number // extension granted on a late bid
+  auctionMode?: number
+  auctionConfigType?: number
+  auctionCardType?: number
+  productStatus?: number // TikTok productStatus enum
+  statusError?: string // auction_product_status_error_message, when non-empty (failed/invalid product)
 }
 
 /** The currently pinned/running auction's live bid state. */
@@ -129,6 +138,20 @@ export interface PinnedAuction {
   numBids?: number
   status?: number
   expectedEndMs?: number // latest_auction_item.expected_end_time_ms — for a countdown
+  // ── Phase 4 enrichment ──
+  skuId?: string
+  actualStartMs?: number // latest_auction_item.actual_start_time (sec→ms; 0 = not started)
+  actualEndMs?: number // latest_auction_item.actual_end_time (sec→ms)
+  auctionBidTimestampMs?: number // latest_auction_item.auction_bid_timestamp (ms)
+}
+
+/** Current-auction state from `pin/get`, with a server-time anchor for countdown accuracy. */
+export interface PinState {
+  kind: 'pin'
+  cardType?: number // pin response card_type
+  current?: PinnedAuction // the pinned auction_config + latest_auction_item
+  serverTimeOffsetMs?: number // resp_server_time − local receive time; serverNow ≈ clientNow + offset
+  ts: number
 }
 
 export interface RosterSnapshot {
@@ -165,6 +188,7 @@ export interface Sale {
   paymentStatus: 'paid' | 'failed' | 'pending'
   orderStatus?: number
   createdAt: number // order_create_time (ms)
+  auctionEndMs?: number // auction_result_data.auction_end_timestamp (ms); 0/undefined when not provided
   liveTag?: string // Seller-Center live-show tag (from order/list); groups synced orders by show
   detail?: OrderDetailInfo // richer Seller-Center fields, shown when the ledger row is expanded
 }
@@ -214,6 +238,7 @@ export interface SalesUpdate {
   totalSales: number
   totalCents: number
   failedPayments: Sale[]
+  totalResultCount?: number // total_result_count from the response — for load-completeness checks
   ts: number
 }
 
@@ -245,3 +270,4 @@ export type LiveEvent =
   | SalesUpdate
   | StatusEvent
   | OrdersEvent
+  | PinState
