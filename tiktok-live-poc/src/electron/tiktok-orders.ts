@@ -141,15 +141,28 @@ export function mapTiktokOrder(o: Raw): MappedOrder {
 export function orderToSale(o: MappedOrder): Sale {
   const item = o.items[0]
   const productName = item?.productName ?? '(item)'
+  const productId = item?.productId || productName // stable id when present; name only as fallback
   const paymentStatus: Sale['paymentStatus'] =
     o.isReversed ? 'failed' : o.status === 'Unpaid' ? 'pending' : 'paid'
   return {
     orderId: o.externalOrderId,
     buyer: { username: o.buyerName || o.buyerHandle || '—', handle: o.buyerHandle ?? undefined },
-    productId: productName, // no stable product id in order/list; group bins by name
+    productId,
     productName,
+    productImageUrl: item?.imageUrl ?? undefined,
+    skuId: item?.skuId ?? undefined,
     skuDesc: item?.variant ?? (o.items.length > 1 ? `${o.items.length} items` : ''),
     price: { cents: o.totalCents, formatted: '$' + (o.totalCents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
+    priceBreakdown: {
+      grandTotalCents: o.totalCents,
+      subtotalCents: o.subtotalCents,
+      originSaleCents: o.originSaleCents,
+      sellerDiscountCents: o.sellerDiscountCents,
+      platformDiscountCents: o.platformDiscountCents,
+      shippingFeeCents: o.shippingCents,
+      shippingDiscountCents: o.shippingDiscountCents,
+      taxCents: o.taxCents,
+    },
     paymentStatus,
     createdAt: o.placedAt ?? Date.now(),
     liveTag: o.liveTag ?? undefined,
@@ -175,7 +188,7 @@ const TT_ORDER_EXTRA_DATA = [
   '48_hours_dispatch_tag', 'split_combine_tag_v1', 'free_sample_tag_v1', 'hazmat_order_tag',
   'made_to_order_tag', 'pre_order_tag', 'pre_sell_tag', 'zero_lottery_tag', 'gift_insurance_tag',
   'internal_purchase_tag', 'risk_order_tag_v1', 'combo_sku_tag', 'refundable_sample_tag',
-  'split_package_type_tag',
+  'split_package_type_tag', 'replacement_order_tag_v1',
 ]
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36'
@@ -206,7 +219,8 @@ export async function pullTiktokOrders(
       }),
     })
     if (!res.ok) throw new Error(`order/list HTTP ${res.status}`)
-    const j = (await res.json()) as Raw
+    const text = await res.text()
+    const j = JSON.parse(text.replace(/"live_room_id":\s*(\d+)/g, '"live_room_id":"$1"')) as Raw
     if (j.code !== 0 && j.code != null) {
       throw new Error(`order/list code ${j.code} — ${String(j.message ?? 'rejected')} (session may be expired — re-open the monitor and log in)`)
     }

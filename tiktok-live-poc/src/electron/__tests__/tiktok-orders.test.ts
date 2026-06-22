@@ -71,3 +71,21 @@ describe('mapTiktokOrder — enriched fields', () => {
     expect(m.originSaleCents).toBe(8000)
   })
 })
+
+describe('orderToSale — stable identity + breakdown', () => {
+  const fixture = JSON.parse(readFileSync(join(__dirname, '../../../fixtures/order-list-sample.json'), 'utf8'))
+
+  it('uses product_id as Sale.productId, not the name', () => {
+    const s = orderToSale(mapTiktokOrder(fixture))
+    expect(s.productId).toBe('1729500000000000001')
+    expect(s.skuId).toBe('1729500000000099001')
+    expect(s.productImageUrl).toBe('https://example.invalid/img/a.jpg')
+    expect(s.priceBreakdown?.sellerDiscountCents).toBe(500)
+    expect(s.priceBreakdown?.subtotalCents).toBe(7500)
+  })
+
+  it('falls back to product name when product_id is absent', () => {
+    const noId = { ...fixture, sku_module: [{ product_name: 'Legacy Bin', sku_name: 'M' }] }
+    expect(orderToSale(mapTiktokOrder(noId)).productId).toBe('Legacy Bin')
+  })
+})

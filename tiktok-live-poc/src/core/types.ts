@@ -10,6 +10,17 @@ export interface Money {
   formatted: string
 }
 
+export interface PriceBreakdown {
+  grandTotalCents: number
+  subtotalCents?: number
+  originSaleCents?: number
+  sellerDiscountCents?: number
+  platformDiscountCents?: number
+  shippingFeeCents?: number
+  shippingDiscountCents?: number
+  taxCents?: number
+}
+
 // ─── Source 1: frontier WebSocket aggregate stats ───────────────────────────
 
 /** One product's live counters (from WS `product_stats[<productId>]`). */
@@ -145,6 +156,8 @@ export interface Sale {
   productId: string
   productName: string
   productImageUrl?: string
+  skuId?: string
+  priceBreakdown?: PriceBreakdown
   skuDesc?: string
   price: Money
   // paid = is_payment_successful; failed = order_status 2 (matches the roster's
