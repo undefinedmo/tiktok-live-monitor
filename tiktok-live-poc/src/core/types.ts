@@ -192,7 +192,20 @@ export interface Sale {
   liveTag?: string // Seller-Center live-show tag (from order/list); groups synced orders by show
   deadlines?: OrderDeadlines // Phase 2: ship-by / auto-cancel SLA windows
   fulfillment?: FulfillmentInfo // Phase 2: package / tracking / warehouse / label state
+  flags?: OrderFlags // Phase 3: risk / replacement / note / insurance exception signals
   detail?: OrderDetailInfo // richer Seller-Center fields, shown when the ledger row is expanded
+}
+
+/** Exception signals for the pack/print "needs attention" queue (Phase 3).
+ *  Excludes signals already modeled elsewhere (isReversed→paymentStatus, isAuction→detail,
+ *  isSplitOrCombined→fulfillment) and hasUnreadBuyerMessage (needs a runtime-only endpoint). */
+export interface OrderFlags {
+  isRiskOrder?: boolean
+  isReplacement?: boolean
+  hasBuyerNote?: boolean
+  hasSellerNote?: boolean
+  hasSellerFlag?: boolean
+  hasInsurance?: boolean
 }
 
 // ─── Phase 2: fulfillment + SLA (parsed from the order/list response) ─────────
