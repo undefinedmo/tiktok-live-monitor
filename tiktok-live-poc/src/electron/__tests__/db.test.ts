@@ -80,6 +80,13 @@ describe('db: legacy migration + re-key', () => {
     expect(snap.productCosts['1729500000000000001']).toBe(2000)
     expect(snap.productCosts['Bin A - Alo Yoga']).toBeUndefined()
     expect(snap.productTx['1729500000000000001']!.brand).toBe('Alo')
+
+    // re-key is called after every sync — a repeat run must be a no-op
+    rekeyProductTemplates(db, 3)
+    const snap2 = getSnapshot(db)
+    expect(snap2.productCosts['1729500000000000001']).toBe(2000)
+    expect(snap2.productCosts['Bin A - Alo Yoga']).toBeUndefined()
+    expect(snap2.productTx['1729500000000000001']!.brand).toBe('Alo')
     db.close()
   })
 })
