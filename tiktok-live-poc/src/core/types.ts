@@ -190,7 +190,40 @@ export interface Sale {
   createdAt: number // order_create_time (ms)
   auctionEndMs?: number // auction_result_data.auction_end_timestamp (ms); 0/undefined when not provided
   liveTag?: string // Seller-Center live-show tag (from order/list); groups synced orders by show
+  deadlines?: OrderDeadlines // Phase 2: ship-by / auto-cancel SLA windows
+  fulfillment?: FulfillmentInfo // Phase 2: package / tracking / warehouse / label state
   detail?: OrderDetailInfo // richer Seller-Center fields, shown when the ledger row is expanded
+}
+
+// ─── Phase 2: fulfillment + SLA (parsed from the order/list response) ─────────
+
+/** How close an order is to its ship deadline. Computed at render time from
+ *  OrderDeadlines + the current clock (NOT stored — it goes stale). */
+export type Urgency = 'ok' | 'ship-soon' | 'overdue' | 'auto-cancel-risk'
+
+/** Operational ship-by deadlines from trade_order_module / processing_time_info_module. */
+export interface OrderDeadlines {
+  latestRtsMs?: number // latest_rts_time — latest ready-to-ship
+  latestTtsMs?: number // latest_tts_time — latest time-to-ship
+  autoCancelMs?: number // ship_cancellation_plan_time — order auto-cancels if unshipped by then
+  deliverySla?: string // delivery_sla (free text)
+  processingDueMs?: number // processing_time_info.latest_processing_timestamp
+}
+
+/** Package / tracking / warehouse / label state for the pack-ship workflow. */
+export interface FulfillmentInfo {
+  packageId?: string
+  fulfillUnitId?: string
+  trackingNo?: string
+  warehouseId?: string
+  warehouseName?: string
+  logisticsProviderName?: string // carrier
+  shippingServiceName?: string
+  packageStatus?: number
+  labelStatus?: number
+  pickingListStatus?: number
+  packingListStatus?: number
+  isSplitOrCombined?: boolean
 }
 
 /** Extra Seller-Center order fields surfaced in the expanded ledger row. */
