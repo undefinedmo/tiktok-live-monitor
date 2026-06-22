@@ -1,7 +1,7 @@
 import { build } from 'esbuild'
 import { copyFileSync, mkdirSync } from 'node:fs'
 
-const common = { bundle: true, platform: 'node', target: 'node20', format: 'cjs', external: ['electron'] }
+const common = { bundle: true, platform: 'node', target: 'node20', format: 'cjs', external: ['electron', 'better-sqlite3'] }
 
 await build({ ...common, entryPoints: ['src/electron/main.ts'], outfile: 'dist/main.cjs' })
 await build({ ...common, entryPoints: ['src/electron/preload.ts'], outfile: 'dist/preload.cjs' })
