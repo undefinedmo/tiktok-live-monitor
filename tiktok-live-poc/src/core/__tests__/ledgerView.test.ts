@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { LedgerRow } from '../ledger'
-import { selectSimilar, duplicateOrderIds } from '../ledgerView'
+import { selectSimilar, duplicateOrderIds, healthCounts, costSuggestions, activeFilterChips } from '../ledgerView'
 
 function row(id: string, o: Partial<LedgerRow> = {}): LedgerRow {
   return {
@@ -39,5 +39,48 @@ describe('duplicateOrderIds', () => {
   it('returns [] when the product is unique', () => {
     const rows = [row('o1', { productId: 'A' }), row('o2', { productId: 'B' })]
     expect(duplicateOrderIds(rows, 'o1')).toEqual([])
+  })
+})
+
+describe('healthCounts', () => {
+  it('counts uncosted, no-transcript, failed', () => {
+    const rows = [
+      row('a', { costCents: 100, transcript: { brand: 'N' } }),
+      row('b'),
+      row('c', { paymentStatus: 'failed' }),
+    ]
+    expect(healthCounts(rows)).toEqual({ uncosted: 2, noTranscript: 2, failed: 1 })
+  })
+})
+
+describe('costSuggestions', () => {
+  it('returns distinct same-product costs with counts, template first', () => {
+    const rows = [
+      row('a', { productId: 'P', costCents: 1200 }),
+      row('b', { productId: 'P', costCents: 1200 }),
+      row('c', { productId: 'P', costCents: 800 }),
+      row('d', { productId: 'Q', costCents: 999 }),
+    ]
+    const out = costSuggestions(rows, 'P', 1000)
+    expect(out[0]).toEqual({ cents: 1000, count: 0, isTemplate: true })
+    expect(out.find((s) => s.cents === 1200)).toEqual({ cents: 1200, count: 2, isTemplate: false })
+    expect(out.some((s) => s.cents === 999)).toBe(false) // other product excluded
+  })
+  it('returns [] when no same-product costs and no template', () => {
+    expect(costSuggestions([row('a', { productId: 'P' })], 'P')).toEqual([])
+  })
+})
+
+describe('activeFilterChips', () => {
+  it('emits a chip per active filter, none when empty', () => {
+    expect(activeFilterChips({ q: '', status: '', cost: '' }, null)).toEqual([])
+    const chips = activeFilterChips(
+      { q: 'nike', status: 'Paid', cost: 'missing', transcript: 'missing', profit: 'neg', min: 5, max: 50 },
+      'LIVE · Jun 22',
+    )
+    expect(chips.map((c) => c.key).sort()).toEqual(
+      ['cost', 'min-max', 'profit', 'q', 'show', 'status', 'transcript'].sort(),
+    )
+    expect(chips.find((c) => c.key === 'min-max')!.label).toBe('$5–50')
   })
 })
