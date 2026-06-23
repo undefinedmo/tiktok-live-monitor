@@ -732,6 +732,7 @@ if (demoSeed.__demoProductTx) Object.assign(productTx, demoSeed.__demoProductTx)
 let ledgerFilters: LedgerFilters = { q: '', status: '', cost: '', profit: '', min: null, max: null }
 let ledgerSort: { key: SortKey; dir: 1 | -1 } = { key: 'date', dir: -1 }
 let ledgerExpanded: string | null = null
+let excludeFailed = localStorage.getItem('tt-kpi-exclude-failed') === '1'
 let currentScreen: 'monitor' | 'ledger' | 'picklist' | 'settings' = 'monitor'
 const fmtCents = (c: number) => '$' + (c / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
@@ -870,7 +871,7 @@ function editCost(r: LedgerRow, cell: HTMLElement) {
 }
 
 function ledgerRowEl(r: LedgerRow): HTMLElement {
-  const row = el('div', 'ledger-row' + (transcribingOrders.has(r.orderId) ? ' transcribing' : ''))
+  const row = el('div', 'ledger-row' + (transcribingOrders.has(r.orderId) ? ' transcribing' : '') + (r.paymentStatus === 'failed' ? ' cancelled' : ''))
   row.dataset.oid = r.orderId
   const check = el('div', 'lc-check')
   const cb = document.createElement('input')
@@ -1094,7 +1095,7 @@ function renderLedger() {
   const all = ledgerRows()
   // KPIs reflect the active filters/show (the visible set), not the whole book
   const filtered = sortRows(filterRows(all, ledgerFilters), ledgerSort.key, ledgerSort.dir)
-  const k = computeKpis(filtered)
+  const k = computeKpis(filtered, { excludeFailed })
   const tiles: [string, string, string?, boolean?][] = [
     ['ORDERS', String(k.orders)],
     ['GROSS', fmtCents(k.grossCents)],
@@ -1423,6 +1424,16 @@ function setupLedger() {
     }
   })
   $('bulkDeselect').addEventListener('click', () => { selected.clear(); renderLedger() })
+
+  const kpiWrap = $('ledgerKpis').parentElement!
+  const exToggle = document.createElement('label')
+  exToggle.id = 'ledgerExclFailed'
+  exToggle.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:11px;color:#8a93a6;cursor:pointer;margin:2px 0 -4px;'
+  exToggle.innerHTML = '<input type="checkbox" /> <span>Exclude failed from totals</span>'
+  const exCb = exToggle.querySelector('input') as HTMLInputElement
+  exCb.checked = excludeFailed
+  exCb.addEventListener('change', () => { excludeFailed = exCb.checked; localStorage.setItem('tt-kpi-exclude-failed', excludeFailed ? '1' : '0'); renderLedger() })
+  kpiWrap.insertBefore(exToggle, $('ledgerKpis'))
 
   $('ledgerHead').querySelectorAll('span[data-sort]').forEach((sp) =>
     sp.addEventListener('click', () => {
