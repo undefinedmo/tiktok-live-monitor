@@ -810,8 +810,8 @@ function refreshShowOptions() {
     const fmtDur = (ms: number) => { if (ms <= 0) return ''; const m = Math.round(ms / 60000); const h = Math.floor(m / 60); return h ? `${h}h ${m % 60}m` : `${m}m` }
     opts.push({ value: 'all', label: `All orders (${syncedOrders.length})` })
     for (const sh of derivedShows) {
-      const date = Number.isFinite(sh.startMs) ? new Date(sh.startMs).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
-      const sub = [date, `${sh.count} items`, fmtDur(sh.endMs - sh.startMs)].filter(Boolean).join(' · ')
+      // sh.title is already "LIVE · <date>, <time>", so the sub is just item-count · duration (no duplicate date)
+      const sub = [`${sh.count} items`, fmtDur(sh.endMs - sh.startMs)].filter(Boolean).join(' · ')
       opts.push({ value: sh.id, label: sub ? `${sh.title} · ${sub}` : sh.title })
     }
   } else {

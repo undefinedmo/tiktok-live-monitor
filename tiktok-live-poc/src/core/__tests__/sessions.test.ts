@@ -90,12 +90,13 @@ describe('deriveShowsFromOrders', () => {
     expect(showIdByOrder.get('o2')).toMatch(/^live-/)
   })
 
-  it('titles a show from its liveTag when present, else a derived date', () => {
+  it('titles every show by its derived date (the real liveTag is boilerplate, so it is ignored)', () => {
     const { shows } = deriveShowsFromOrders([
-      sale('o1', { roomId: 'R1', liveTag: 'LIVE 6/20', createdAt: 100 }),
+      sale('o1', { roomId: 'R1', liveTag: 'Order contains one or more items from LIVE streams by …', createdAt: 100 }),
       sale('o2', { roomId: 'R2', createdAt: 200 }),
     ])
-    expect(shows.find((s) => s.id === 'R1')!.title).toBe('LIVE 6/20')
+    // liveTag must NOT leak into the title — both shows are titled "LIVE · <date>"
+    expect(shows.find((s) => s.id === 'R1')!.title).toMatch(/^LIVE · /)
     expect(shows.find((s) => s.id === 'R2')!.title).toMatch(/^LIVE · /)
   })
 

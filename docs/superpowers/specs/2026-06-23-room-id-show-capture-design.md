@@ -35,7 +35,7 @@ Its filter UI (`ShowSelect.tsx`) labels each show with *date · item-count · du
 | Decision | Choice |
 |---|---|
 | Live monitor vs synced shows | **Keep separate.** The live monitor keeps its own `current_session`-keyed "Live (current)" entry; synced orders group by room id independently. No live-session ↔ room-id mapping. |
-| Show label/title | **`liveTag` text when present, else date-derived** (`LIVE · <date>`). |
+| Show label/title | **Date/time-derived** (`LIVE · <date>, <time>`). *(Brainstorming chose "liveTag text else date"; revised 2026-06-23 after reviewing the live dropdown — the real `sales_source_live_tag` is generic boilerplate ("Order contains one or more items from LIVE streams by …"), identical per show, so the date/time title is the scannable one.)* |
 | Persistence | **In-memory derivation at render time.** Orders already store `room_id`; no new `Show` table. |
 | Where the code lives | **Graduate `tiktok-live-poc` in place** (consistent with the order-data-foundation spec). |
 

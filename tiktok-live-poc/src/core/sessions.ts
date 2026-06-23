@@ -95,15 +95,14 @@ export function deriveShowsFromOrders(sales: Sale[]): {
   for (const [id, g] of groups) {
     let startMs = Infinity
     let endMs = -Infinity
-    let title = ''
     for (const s of g) {
       if (s.createdAt < startMs) startMs = s.createdAt
       if (s.createdAt > endMs) endMs = s.createdAt
-      // first non-empty liveTag in the group wins (a room's orders share one tag)
-      if (!title && s.liveTag) title = s.liveTag
     }
-    if (!title) title = deriveTitle(startMs)
-    shows.push({ id, title, startMs, endMs, count: g.length })
+    // Title by date/time. The order's liveTag (sales_source_live_tag) is generic boilerplate in
+    // real data ("Order contains one or more items from LIVE streams by …"), so it makes a useless
+    // per-show label; the start date/time is the distinguishing, scannable title.
+    shows.push({ id, title: deriveTitle(startMs), startMs, endMs, count: g.length })
   }
 
   shows.sort((a, b) => b.startMs - a.startMs)
