@@ -1,6 +1,7 @@
 import flvjs from 'flv.js'
 import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuction, ChatMessage, Urgency } from '../core/types'
 import { computeKpis, filterRows, sortRows, profitCents, marginPct, statusLabel, applyCost, toCsv, parseRetailCents, groupForPicklist, type LedgerRow, type LedgerFilters, type LedgerTranscript, type SortKey, type CostApply, type PickGroup } from '../core/ledger'
+import { healthCounts } from '../core/ledgerView'
 import { upsertShow, listShows, salesForShow, type ShowMeta, type ShowStore } from '../core/shows'
 import { deriveShowsFromOrders, type DerivedShow } from '../core/sessions'
 import { urgency } from '../core/urgency'
@@ -1090,6 +1091,28 @@ function editAiField(r: LedgerRow, key: keyof LedgerTranscript, node: HTMLElemen
   })
 }
 
+function renderHealthPills() {
+  const host = document.getElementById('ledgerHealth')
+  if (!host) return
+  const c = healthCounts(ledgerRows())
+  const defs: [string, string, () => boolean, () => void][] = [
+    ['Uncosted', String(c.uncosted), () => ledgerFilters.cost === 'missing',
+      () => { ledgerFilters = { ...ledgerFilters, cost: ledgerFilters.cost === 'missing' ? '' : 'missing' }; segActive('ledgerCostSeg', 'cost', ledgerFilters.cost); renderLedger() }],
+    ['No transcript', String(c.noTranscript), () => ledgerFilters.transcript === 'missing',
+      () => { ledgerFilters = { ...ledgerFilters, transcript: ledgerFilters.transcript === 'missing' ? '' : 'missing' }; renderLedger() }],
+    ['Failed', String(c.failed), () => ledgerFilters.status === 'Failed',
+      () => { const on = ledgerFilters.status === 'Failed'; ledgerFilters = { ...ledgerFilters, status: on ? '' : 'Failed' }; ;($('ledgerStatus') as HTMLSelectElement).value = ledgerFilters.status; renderLedger() }],
+  ]
+  host.replaceChildren()
+  for (const [label, count, isOn, toggle] of defs) {
+    const pill = el('button', 'health-pill' + (isOn() ? ' on' : ''))
+    pill.appendChild(el('span', 'hp-label', label))
+    pill.appendChild(el('span', 'hp-count', count))
+    pill.addEventListener('click', toggle)
+    host.appendChild(pill)
+  }
+}
+
 function renderLedger() {
   if (currentScreen !== 'ledger') return
   const all = ledgerRows()
@@ -1115,6 +1138,7 @@ function renderLedger() {
   }
   const rows = filtered
   visibleRows = rows
+  renderHealthPills()
   $('ledgerCount').textContent = `${rows.length} of ${all.length} orders`
   const body = $('ledgerRows')
   body.replaceChildren()
@@ -1434,6 +1458,11 @@ function setupLedger() {
   exCb.checked = excludeFailed
   exCb.addEventListener('change', () => { excludeFailed = exCb.checked; localStorage.setItem('tt-kpi-exclude-failed', excludeFailed ? '1' : '0'); renderLedger() })
   kpiWrap.insertBefore(exToggle, $('ledgerKpis'))
+
+  const pills = document.createElement('div')
+  pills.id = 'ledgerHealth'
+  pills.style.cssText = 'display:flex;gap:8px;flex:none;flex-wrap:wrap;'
+  $('ledgerKpis').parentElement!.insertBefore(pills, document.getElementById('ledgerExclFailed') ?? $('ledgerKpis'))
 
   $('ledgerHead').querySelectorAll('span[data-sort]').forEach((sp) =>
     sp.addEventListener('click', () => {
