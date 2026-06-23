@@ -1423,10 +1423,51 @@ function segActive(segId: string, attr: 'cost' | 'profit', val: string) {
   $(segId).querySelectorAll('button').forEach((b) => b.classList.toggle('on', ((b as HTMLElement).dataset[attr] ?? '') === val))
 }
 
+function jumpToOrder(orderId: string) {
+  const rowEl = [...document.querySelectorAll('#ledgerRows .ledger-row')].find((e) => (e as HTMLElement).dataset.oid === orderId) as HTMLElement | undefined
+  if (!rowEl) return
+  rowEl.scrollIntoView({ block: 'center' })
+  rowEl.classList.add('flash')
+  setTimeout(() => rowEl.classList.remove('flash'), 1800)
+}
+
 function setupLedger() {
   $('navMonitor').addEventListener('click', () => showScreen('monitor'))
   $('navLedger').addEventListener('click', () => showScreen('ledger'))
   document.getElementById('navSettings2')?.addEventListener('click', () => showScreen('settings'))
+
+  // ── Ctrl+K jump-to-order dropdown ──────────────────────────────────────────
+  const jump = document.createElement('div')
+  jump.id = 'ledgerJump'
+  jump.style.display = 'none'
+  ;($('ledgerSearch').parentElement as HTMLElement).style.position = 'relative'
+  $('ledgerSearch').parentElement!.appendChild(jump)
+  const renderJump = () => {
+    const q = (($('ledgerSearch') as HTMLInputElement).value || '').trim().toLowerCase()
+    if (!q) { jump.style.display = 'none'; return }
+    const hits = sourceSales().filter((s) =>
+      [s.orderId, s.buyer.username, s.buyer.handle, s.productName].filter(Boolean).join(' ').toLowerCase().includes(q),
+    ).slice(0, 8)
+    jump.replaceChildren()
+    if (!hits.length) { jump.style.display = 'none'; return }
+    for (const s of hits) {
+      const it = el('div', 'jump-item')
+      it.dataset.oid = s.orderId
+      it.appendChild(el('span', 'ji-buyer', s.buyer.username || s.buyer.handle || '—'))
+      it.appendChild(el('span', 'ji-prod', ` · ${s.productName}`))
+      it.appendChild(el('span', 'ji-id', ` …${s.orderId.slice(-6)}`))
+      it.addEventListener('mousedown', (e) => { e.preventDefault(); jump.style.display = 'none'; jumpToOrder(s.orderId) })
+      jump.appendChild(it)
+    }
+    jump.style.display = 'block'
+  }
+  $('ledgerSearch').addEventListener('input', renderJump)
+  $('ledgerSearch').addEventListener('keydown', (e) => {
+    if ((e as KeyboardEvent).key === 'Enter') { const first = jump.querySelector('.jump-item') as HTMLElement | null; if (first) { jump.style.display = 'none'; const id = first.dataset.oid; if (id) jumpToOrder(id) } }
+    else if ((e as KeyboardEvent).key === 'Escape') jump.style.display = 'none'
+  })
+  $('ledgerSearch').addEventListener('blur', () => setTimeout(() => { jump.style.display = 'none' }, 150))
+
   ;($('ledgerSearch') as HTMLInputElement).addEventListener('input', (e) => { ledgerFilters = { ...ledgerFilters, q: (e.target as HTMLInputElement).value }; renderLedger() })
   ;($('ledgerStatus') as HTMLSelectElement).addEventListener('change', (e) => { ledgerFilters = { ...ledgerFilters, status: (e.target as HTMLSelectElement).value }; renderLedger() })
 
@@ -1569,6 +1610,15 @@ setupLedger()
 setupPicklist()
 setupSync()
 setupShowFilter()
+
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && currentScreen === 'ledger') {
+    e.preventDefault()
+    const inp = $('ledgerSearch') as HTMLInputElement
+    inp.focus()
+    inp.dispatchEvent(new Event('input'))
+  }
+})
 
 // ── boot: one-shot legacy import → hydrate from SQLite → first render ─────────
 // All order/cost/transcript/pick/show data is read from and written to SQLite via dbAPI.

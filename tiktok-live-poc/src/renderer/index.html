@@ -234,6 +234,12 @@
       .ctxmenu .item.disabled{color:#4a5160;cursor:default;}
       .ctxmenu .sep{height:1px;background:#222838;margin:5px 4px;}
       .ledger-row.dup{background:#2a230b;border-left:3px solid #d9a341;}
+      #ledgerJump{position:absolute;top:38px;left:0;width:380px;max-width:90vw;z-index:9998;background:#12151c;border:1px solid #2a3142;border-radius:8px;padding:4px;box-shadow:0 10px 30px rgba(0,0,0,.5);}
+      #ledgerJump .jump-item{padding:6px 9px;border-radius:6px;font-size:12px;color:#cdd4e0;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+      #ledgerJump .jump-item:hover{background:#1c2230;}
+      #ledgerJump .ji-buyer{font-weight:600;color:#eef1f7;} #ledgerJump .ji-prod{color:#9aa3b2;} #ledgerJump .ji-id{color:#5c6473;}
+      @keyframes lrFlash{0%{background:rgba(217,163,65,.35);}100%{background:transparent;}}
+      .ledger-row.flash{animation:lrFlash 1.8s ease-out;}
     </style>
   </head>
   <body>
