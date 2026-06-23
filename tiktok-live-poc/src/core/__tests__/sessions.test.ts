@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { clusterByTime, derivedShowId, deriveTitle, SESSION_GAP_MS } from '../sessions'
+import { clusterByTime, derivedShowId, deriveTitle, SESSION_GAP_MS, deriveShowsFromOrders } from '../sessions'
 import type { Sale } from '../types'
-import { deriveShowsFromOrders } from '../sessions'
 
 describe('clusterByTime', () => {
   it('groups items within the gap into one session', () => {
