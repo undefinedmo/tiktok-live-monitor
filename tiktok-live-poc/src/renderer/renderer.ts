@@ -2,6 +2,7 @@ import flvjs from 'flv.js'
 import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuction, ChatMessage, Urgency } from '../core/types'
 import { computeKpis, filterRows, sortRows, profitCents, marginPct, statusLabel, applyCost, toCsv, parseRetailCents, groupForPicklist, type LedgerRow, type LedgerFilters, type LedgerTranscript, type SortKey, type CostApply, type PickGroup } from '../core/ledger'
 import { upsertShow, listShows, salesForShow, type ShowMeta, type ShowStore } from '../core/shows'
+import { deriveShowsFromOrders, type DerivedShow } from '../core/sessions'
 import { urgency } from '../core/urgency'
 import { classifyException } from '../core/exceptions'
 import { labelHtml, LABEL_SIZES } from '../electron/label' // portable (no electron deps) — renders the real print HTML for the preview
@@ -710,9 +711,20 @@ const transcriptsByOrder = new Map<string, string>()
 const productTx: Record<string, LedgerTranscript> = {} // productId → structured AI transcript
 const orderTx: Record<string, LedgerTranscript> = {} // orderId → per-ITEM structured transcript (from its video receipt)
 // Synced order book from Seller-Center order/list (decoupled from the live stream). When present
-// it is the Ledger/Picklist source; grouped into "shows" by the live-show tag on each order.
+// it is the Ledger/Picklist source; grouped into real shows by live_room_id (time-gap fallback).
 let syncedOrders: Sale[] = []
-const SHOW_OF = (s: Sale) => s.liveTag || 'Other orders'
+// Derived-shows cache for the synced order book. Recomputed only when the syncedOrders array
+// reference changes (it is reassigned on sync/hydrate, never mutated in place).
+let _derivedShowsSrc: Sale[] | null = null
+let derivedShows: DerivedShow[] = []
+let showIdByOrder = new Map<string, string>()
+function ensureDerivedShows(): void {
+  if (_derivedShowsSrc === syncedOrders) return
+  const r = deriveShowsFromOrders(syncedOrders)
+  derivedShows = r.shows
+  showIdByOrder = r.showIdByOrder
+  _derivedShowsSrc = syncedOrders
+}
 // demo seed — these globals only exist in the static-HTML mock, never in the Electron app
 const demoSeed = window as unknown as { __demoProductTx?: Record<string, LedgerTranscript>; __demoProductCost?: Record<string, number> }
 if (demoSeed.__demoProductCost) Object.assign(productCostMap, demoSeed.__demoProductCost)
@@ -780,7 +792,8 @@ function applyBulkCost(apply: CostApply) {
 function sourceSales(): Sale[] {
   if (syncedOrders.length) {
     if (selectedShowId === 'live' || selectedShowId === 'all') return syncedOrders
-    return syncedOrders.filter((s) => SHOW_OF(s) === selectedShowId)
+    ensureDerivedShows()
+    return syncedOrders.filter((s) => showIdByOrder.get(s.orderId) === selectedShowId)
   }
   return selectedShowId === 'live' ? allSales : salesForShow(showStore, selectedShowId)
 }
@@ -793,19 +806,13 @@ function refreshShowOptions() {
   // enriched with date · item-count · duration (like live-ledger's ShowSelect).
   const opts: { value: string; label: string }[] = []
   if (syncedOrders.length) {
+    ensureDerivedShows()
     const fmtDur = (ms: number) => { if (ms <= 0) return ''; const m = Math.round(ms / 60000); const h = Math.floor(m / 60); return h ? `${h}h ${m % 60}m` : `${m}m` }
-    const agg = new Map<string, { count: number; minT: number; maxT: number }>()
-    for (const s of syncedOrders) {
-      const tag = SHOW_OF(s)
-      const e = agg.get(tag) ?? { count: 0, minT: Infinity, maxT: -Infinity }
-      e.count++; if (s.createdAt < e.minT) e.minT = s.createdAt; if (s.createdAt > e.maxT) e.maxT = s.createdAt
-      agg.set(tag, e)
-    }
     opts.push({ value: 'all', label: `All orders (${syncedOrders.length})` })
-    for (const [tag, e] of [...agg.entries()].sort((a, b) => b[1].maxT - a[1].maxT)) {
-      const date = Number.isFinite(e.minT) ? new Date(e.minT).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
-      const sub = [date, `${e.count} items`, fmtDur(e.maxT - e.minT)].filter(Boolean).join(' · ')
-      opts.push({ value: tag, label: sub ? `${tag} · ${sub}` : tag })
+    for (const sh of derivedShows) {
+      const date = Number.isFinite(sh.startMs) ? new Date(sh.startMs).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
+      const sub = [date, `${sh.count} items`, fmtDur(sh.endMs - sh.startMs)].filter(Boolean).join(' · ')
+      opts.push({ value: sh.id, label: sub ? `${sh.title} · ${sub}` : sh.title })
     }
   } else {
     opts.push({ value: 'live', label: 'Live (current)' })
