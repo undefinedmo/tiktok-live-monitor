@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron'
+import { webcastState } from '../core/chat'
 
 // Runs in the monitor window (contextIsolation:false, so this shares the page's
 // main world and can wrap the page's own WebSocket + XHR/fetch). Forwards three
@@ -130,6 +131,34 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
   runCycle = cycle
   void cycle()
   setInterval(() => void cycle(), 3000)
+
+  // ── Chat poll ──────────────────────────────────────────────────────────────
+  // webcast/im/fetch is params-only (no cookies/signing — verified), so we poll it
+  // ourselves, threading cursor + internal_ext from each response. The fetch hook above
+  // forwards every response to main → decodeChat → render; here we read it only to advance
+  // the cursor and honor the server's fetchInterval. The dashboard's own view doesn't fire
+  // this endpoint, so without our poll chat never flows.
+  const chatStatic =
+    `aid=253642&app_name=i18n_ecom_alliance&version_code=260000&device_platform=web&app_language=en` +
+    `&webcast_language=en&identity=anchor&live_id=12&resp_content_type=protobuf&fetch_rule=1` +
+    `&history_comment_count=100&sup_ws_ds_opt=1&did_rule=3&cookie_enabled=true`
+  let chatCursor = ''
+  let chatExt = ''
+  const chatCycle = async () => {
+    const url =
+      `https://webcast.us.tiktok.com/webcast/im/fetch/?${chatStatic}&room_id=${cfg.roomId}` +
+      `&cursor=${encodeURIComponent(chatCursor)}&internal_ext=${encodeURIComponent(chatExt)}`
+    let nextMs = 1000
+    try {
+      const res = await window.fetch(url)
+      const st = webcastState(new Uint8Array(await res.clone().arrayBuffer()))
+      if (st.cursor) chatCursor = st.cursor
+      chatExt = st.internalExt
+      if (st.fetchIntervalMs > 0) nextMs = st.fetchIntervalMs
+    } catch { /* ignore — try again next tick */ }
+    setTimeout(() => void chatCycle(), Math.min(3000, Math.max(800, nextMs)))
+  }
+  void chatCycle()
 })
 
 ipcRenderer.send('tt-status', { status: 'connecting' })

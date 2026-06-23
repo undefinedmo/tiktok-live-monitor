@@ -104,6 +104,33 @@ function parseChatPayload(b: Uint8Array, s: number, e: number): ChatMessage | nu
   return { userId: user.id, nickname: user.nickname, avatarUrl: user.avatarUrl, text, ts }
 }
 
+/** A decoded webcast/im/fetch poll: the chat comments plus the pagination state the
+ *  NEXT request must echo back (cursor + internalExt) and how long to wait (fetchIntervalMs).
+ *  WebcastResponse top-level fields (verified against captured data):
+ *    1 = repeated messages, 2 = cursor, 3 = fetchInterval (ms), 5 = internalExt */
+export interface WebcastFetch {
+  messages: ChatMessage[]
+  cursor: string
+  internalExt: string
+  fetchIntervalMs: number
+}
+
+/** Just the pagination state (cursor + internalExt + fetchInterval) — for the poller, which
+ *  threads it into the next request and lets main decode the messages for render. */
+export function webcastState(b: Uint8Array): Omit<WebcastFetch, 'messages'> {
+  let cursor = ''
+  let internalExt = ''
+  fields(b, 0, b.length, (field, wire, s, e) => {
+    if (field === 2 && wire === 2) cursor = utf8(b, s, e)
+    else if (field === 5 && wire === 2) internalExt = utf8(b, s, e)
+  })
+  return { cursor, internalExt, fetchIntervalMs: varintField(b, 0, b.length, 3) || 1000 }
+}
+
+export function decodeWebcast(b: Uint8Array): WebcastFetch {
+  return { messages: decodeChat(b), ...webcastState(b) }
+}
+
 /** Find every WebcastChatMessage in a WebcastResponse frame and decode it.
  *  Uses the method-name marker (followed by tag 0x12 = field 2, the payload),
  *  same frame-split heuristic the auction decoder used. */
