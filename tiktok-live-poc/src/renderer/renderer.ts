@@ -802,7 +802,7 @@ function sourceSales(): Sale[] {
 function refreshShowOptions() {
   const fmtShowDate = (sec?: number) =>
     sec ? new Date(sec * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
-  // When we have a synced order book, derive shows from the per-order live-show tag,
+  // When we have a synced order book, derive shows by room-id grouping (time-gap fallback),
   // enriched with date · item-count · duration (like live-ledger's ShowSelect).
   const opts: { value: string; label: string }[] = []
   if (syncedOrders.length) {

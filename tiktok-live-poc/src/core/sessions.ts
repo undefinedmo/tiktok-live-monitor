@@ -99,6 +99,7 @@ export function deriveShowsFromOrders(sales: Sale[]): {
     for (const s of g) {
       if (s.createdAt < startMs) startMs = s.createdAt
       if (s.createdAt > endMs) endMs = s.createdAt
+      // first non-empty liveTag in the group wins (a room's orders share one tag)
       if (!title && s.liveTag) title = s.liveTag
     }
     if (!title) title = deriveTitle(startMs)
