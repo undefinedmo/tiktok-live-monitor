@@ -1,7 +1,7 @@
 import flvjs from 'flv.js'
 import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuction, ChatMessage, Urgency } from '../core/types'
 import { computeKpis, filterRows, sortRows, profitCents, marginPct, statusLabel, applyCost, toCsv, parseRetailCents, groupForPicklist, type LedgerRow, type LedgerFilters, type LedgerTranscript, type SortKey, type CostApply, type PickGroup } from '../core/ledger'
-import { healthCounts, activeFilterChips } from '../core/ledgerView'
+import { healthCounts, activeFilterChips, selectSimilar, duplicateOrderIds, type SimilarBy } from '../core/ledgerView'
 import { upsertShow, listShows, salesForShow, type ShowMeta, type ShowStore } from '../core/shows'
 import { deriveShowsFromOrders, type DerivedShow } from '../core/sessions'
 import { urgency } from '../core/urgency'
@@ -739,6 +739,7 @@ const fmtCents = (c: number) => '$' + (c / 100).toLocaleString('en-US', { minimu
 
 // bulk-selection + cost state
 const selected = new Set<string>()
+const highlightedDup = new Set<string>()
 const transcribingOrders = new Set<string>() // orderIds currently being transcribed (row spinner)
 let bulkMode: 'flat' | 'percent' | 'retail' = 'percent'
 let bulkWholeProduct = false // when on, cost edits cascade to the whole product/bin
@@ -871,9 +872,61 @@ function editCost(r: LedgerRow, cell: HTMLElement) {
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); else if (e.key === 'Escape') { done = true; renderLedger() } })
 }
 
+function applyLedgerSelection(ids: string[]) {
+  selected.clear()
+  for (const id of ids) selected.add(id)
+  updateBulkBar()
+  renderLedger()
+}
+
+function closeLedgerCtxMenu() {
+  document.getElementById('ledgerCtx')?.remove()
+}
+
+function openLedgerCtxMenu(ev: MouseEvent, r: LedgerRow) {
+  closeLedgerCtxMenu()
+  const rows = ledgerRows()
+  const showIdByOrder = deriveShowsFromOrders(rows).showIdByOrder
+  const menu = el('div', 'ctxmenu')
+  menu.id = 'ledgerCtx'
+  const item = (label: string, fn: () => void, disabled = false) => {
+    const it = el('div', 'item' + (disabled ? ' disabled' : ''), label)
+    if (!disabled) it.addEventListener('click', () => { closeLedgerCtxMenu(); fn() })
+    menu.appendChild(it)
+  }
+  const sel = (by: SimilarBy) => applyLedgerSelection(selectSimilar(rows, r.orderId, by, showIdByOrder))
+  item(`Select all from @${r.buyer.handle ?? r.buyer.username}`, () => sel('buyer'))
+  item('Select same product', () => sel('product'))
+  item('Select from this show', () => sel('show'))
+  const dups = duplicateOrderIds(rows, r.orderId)
+  item(`Highlight duplicates${dups.length ? ` (${dups.length})` : ''}`, () => {
+    highlightedDup.clear()
+    for (const id of dups) highlightedDup.add(id)
+    applyLedgerSelection(dups)
+  }, dups.length === 0)
+  menu.appendChild(el('div', 'sep'))
+  item('Set cost…', () => {
+    ledgerExpanded = null
+    renderLedger()
+    const cell = [...document.querySelectorAll('#ledgerRows .ledger-row')].find((e) => (e as HTMLElement).dataset.oid === r.orderId)?.querySelector('.lc-cost') as HTMLElement | undefined
+    if (cell) { cell.scrollIntoView({ block: 'center' }); editCost(r, cell) }
+  })
+  item('Transcribe', () => void transcribeProduct(r.productId, r.productName), !recapEnabled)
+  document.body.appendChild(menu)
+  // position within the viewport
+  const mw = 220, mh = menu.offsetHeight
+  menu.style.left = Math.min(ev.clientX, window.innerWidth - mw - 8) + 'px'
+  menu.style.top = Math.min(ev.clientY, window.innerHeight - mh - 8) + 'px'
+  const dismiss = (e: Event) => { if (!menu.contains(e.target as Node)) { closeLedgerCtxMenu(); cleanup() } }
+  const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { closeLedgerCtxMenu(); cleanup() } }
+  const cleanup = () => { document.removeEventListener('pointerdown', dismiss, true); document.removeEventListener('keydown', onKey, true); document.getElementById('ledgerRows')?.removeEventListener('scroll', closeLedgerCtxMenu) }
+  setTimeout(() => { document.addEventListener('pointerdown', dismiss, true); document.addEventListener('keydown', onKey, true); document.getElementById('ledgerRows')?.addEventListener('scroll', closeLedgerCtxMenu, { once: true }) }, 0)
+}
+
 function ledgerRowEl(r: LedgerRow): HTMLElement {
-  const row = el('div', 'ledger-row' + (transcribingOrders.has(r.orderId) ? ' transcribing' : '') + (r.paymentStatus === 'failed' ? ' cancelled' : ''))
+  const row = el('div', 'ledger-row' + (transcribingOrders.has(r.orderId) ? ' transcribing' : '') + (r.paymentStatus === 'failed' ? ' cancelled' : '') + (highlightedDup.has(r.orderId) ? ' dup' : ''))
   row.dataset.oid = r.orderId
+  row.addEventListener('contextmenu', (e) => { e.preventDefault(); openLedgerCtxMenu(e, r) })
   const check = el('div', 'lc-check')
   const cb = document.createElement('input')
   cb.type = 'checkbox'
