@@ -1,5 +1,5 @@
 import { ipcRenderer } from 'electron'
-import { webcastState } from '../core/chat'
+import { webcastState, ecStreamerKey } from '../core/chat'
 
 // Runs in the monitor window (contextIsolation:false, so this shares the page's
 // main world and can wrap the page's own WebSocket + XHR/fetch). Forwards three
@@ -144,6 +144,7 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
     `&history_comment_count=100&sup_ws_ds_opt=1&did_rule=3&cookie_enabled=true`
   let chatCursor = ''
   let chatExt = ''
+  let ecKey = '' // per-streamer key (needed to POST chat); arrives in a room-init webcast response
   const chatCycle = async () => {
     const url =
       `https://webcast.us.tiktok.com/webcast/im/fetch/?${chatStatic}&room_id=${cfg.roomId}` +
@@ -151,14 +152,39 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
     let nextMs = 1000
     try {
       const res = await window.fetch(url)
-      const st = webcastState(new Uint8Array(await res.clone().arrayBuffer()))
+      const buf = new Uint8Array(await res.clone().arrayBuffer())
+      const st = webcastState(buf)
       if (st.cursor) chatCursor = st.cursor
       chatExt = st.internalExt
       if (st.fetchIntervalMs > 0) nextMs = st.fetchIntervalMs
+      if (!ecKey) { const k = ecStreamerKey(buf); if (k) ecKey = k }
     } catch { /* ignore — try again next tick */ }
     setTimeout(() => void chatCycle(), Math.min(3000, Math.max(800, nextMs)))
   }
   void chatCycle()
+
+  // ── Post a chat message (streamer) ───────────────────────────────────────────
+  // POST /streamer_desktop/message/chat via the page's window.fetch — the TikTok SDK
+  // auto-signs all streamer_desktop calls (X-Bogus/msToken), so we don't sign ourselves.
+  ipcRenderer.on('tt-chat-send', (_e, req: { id?: number; text?: string }) => {
+    const id = req?.id
+    const content = String(req?.text ?? '').trim()
+    if (!content || !cfg.roomId) { ipcRenderer.send('tt-chat-sent', { id, ok: false, error: 'no text or no room' }); return }
+    if (!ecKey) { ipcRenderer.send('tt-chat-sent', { id, ok: false, error: 'streamer key not ready' }); return }
+    const url =
+      `https://shop.tiktok.com/api/v1/streamer_desktop/message/chat` +
+      `?aid=253642&app_name=i18n_ecom_alliance&device_platform=web&user_language=en&locale=en&page_scene=1&carrier_region=us`
+    const body = {
+      content,
+      meta: { source: 2, app_id: 253642, room_id: cfg.roomId, ec_streamer_key: ecKey },
+      client_start_time_stamp_millisecond: String(Date.now()),
+    }
+    void window
+      .fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-tt-store-region': 'us' }, body: JSON.stringify(body) })
+      .then((res) => res.json().catch(() => ({})))
+      .then((j: { code?: number; message?: string }) => ipcRenderer.send('tt-chat-sent', { id, ok: j?.code === 0, error: j?.message }))
+      .catch((e) => ipcRenderer.send('tt-chat-sent', { id, ok: false, error: String(e) }))
+  })
 })
 
 ipcRenderer.send('tt-status', { status: 'connecting' })

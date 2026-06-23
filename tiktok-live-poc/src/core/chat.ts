@@ -131,6 +131,20 @@ export function decodeWebcast(b: Uint8Array): WebcastFetch {
   return { messages: decodeChat(b), ...webcastState(b) }
 }
 
+// The streamer key needed to POST chat sits in the webcast/im/fetch response as a sub-message
+// field 24 = "v1" (bytes c2 01 02 76 31) immediately followed by field 25 (tag ca 01) = the key.
+const EC_KEY_MARKER = [0xc2, 0x01, 0x02, 0x76, 0x31, 0xca, 0x01]
+/** Pull the per-streamer `ec_streamer_key` out of a webcast/im/fetch response (needed to post chat). */
+export function ecStreamerKey(b: Uint8Array): string | undefined {
+  outer: for (let i = 0; i + EC_KEY_MARKER.length + 1 < b.length; i++) {
+    for (let j = 0; j < EC_KEY_MARKER.length; j++) if (b[i + j] !== EC_KEY_MARKER[j]) continue outer
+    const lenPos = i + EC_KEY_MARKER.length
+    const len = b[lenPos]!
+    if (len > 0 && len < 64 && lenPos + 1 + len <= b.length) return utf8(b, lenPos + 1, lenPos + 1 + len)
+  }
+  return undefined
+}
+
 /** Find every WebcastChatMessage in a WebcastResponse frame and decode it.
  *  Uses the method-name marker (followed by tag 0x12 = field 2, the payload),
  *  same frame-split heuristic the auction decoder used. */

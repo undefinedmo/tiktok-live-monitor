@@ -45,6 +45,10 @@ declare global {
       connection: () => Promise<{ loggedIn: boolean; hasShow: boolean; polling: boolean }>
       openMonitor: () => Promise<{ ok: boolean }>
     }
+    chatAPI?: {
+      send: (text: string) => Promise<{ ok: boolean; error?: string }>
+      onSent: (cb: (r: { ok: boolean; error?: string }) => void) => void
+    }
     dbAPI?: {
       getSnapshot: () => Promise<{ orders: Sale[]; costs: Record<string, number>; productCosts: Record<string, number>; orderTx: Record<string, LedgerTranscript>; productTx: Record<string, LedgerTranscript>; picked: string[]; shows: unknown }>
       setCost: (orderId: string, cents: number | null) => Promise<boolean>
@@ -189,10 +193,17 @@ function nameColor(n: string): string {
   for (let i = 0; i < n.length; i++) h = (h * 31 + n.charCodeAt(i)) >>> 0
   return NAME_COLORS[h % NAME_COLORS.length]!
 }
+// Text we just posted ourselves → timestamp. We render an optimistic "You" row
+// immediately on send, then suppress the webcast echo of the same text so it
+// isn't shown twice (the echo carries the streamer's real nickname + a later ts).
+const pendingSent = new Map<string, number>()
+
 function appendChat(items: ChatMessage[]) {
   const list = $('chatList')
   let added = false
   for (const m of items) {
+    const sentAt = pendingSent.get(m.text)
+    if (sentAt !== undefined && Date.now() - sentAt < 20000) { pendingSent.delete(m.text); continue }
     const key = `${m.ts}|${m.nickname}|${m.text}`
     if (chatSeen.has(key)) continue
     chatSeen.add(key)
@@ -210,6 +221,56 @@ function appendChat(items: ChatMessage[]) {
   if (chatSeen.size > 600) chatSeen.clear()
   list.scrollTop = list.scrollHeight
 }
+
+// Render our own outgoing message immediately (optimistic), styled as "You".
+function appendOwnChat(text: string) {
+  const list = $('chatList')
+  if (list.querySelector('.mono')) list.replaceChildren() // clear placeholder
+  const row = el('div', 'chatrow')
+  const nm = el('span', 'chatname', 'You')
+  nm.style.color = '#8a5cf6'
+  row.appendChild(nm)
+  row.appendChild(el('span', 'chattext', ' ' + text))
+  list.appendChild(row)
+  while (list.childElementCount > 80) list.firstElementChild?.remove()
+  list.scrollTop = list.scrollHeight
+}
+
+// ── send-to-chat (streamer posts into the live) ──────────────────────────────
+function setupChatInput() {
+  const input = document.getElementById('chatInput') as HTMLInputElement | null
+  const btn = document.getElementById('chatSend') as HTMLButtonElement | null
+  if (!input || !btn) return
+  if (!window.chatAPI) { input.disabled = true; btn.disabled = true; input.placeholder = 'Chat unavailable'; return }
+  let sending = false
+  const send = async () => {
+    const text = input.value.trim()
+    if (!text || sending) return
+    sending = true
+    btn.disabled = true
+    input.value = ''
+    try {
+      const r = await window.chatAPI!.send(text)
+      if (r?.ok) {
+        pendingSent.set(text, Date.now()) // suppress the webcast echo of our own message
+        appendOwnChat(text)
+      } else {
+        input.value = text // restore so the user can retry
+        input.placeholder = r?.error ? `Failed: ${r.error}`.slice(0, 60) : 'Send failed — retry'
+      }
+    } catch {
+      input.value = text
+      input.placeholder = 'Send failed — retry'
+    } finally {
+      sending = false
+      btn.disabled = false
+      input.focus()
+    }
+  }
+  btn.addEventListener('click', () => void send())
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void send() } })
+}
+setupChatInput()
 
 // ── top buyer intel ─────────────────────────────────────────────────────────
 function renderTopBuyer(buyers: BuyerAgg[]) {

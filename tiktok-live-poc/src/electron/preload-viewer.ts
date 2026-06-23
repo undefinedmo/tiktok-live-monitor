@@ -24,6 +24,11 @@ contextBridge.exposeInMainWorld('syncAPI', {
   openMonitor: () => ipcRenderer.invoke('tt-open-monitor'),
 })
 
+contextBridge.exposeInMainWorld('chatAPI', {
+  send: (text: string) => ipcRenderer.invoke('tt-chat-send', text),
+  onSent: (cb: (r: unknown) => void) => ipcRenderer.on('tt-chat-sent', (_e, r) => cb(r)),
+})
+
 contextBridge.exposeInMainWorld('dbAPI', {
   getSnapshot: () => ipcRenderer.invoke('tt-db:getSnapshot'),
   setCost: (orderId: string, cents: number | null) => ipcRenderer.invoke('tt-db:setCost', { orderId, cents }),

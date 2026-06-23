@@ -158,6 +158,29 @@ ipcMain.on('tt-status', (_e, s: { status: StatusEvent['status']; detail?: string
   send({ kind: 'status', status: s.status, detail: s.detail })
 })
 
+// Viewer → monitor: post a chat message (only the monitor window has the SDK-signed fetch).
+// The post is async in the monitor; correlate the reply by id so the invoke resolves with
+// the REAL TikTok post result, not just "forwarded to monitor".
+let chatSendSeq = 0
+const pendingChatSends = new Map<number, (r: { ok: boolean; error?: string }) => void>()
+ipcMain.handle('tt-chat-send', (_e, text: string) => {
+  if (!monitor) return { ok: false, error: 'monitor not open' }
+  const id = ++chatSendSeq
+  return new Promise<{ ok: boolean; error?: string }>((resolve) => {
+    const timer = setTimeout(() => { pendingChatSends.delete(id); resolve({ ok: false, error: 'timeout' }) }, 8000)
+    pendingChatSends.set(id, (r) => { clearTimeout(timer); resolve(r) })
+    monitor!.webContents.send('tt-chat-send', { id, text })
+  })
+})
+// Monitor → main: post result. Resolve the matching invoke (and broadcast to viewer).
+ipcMain.on('tt-chat-sent', (_e, result: { id?: number; ok: boolean; error?: string }) => {
+  if (result?.id != null) {
+    pendingChatSends.get(result.id)?.(result)
+    pendingChatSends.delete(result.id)
+  }
+  viewer?.webContents.send('tt-chat-sent', result)
+})
+
 // Source 1: frontier WebSocket → aggregate live stats.
 ipcMain.on('tt-ws-frame', (_e, msg: { url?: string; data?: Uint8Array }) => {
   const raw = msg?.data instanceof Uint8Array ? msg.data : new Uint8Array(msg?.data ?? [])
