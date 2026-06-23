@@ -1,7 +1,7 @@
 import flvjs from 'flv.js'
 import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuction, ChatMessage, Urgency } from '../core/types'
 import { computeKpis, filterRows, sortRows, profitCents, marginPct, statusLabel, applyCost, toCsv, parseRetailCents, groupForPicklist, type LedgerRow, type LedgerFilters, type LedgerTranscript, type SortKey, type CostApply, type PickGroup } from '../core/ledger'
-import { healthCounts } from '../core/ledgerView'
+import { healthCounts, activeFilterChips } from '../core/ledgerView'
 import { upsertShow, listShows, salesForShow, type ShowMeta, type ShowStore } from '../core/shows'
 import { deriveShowsFromOrders, type DerivedShow } from '../core/sessions'
 import { urgency } from '../core/urgency'
@@ -1113,6 +1113,39 @@ function renderHealthPills() {
   }
 }
 
+function clearLedgerFilter(key: string) {
+  if (key === 'show') { onShowChange(selectedShowId === 'all' ? 'all' : (syncedOrders.length ? 'all' : 'live')); return }
+  if (key === 'q') { ledgerFilters = { ...ledgerFilters, q: '' }; ;($('ledgerSearch') as HTMLInputElement).value = '' }
+  else if (key === 'status') { ledgerFilters = { ...ledgerFilters, status: '' }; ;($('ledgerStatus') as HTMLSelectElement).value = '' }
+  else if (key === 'cost') { ledgerFilters = { ...ledgerFilters, cost: '' }; segActive('ledgerCostSeg', 'cost', '') }
+  else if (key === 'transcript') { ledgerFilters = { ...ledgerFilters, transcript: '' } }
+  else if (key === 'profit') { ledgerFilters = { ...ledgerFilters, profit: '' }; segActive('ledgerProfitSeg', 'profit', '') }
+  else if (key === 'min-max') { ledgerFilters = { ...ledgerFilters, min: null, max: null }; ;($('ledgerMin') as HTMLInputElement).value = ''; ;($('ledgerMax') as HTMLInputElement).value = '' }
+  renderLedger()
+}
+
+function renderFilterChips() {
+  const host = document.getElementById('ledgerChips')
+  if (!host) return
+  // a "show" chip only when a specific show is selected (not the default all/live)
+  const showLabel = selectedShowId !== 'all' && selectedShowId !== 'live'
+    ? ((document.getElementById('ledgerShow') as HTMLSelectElement | null)?.selectedOptions[0]?.textContent ?? null)
+    : null
+  const chips = activeFilterChips(ledgerFilters, showLabel)
+  host.replaceChildren()
+  host.style.display = chips.length ? 'flex' : 'none'
+  if (!chips.length) return
+  host.appendChild(el('span', 'chips-label', 'Filters:'))
+  for (const c of chips) {
+    const chip = el('span', 'filter-chip')
+    chip.appendChild(el('span', undefined, c.label))
+    const x = el('button', 'chip-x', '×')
+    x.addEventListener('click', () => clearLedgerFilter(c.key))
+    chip.appendChild(x)
+    host.appendChild(chip)
+  }
+}
+
 function renderLedger() {
   if (currentScreen !== 'ledger') return
   const all = ledgerRows()
@@ -1139,6 +1172,7 @@ function renderLedger() {
   const rows = filtered
   visibleRows = rows
   renderHealthPills()
+  renderFilterChips()
   $('ledgerCount').textContent = `${rows.length} of ${all.length} orders`
   const body = $('ledgerRows')
   body.replaceChildren()
@@ -1463,6 +1497,11 @@ function setupLedger() {
   pills.id = 'ledgerHealth'
   pills.style.cssText = 'display:flex;gap:8px;flex:none;flex-wrap:wrap;'
   $('ledgerKpis').parentElement!.insertBefore(pills, document.getElementById('ledgerExclFailed') ?? $('ledgerKpis'))
+
+  const chips = document.createElement('div')
+  chips.id = 'ledgerChips'
+  chips.style.cssText = 'display:none;gap:6px;flex:none;flex-wrap:wrap;align-items:center;'
+  $('ledgerKpis').parentElement!.insertBefore(chips, document.getElementById('ledgerHealth') ?? $('ledgerKpis'))
 
   $('ledgerHead').querySelectorAll('span[data-sort]').forEach((sp) =>
     sp.addEventListener('click', () => {
