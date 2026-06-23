@@ -69,6 +69,17 @@ describe('costSuggestions', () => {
   it('returns [] when no same-product costs and no template', () => {
     expect(costSuggestions([row('a', { productId: 'P' })], 'P')).toEqual([])
   })
+  it('counts the template when it coincides with an existing product cost', () => {
+    const rows = [
+      row('a', { productId: 'P', costCents: 1000 }),
+      row('b', { productId: 'P', costCents: 1000 }),
+      row('c', { productId: 'P', costCents: 800 }),
+    ]
+    const out = costSuggestions(rows, 'P', 1000)
+    expect(out[0]).toEqual({ cents: 1000, count: 2, isTemplate: true })
+    // 1000 must appear once (as the template), not also as a non-template entry
+    expect(out.filter((s) => s.cents === 1000)).toHaveLength(1)
+  })
 })
 
 describe('activeFilterChips', () => {
