@@ -14,9 +14,29 @@ describe('profit math', () => {
     expect(statusLabel(sale({ paymentStatus: 'failed' }))).toBe('Failed')
     expect(statusLabel(sale({ paymentStatus: 'pending' }))).toBe('Unpaid')
   })
-  it('profit is null until costed, then total − cost', () => {
+  it('profit is null until costed, then subtotal − cost (falls back to total when no breakdown)', () => {
     expect(profitCents(sale({ costCents: undefined }))).toBeNull()
+    // live-auction row: no breakdown → price.cents is the item price, use it
     expect(profitCents(sale({ price: { cents: 5000, formatted: '$50' }, costCents: 1500 }))).toBe(3500)
+  })
+  it('profit excludes tax and shipping — revenue is the item subtotal, not the order total', () => {
+    // Subtotal $19.00, Shipping $4.58, Tax $1.67 → Total $25.25; Cost $8.00.
+    // Tax is remitted and shipping offsets the label, so profit = 1900 − 800, NOT 2525 − 800.
+    const r = sale({
+      price: { cents: 2525, formatted: '$25.25' },
+      priceBreakdown: { grandTotalCents: 2525, subtotalCents: 1900, shippingFeeCents: 458, taxCents: 167 },
+      costCents: 800,
+    })
+    expect(profitCents(r)).toBe(1100)
+    expect(marginPct(r)).toBeCloseTo(57.89, 1) // 1100 / 1900, not 1725 / 2525 (68%)
+  })
+  it('uses detail.subtotalCents when priceBreakdown is absent', () => {
+    const r = sale({
+      price: { cents: 2525, formatted: '$25.25' },
+      detail: { subtotalCents: 1900, shippingCents: 458, taxCents: 167 },
+      costCents: 800,
+    })
+    expect(profitCents(r)).toBe(1100)
   })
   it('a failed payment has zero revenue → profit is −cost', () => {
     expect(profitCents(sale({ paymentStatus: 'failed', price: { cents: 5000, formatted: '$50' }, costCents: 1500 }))).toBe(-1500)

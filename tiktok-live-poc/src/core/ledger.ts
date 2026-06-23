@@ -32,8 +32,17 @@ export function statusLabel(s: Sale): string {
   return s.paymentStatus === 'paid' ? 'Paid' : s.paymentStatus === 'failed' ? 'Failed' : 'Unpaid'
 }
 
-/** Revenue counted toward profit — a failed payment yields nothing. */
-export const revenueCents = (r: LedgerRow): number => (r.paymentStatus === 'failed' ? 0 : r.price.cents)
+/** Revenue counted toward profit — the item subtotal, NOT the order total.
+ *  The grand total bakes in tax (remitted to the government — never the seller's
+ *  money) and shipping (collected from the buyer but offset by the carrier label
+ *  the seller pays), so neither belongs in profit. Synced Seller-Center orders
+ *  carry the subtotal in priceBreakdown/detail; live-auction rows carry only
+ *  price.cents (the winning bid, i.e. the pre-checkout item price), so fall back
+ *  to that. A failed payment yields nothing. */
+export const revenueCents = (r: LedgerRow): number =>
+  r.paymentStatus === 'failed'
+    ? 0
+    : r.priceBreakdown?.subtotalCents ?? r.detail?.subtotalCents ?? r.price.cents
 
 export const profitCents = (r: LedgerRow): number | null =>
   r.costCents == null ? null : revenueCents(r) - r.costCents
