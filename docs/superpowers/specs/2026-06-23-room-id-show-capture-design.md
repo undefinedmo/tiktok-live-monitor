@@ -106,11 +106,11 @@ export function deriveShowsFromOrders(sales: Sale[]): {
 }
 ```
 
-Algorithm:
-1. Partition `sales` into those **with** `roomId` and those **without**.
-2. **With room id:** group by `roomId`. Each group → one `DerivedShow{ id: roomId, … }`.
-3. **Without room id:** `clusterByTime(sales.map(s => ({ id: s.orderId, t: s.createdAt })))`; each `Session` → one `DerivedShow{ id: derivedShowId(startMs), … }`.
-4. **Title:** the first non-empty `liveTag` among the group's sales, else `deriveTitle(startMs)`.
+Algorithm (revised 2026-06-23 after real-data review — see §6):
+1. **With room id:** group `sales` strictly by `roomId` (authoritative — different rooms are always different shows; a room's orders re-merge even across a long gap). Each room → one `DerivedShow{ id: roomId, … }`.
+2. **Attach room-less orders:** compute each room show's `[start, end]` window. Cancelled / non-auction orders carry no `live_room_id`; assign each such order to the room show whose window contains its `createdAt`, else the nearest room within `SESSION_GAP_MS`. This keeps a live's cancelled/room-less orders in the **same** show as its paid orders (instead of splitting a duplicate show per live).
+3. **Orphans → fallback:** room-less orders matching no room are `clusterByTime`'d; each `Session` → one `DerivedShow{ id: derivedShowId(startMs), … }`.
+4. **Title:** always `deriveTitle(startMs)` (`LIVE · <date>, <time>`). The real `sales_source_live_tag` is generic boilerplate, so it is not used as a title.
 5. Build `showIdByOrder` for every order; sort `shows` by `startMs` desc.
 
 ### 3.5 Filter wiring (`src/renderer/renderer.ts`) — synced-orders branch only

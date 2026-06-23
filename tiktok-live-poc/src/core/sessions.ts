@@ -56,7 +56,10 @@ export interface DerivedShow {
 }
 
 /** Group synced orders into shows. Orders with a live_room_id group by that room (the authoritative
- *  show key); orders without one are time-gap clustered into derived date-titled shows.
+ *  show key — different rooms are always different shows). Room-less orders (cancelled / non-auction
+ *  orders carry no live_room_id, but belong to the live they were placed during) attach to the room
+ *  show whose time window they fall within (or nearest, within the session gap); any that match no
+ *  room are time-gap clustered into derived date-titled shows.
  *  Returns the shows (most recent first) plus an orderId -> showId map for filtering. */
 export function deriveShowsFromOrders(sales: Sale[]): {
   shows: DerivedShow[]
@@ -65,7 +68,8 @@ export function deriveShowsFromOrders(sales: Sale[]): {
   const showIdByOrder = new Map<string, string>()
   const groups = new Map<string, Sale[]>() // showId -> sales
 
-  // 1. Orders WITH a room id group by room id.
+  // 1. Orders WITH a room id group strictly by room id (authoritative; never merges two rooms, and
+  //    re-merges a single room even if its orders span a long gap).
   const noRoom: Sale[] = []
   for (const s of sales) {
     if (s.roomId) {
@@ -78,19 +82,48 @@ export function deriveShowsFromOrders(sales: Sale[]): {
     }
   }
 
-  // 2. Orders WITHOUT a room id: time-gap cluster into fallback shows.
-  const saleById = new Map(noRoom.map((s) => [s.orderId, s] as const))
-  for (const session of clusterByTime(noRoom.map((s) => ({ id: s.orderId, t: s.createdAt })))) {
+  // 2. Compute each room show's [start, end] time window so room-less orders can be matched to it.
+  const roomWindows = [...groups.entries()].map(([id, g]) => {
+    let start = Infinity
+    let end = -Infinity
+    for (const s of g) {
+      if (s.createdAt < start) start = s.createdAt
+      if (s.createdAt > end) end = s.createdAt
+    }
+    return { id, start, end }
+  })
+
+  // 3. Attach each room-less order to the room show it falls within (distance 0), else the nearest
+  //    room within the session gap. This keeps cancelled / room-less orders in the same show as the
+  //    live's paid orders instead of splitting them into a duplicate fallback show.
+  const orphans: Sale[] = []
+  for (const s of noRoom) {
+    let best: { id: string; dist: number } | null = null
+    for (const w of roomWindows) {
+      const dist = s.createdAt < w.start ? w.start - s.createdAt : s.createdAt > w.end ? s.createdAt - w.end : 0
+      if (dist <= SESSION_GAP_MS && (best === null || dist < best.dist)) best = { id: w.id, dist }
+    }
+    if (best) {
+      groups.get(best.id)!.push(s)
+      showIdByOrder.set(s.orderId, best.id)
+    } else {
+      orphans.push(s)
+    }
+  }
+
+  // 4. Room-less orders that match no room → time-gap cluster into derived date-titled shows.
+  const orphanById = new Map(orphans.map((s) => [s.orderId, s] as const))
+  for (const session of clusterByTime(orphans.map((s) => ({ id: s.orderId, t: s.createdAt })))) {
     const id = derivedShowId(session.startMs)
     const g = groups.get(id) ?? []
     for (const oid of session.ids) {
-      g.push(saleById.get(oid)!)
+      g.push(orphanById.get(oid)!)
       showIdByOrder.set(oid, id)
     }
     groups.set(id, g)
   }
 
-  // 3. Build per-group metadata.
+  // 5. Build per-group metadata.
   const shows: DerivedShow[] = []
   for (const [id, g] of groups) {
     let startMs = Infinity

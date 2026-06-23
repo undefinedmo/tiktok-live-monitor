@@ -80,14 +80,28 @@ describe('deriveShowsFromOrders', () => {
     expect(shows.every((s) => s.id.startsWith('live-'))).toBe(true)
   })
 
-  it('handles a mix of room-id and no-room-id orders', () => {
+  it('keeps a no-room order far from any room as its own fallback show', () => {
     const { shows, showIdByOrder } = deriveShowsFromOrders([
       sale('o1', { roomId: 'R1', createdAt: 500 }),
-      sale('o2', { createdAt: 100 }),
+      sale('o2', { createdAt: 500 + SESSION_GAP_MS + 1000 }), // no room, > 2.5h from R1 → own fallback
     ])
     expect(shows).toHaveLength(2)
     expect(showIdByOrder.get('o1')).toBe('R1')
     expect(showIdByOrder.get('o2')).toMatch(/^live-/)
+  })
+
+  it('attaches room-less orders (e.g. cancelled) to the room show they fall within — one show, not two', () => {
+    const { shows, showIdByOrder } = deriveShowsFromOrders([
+      sale('paid1', { roomId: 'R1', createdAt: 1000 }),
+      sale('paid2', { roomId: 'R1', createdAt: 5000 }),
+      sale('cancelled1', { createdAt: 3000 }), // no room, inside R1's window
+      sale('cancelled2', { createdAt: 5000 + 60_000 }), // no room, just after R1, within the gap
+    ])
+    expect(shows).toHaveLength(1)
+    expect(shows[0]!.id).toBe('R1')
+    expect(shows[0]!.count).toBe(4)
+    expect(showIdByOrder.get('cancelled1')).toBe('R1')
+    expect(showIdByOrder.get('cancelled2')).toBe('R1')
   })
 
   it('titles every show by its derived date (the real liveTag is boilerplate, so it is ignored)', () => {
