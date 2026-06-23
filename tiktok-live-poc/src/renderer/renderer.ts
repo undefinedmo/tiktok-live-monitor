@@ -891,7 +891,7 @@ function openLedgerCtxMenu(ev: MouseEvent, r: LedgerRow) {
   menu.id = 'ledgerCtx'
   const item = (label: string, fn: () => void, disabled = false) => {
     const it = el('div', 'item' + (disabled ? ' disabled' : ''), label)
-    if (!disabled) it.addEventListener('click', () => { closeLedgerCtxMenu(); fn() })
+    if (!disabled) it.addEventListener('click', () => { cleanup(); closeLedgerCtxMenu(); fn() })
     menu.appendChild(it)
   }
   const sel = (by: SimilarBy) => applyLedgerSelection(selectSimilar(rows, r.orderId, by, showIdByOrder))
@@ -920,7 +920,7 @@ function openLedgerCtxMenu(ev: MouseEvent, r: LedgerRow) {
   const dismiss = (e: Event) => { if (!menu.contains(e.target as Node)) { closeLedgerCtxMenu(); cleanup() } }
   const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { closeLedgerCtxMenu(); cleanup() } }
   const cleanup = () => { document.removeEventListener('pointerdown', dismiss, true); document.removeEventListener('keydown', onKey, true); document.getElementById('ledgerRows')?.removeEventListener('scroll', closeLedgerCtxMenu) }
-  setTimeout(() => { document.addEventListener('pointerdown', dismiss, true); document.addEventListener('keydown', onKey, true); document.getElementById('ledgerRows')?.addEventListener('scroll', closeLedgerCtxMenu, { once: true }) }, 0)
+  setTimeout(() => { document.addEventListener('pointerdown', dismiss, true); document.addEventListener('keydown', onKey, true); document.getElementById('ledgerRows')?.addEventListener('scroll', () => { closeLedgerCtxMenu(); cleanup() }, { once: true }) }, 0)
 }
 
 function ledgerRowEl(r: LedgerRow): HTMLElement {
