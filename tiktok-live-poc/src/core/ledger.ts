@@ -21,6 +21,7 @@ export interface LedgerFilters {
   q: string
   status: string // exact statusLabel, or '' for all
   cost: '' | 'missing' | 'costed'
+  transcript?: '' | 'missing'
   profit?: '' | 'pos' | 'neg' // profitable / loss-making (costed rows only)
   min?: number | null // order total floor, in dollars
   max?: number | null // order total ceiling, in dollars
@@ -66,27 +67,25 @@ export interface Kpis {
   marginPct: number | null
 }
 
-export function computeKpis(rows: LedgerRow[]): Kpis {
-  const orders = rows.length
-  const grossCents = rows.reduce((n, r) => n + r.price.cents, 0)
+export function computeKpis(rows: LedgerRow[], opts?: { excludeFailed?: boolean }): Kpis {
   const refunds = rows.filter((r) => r.paymentStatus === 'failed').length
-  const costed = rows.filter((r) => r.costCents != null).length
+  const base = opts?.excludeFailed ? rows.filter((r) => r.paymentStatus !== 'failed') : rows
+  const orders = base.length
+  const grossCents = base.reduce((n, r) => n + r.price.cents, 0)
+  const costed = base.filter((r) => r.costCents != null).length
   let profit = 0
   let profitBase = 0
-  for (const r of rows) {
+  for (const r of base) {
     const p = profitCents(r)
-    if (p != null) {
-      profit += p
-      profitBase += revenueCents(r)
-    }
+    if (p != null) { profit += p; profitBase += revenueCents(r) }
   }
   return {
     orders,
     grossCents,
-    units: orders, // one item per TikTok auction order
+    units: orders,
     avgCents: orders ? Math.round(grossCents / orders) : 0,
     refunds,
-    refundPct: orders ? (refunds / orders) * 100 : 0,
+    refundPct: rows.length ? (refunds / rows.length) * 100 : 0,
     costed,
     uncosted: orders - costed,
     profitCents: profit,
@@ -100,6 +99,7 @@ export function filterRows(rows: LedgerRow[], f: LedgerFilters): LedgerRow[] {
     if (f.status && statusLabel(r) !== f.status) return false
     if (f.cost === 'missing' && r.costCents != null) return false
     if (f.cost === 'costed' && r.costCents == null) return false
+    if (f.transcript === 'missing' && r.transcript != null) return false
     if (f.profit) {
       const p = profitCents(r)
       if (p == null) return false // uncosted rows have no profit sign

@@ -180,3 +180,35 @@ describe('sortRows', () => {
     expect(sortRows(rows, 'total', -1).map((r) => r.orderId)).toEqual(['b', 'a'])
   })
 })
+
+describe('filterRows: transcript', () => {
+  it("'missing' keeps only rows with no transcript", () => {
+    const rows = [sale({ orderId: 'a', transcript: { brand: 'Nike' } }), sale({ orderId: 'b' })]
+    const out = filterRows(rows, { q: '', status: '', cost: '', transcript: 'missing' })
+    expect(out.map((r) => r.orderId)).toEqual(['b'])
+  })
+  it("'' (default) keeps all", () => {
+    const rows = [sale({ orderId: 'a', transcript: { brand: 'Nike' } }), sale({ orderId: 'b' })]
+    expect(filterRows(rows, { q: '', status: '', cost: '' })).toHaveLength(2)
+  })
+})
+
+describe('computeKpis: excludeFailed', () => {
+  const rows = [
+    sale({ orderId: 'a', price: { cents: 1000, formatted: '$10' } }),
+    sale({ orderId: 'b', paymentStatus: 'failed', price: { cents: 500, formatted: '$5' } }),
+  ]
+  it('default counts every row', () => {
+    const k = computeKpis(rows)
+    expect(k.orders).toBe(2)
+    expect(k.grossCents).toBe(1500)
+    expect(k.refunds).toBe(1)
+  })
+  it('excludeFailed drops failed from the headline but still counts refunds', () => {
+    const k = computeKpis(rows, { excludeFailed: true })
+    expect(k.orders).toBe(1)
+    expect(k.grossCents).toBe(1000)
+    expect(k.refunds).toBe(1)
+    expect(k.refundPct).toBeCloseTo(50) // 1 failed / 2 total
+  })
+})
