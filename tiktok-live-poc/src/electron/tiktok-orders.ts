@@ -206,6 +206,7 @@ export function orderToSale(o: MappedOrder): Sale {
     paymentStatus,
     createdAt: o.placedAt ?? Date.now(),
     liveTag: o.liveTag ?? undefined,
+    roomId: o.roomId ?? undefined,
     deadlines: o.deadlines,
     fulfillment: o.fulfillment,
     flags: o.flags,

@@ -105,8 +105,13 @@ interface CostRow { scope: string; key: string; cents: number }
 interface TxRow { scope: string; key: string; brand: string | null; item: string | null; color: string | null; size: string | null; retail_price: string | null; summary: string | null }
 
 export function getSnapshot(db: Db): DbSnapshot {
-  const orders = (db.prepare('SELECT sale_json FROM orders ORDER BY placed_at DESC').all() as { sale_json: string }[])
-    .map((r) => JSON.parse(r.sale_json) as Sale)
+  const orders = (db.prepare('SELECT sale_json, room_id FROM orders ORDER BY placed_at DESC').all() as { sale_json: string; room_id: string | null }[])
+    .map((r) => {
+      const sale = JSON.parse(r.sale_json) as Sale
+      // back-fill rows synced before roomId was added to Sale (sale_json lacks it, column has it)
+      if (sale.roomId == null && r.room_id != null) sale.roomId = r.room_id
+      return sale
+    })
   const costs: Record<string, number> = {}
   const productCosts: Record<string, number> = {}
   for (const r of db.prepare('SELECT scope,key,cents FROM costs').all() as CostRow[]) {

@@ -103,3 +103,26 @@ describe('db: legacy migration + re-key', () => {
     db.close()
   })
 })
+
+describe('db: roomId', () => {
+  it('carries roomId from a mapped order into the snapshot Sale', () => {
+    const db = openDb(':memory:')
+    const o = mapTiktokOrder(fixture)
+    o.roomId = '7653571353936759566'
+    upsertOrders(db, [o], 1000)
+    expect(getSnapshot(db).orders[0]!.roomId).toBe('7653571353936759566')
+    db.close()
+  })
+
+  it('overlays the room_id column onto a legacy sale_json that lacks roomId', () => {
+    const db = openDb(':memory:')
+    // a row synced before roomId existed on Sale: sale_json has no roomId, column is set.
+    db.prepare('INSERT INTO orders (order_id, room_id, placed_at, payment_status, sale_json) VALUES (?,?,?,?,?)')
+      .run('O1', '7653571353936759566', 100, 'paid', JSON.stringify({
+        orderId: 'O1', buyer: { username: 'A' }, productId: 'p', productName: 'X',
+        price: { cents: 100, formatted: '$1' }, paymentStatus: 'paid', createdAt: 100,
+      }))
+    expect(getSnapshot(db).orders[0]!.roomId).toBe('7653571353936759566')
+    db.close()
+  })
+})
