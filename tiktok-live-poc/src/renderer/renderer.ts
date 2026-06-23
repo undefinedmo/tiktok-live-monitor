@@ -1,7 +1,7 @@
 import flvjs from 'flv.js'
 import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuction, ChatMessage, Urgency } from '../core/types'
 import { computeKpis, filterRows, sortRows, profitCents, marginPct, statusLabel, applyCost, toCsv, parseRetailCents, groupForPicklist, type LedgerRow, type LedgerFilters, type LedgerTranscript, type SortKey, type CostApply, type PickGroup } from '../core/ledger'
-import { healthCounts, activeFilterChips, selectSimilar, duplicateOrderIds, type SimilarBy } from '../core/ledgerView'
+import { healthCounts, activeFilterChips, selectSimilar, duplicateOrderIds, costSuggestions, type SimilarBy } from '../core/ledgerView'
 import { upsertShow, listShows, salesForShow, type ShowMeta, type ShowStore } from '../core/shows'
 import { deriveShowsFromOrders, type DerivedShow } from '../core/sessions'
 import { urgency } from '../core/urgency'
@@ -858,6 +858,19 @@ function editCost(r: LedgerRow, cell: HTMLElement) {
   input.value = r.costCents != null ? (r.costCents / 100).toFixed(2) : ''
   cell.replaceChildren(input)
   input.focus()
+  const sugg = costSuggestions(ledgerRows(), r.productId, productCostMap[r.productId])
+  let pop: HTMLElement | null = null
+  if (sugg.length) {
+    pop = el('div', 'cost-suggest')
+    for (const s of sugg) {
+      const it = el('div', 'cs-item')
+      it.appendChild(el('span', 'cs-val', fmtCents(s.cents)))
+      it.appendChild(el('span', 'cs-meta', s.isTemplate ? 'template' : `${s.count} order${s.count === 1 ? '' : 's'}`))
+      it.addEventListener('mousedown', (e) => { e.preventDefault(); input.value = (s.cents / 100).toFixed(2); input.blur() })
+      pop!.appendChild(it)
+    }
+    cell.appendChild(pop)
+  }
   let done = false
   const commit = () => {
     if (done) return

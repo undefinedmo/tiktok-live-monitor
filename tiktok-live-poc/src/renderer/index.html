@@ -240,6 +240,12 @@
       #ledgerJump .ji-buyer{font-weight:600;color:#eef1f7;} #ledgerJump .ji-prod{color:#9aa3b2;} #ledgerJump .ji-id{color:#5c6473;}
       @keyframes lrFlash{0%{background:rgba(217,163,65,.35);}100%{background:transparent;}}
       .ledger-row.flash{animation:lrFlash 1.8s ease-out;}
+      .lc-cost{position:relative;}
+      .cost-suggest{position:absolute;top:100%;right:0;z-index:9997;min-width:150px;background:#12151c;border:1px solid #2a3142;border-radius:8px;padding:4px;box-shadow:0 10px 30px rgba(0,0,0,.5);}
+      .cost-suggest .cs-item{display:flex;justify-content:space-between;gap:12px;padding:5px 9px;border-radius:6px;font-size:12px;cursor:pointer;}
+      .cost-suggest .cs-item:hover{background:#1c2230;}
+      .cost-suggest .cs-val{color:#eef1f7;font-variant-numeric:tabular-nums;}
+      .cost-suggest .cs-meta{color:#6b7488;}
     </style>
   </head>
   <body>
