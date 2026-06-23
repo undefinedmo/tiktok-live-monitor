@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { clusterByTime, derivedShowId, deriveTitle, SESSION_GAP_MS } from '../sessions'
+import type { Sale } from '../types'
+import { deriveShowsFromOrders } from '../sessions'
 
 describe('clusterByTime', () => {
   it('groups items within the gap into one session', () => {
@@ -37,5 +39,76 @@ describe('derivedShowId', () => {
 describe('deriveTitle', () => {
   it('renders a "LIVE · <date>" label', () => {
     expect(deriveTitle(1718900000000)).toMatch(/^LIVE · /)
+  })
+})
+
+function sale(orderId: string, overrides: Partial<Sale> = {}): Sale {
+  return {
+    orderId,
+    buyer: { username: 'A' },
+    productId: 'p',
+    productName: 'X',
+    skuDesc: '#1',
+    price: { cents: 100, formatted: '$1' },
+    paymentStatus: 'paid',
+    createdAt: 1,
+    ...overrides,
+  }
+}
+
+describe('deriveShowsFromOrders', () => {
+  it('groups orders by roomId and sorts shows by startMs desc', () => {
+    const { shows, showIdByOrder } = deriveShowsFromOrders([
+      sale('o1', { roomId: 'R1', createdAt: 100 }),
+      sale('o2', { roomId: 'R1', createdAt: 200 }),
+      sale('o3', { roomId: 'R2', createdAt: 300 }),
+    ])
+    expect(shows.map((s) => s.id)).toEqual(['R2', 'R1']) // R2 startMs 300, R1 startMs 100
+    expect(shows.find((s) => s.id === 'R1')!.count).toBe(2)
+    expect(showIdByOrder.get('o1')).toBe('R1')
+    expect(showIdByOrder.get('o3')).toBe('R2')
+  })
+
+  it('time-gap clusters orders with no roomId into live-<sec> shows', () => {
+    const { shows, showIdByOrder } = deriveShowsFromOrders([
+      sale('a', { createdAt: 0 }),
+      sale('b', { createdAt: 1000 }), // same session as a
+      sale('c', { createdAt: SESSION_GAP_MS + 2000 }), // new session
+    ])
+    expect(shows).toHaveLength(2)
+    expect(showIdByOrder.get('a')).toBe(showIdByOrder.get('b'))
+    expect(showIdByOrder.get('a')).not.toBe(showIdByOrder.get('c'))
+    expect(shows.every((s) => s.id.startsWith('live-'))).toBe(true)
+  })
+
+  it('handles a mix of room-id and no-room-id orders', () => {
+    const { shows, showIdByOrder } = deriveShowsFromOrders([
+      sale('o1', { roomId: 'R1', createdAt: 500 }),
+      sale('o2', { createdAt: 100 }),
+    ])
+    expect(shows).toHaveLength(2)
+    expect(showIdByOrder.get('o1')).toBe('R1')
+    expect(showIdByOrder.get('o2')).toMatch(/^live-/)
+  })
+
+  it('titles a show from its liveTag when present, else a derived date', () => {
+    const { shows } = deriveShowsFromOrders([
+      sale('o1', { roomId: 'R1', liveTag: 'LIVE 6/20', createdAt: 100 }),
+      sale('o2', { roomId: 'R2', createdAt: 200 }),
+    ])
+    expect(shows.find((s) => s.id === 'R1')!.title).toBe('LIVE 6/20')
+    expect(shows.find((s) => s.id === 'R2')!.title).toMatch(/^LIVE · /)
+  })
+
+  it('maps every order in showIdByOrder', () => {
+    const { showIdByOrder } = deriveShowsFromOrders([
+      sale('o1', { roomId: 'R1' }),
+      sale('o2', { createdAt: 5 }),
+    ])
+    expect([...showIdByOrder.keys()].sort()).toEqual(['o1', 'o2'])
+  })
+
+  it('returns empty results for no orders', () => {
+    expect(deriveShowsFromOrders([])).toEqual({ shows: [], showIdByOrder: new Map() })
   })
 })

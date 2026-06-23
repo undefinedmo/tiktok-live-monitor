@@ -193,6 +193,7 @@ export interface Sale {
   createdAt: number // order_create_time (ms)
   auctionEndMs?: number // auction_result_data.auction_end_timestamp (ms); 0/undefined when not provided
   liveTag?: string // Seller-Center live-show tag (from order/list); groups synced orders by show
+  roomId?: string // live_room_id — the stable TikTok LIVE room key (groups orders into a real show)
   deadlines?: OrderDeadlines // Phase 2: ship-by / auto-cancel SLA windows
   fulfillment?: FulfillmentInfo // Phase 2: package / tracking / warehouse / label state
   flags?: OrderFlags // Phase 3: risk / replacement / note / insurance exception signals
