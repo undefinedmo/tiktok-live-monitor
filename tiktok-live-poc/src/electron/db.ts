@@ -320,3 +320,56 @@ export function setPacked(db: Db, orderId: string, packed: boolean, now: number)
     db.prepare('UPDATE picks SET packed_at=NULL WHERE order_id=?').run(orderId)
   }
 }
+
+export interface LabelBatchRow {
+  id: string; capturedAt: number; roomId: string | null; docUrl: string | null; pdfPath: string | null
+  pageCount: number; unitCount: number; status: string
+}
+
+export function insertLabelBatch(db: Db, b: LabelBatchRow & { requestJson: string; statsJson: string }): void {
+  db.prepare(`INSERT INTO label_batch (id,captured_at,room_id,doc_url,pdf_path,page_count,unit_count,request_json,stats_json,status)
+    VALUES (@id,@capturedAt,@roomId,@docUrl,@pdfPath,@pageCount,@unitCount,@requestJson,@statsJson,@status)
+    ON CONFLICT(id) DO UPDATE SET pdf_path=excluded.pdf_path,page_count=excluded.page_count,status=excluded.status`).run(b)
+}
+
+export function setBatchStatus(db: Db, id: string, status: string): void {
+  db.prepare('UPDATE label_batch SET status=? WHERE id=?').run(status, id)
+}
+
+export function insertLabelPages(db: Db, batchId: string, ties: { pageIndex: number; fulfillUnitId: string; orderId: string | null; matchMethod: string }[]): void {
+  const ins = db.prepare('INSERT OR REPLACE INTO label_page (batch_id,page_index,fulfill_unit_id,order_id,match_method) VALUES (?,?,?,?,?)')
+  const run = db.transaction(() => { for (const t of ties) ins.run(batchId, t.pageIndex, t.fulfillUnitId, t.orderId, t.matchMethod) })
+  run()
+}
+
+function rowToBatch(r: Record<string, unknown>): LabelBatchRow & { requestJson: string; statsJson: string } {
+  return {
+    id: r.id as string, capturedAt: r.captured_at as number, roomId: (r.room_id as string) ?? null,
+    docUrl: (r.doc_url as string) ?? null, pdfPath: (r.pdf_path as string) ?? null,
+    pageCount: r.page_count as number, unitCount: r.unit_count as number, status: r.status as string,
+    requestJson: (r.request_json as string) ?? '', statsJson: (r.stats_json as string) ?? '',
+  }
+}
+
+export function listLabelBatches(db: Db): LabelBatchRow[] {
+  return (db.prepare('SELECT * FROM label_batch ORDER BY captured_at DESC').all() as Record<string, unknown>[]).map(rowToBatch)
+}
+
+export function getLabelBatch(db: Db, id: string): (LabelBatchRow & { requestJson: string; statsJson: string }) | null {
+  const r = db.prepare('SELECT * FROM label_batch WHERE id=?').get(id) as Record<string, unknown> | undefined
+  return r ? rowToBatch(r) : null
+}
+
+export function getLabelPages(db: Db, batchId: string): { pageIndex: number; fulfillUnitId: string; orderId: string | null; matchMethod: string }[] {
+  return (db.prepare('SELECT page_index,fulfill_unit_id,order_id,match_method FROM label_page WHERE batch_id=? ORDER BY page_index').all(batchId) as
+    { page_index: number; fulfill_unit_id: string; order_id: string | null; match_method: string }[])
+    .map((r) => ({ pageIndex: r.page_index, fulfillUnitId: r.fulfill_unit_id, orderId: r.order_id, matchMethod: r.match_method }))
+}
+
+/** Delete all label rows; return the on-disk pdf paths the caller must unlink. */
+export function clearLabels(db: Db): string[] {
+  const paths = (db.prepare('SELECT pdf_path FROM label_batch WHERE pdf_path IS NOT NULL').all() as { pdf_path: string }[]).map((r) => r.pdf_path)
+  const run = db.transaction(() => { db.exec('DELETE FROM label_page; DELETE FROM label_batch;') })
+  run()
+  return paths
+}

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { openDb, upsertOrders, getSnapshot, setCost, setTranscript, setPicked, getShows, setShows, getShowNames, setShowNames, importLegacy, isMigrated, rekeyProductTemplates, getOrdersForRestack, getOrdersByFulfillUnit, setPacked } from '../db'
+import { insertLabelBatch, insertLabelPages, listLabelBatches, getLabelBatch, getLabelPages, clearLabels } from '../db'
 import { mapTiktokOrder } from '../tiktok-orders'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -155,6 +156,26 @@ describe('db: v2 migration + restack queries', () => {
     expect(packed.packed_at).toBeTruthy()
     db.close()
   })
+})
+
+it('persists and clears label batches + pages', () => {
+  const db = openDb(':memory:')
+  insertLabelBatch(db, {
+    id: 'b1', capturedAt: 1000, roomId: 'r1', docUrl: 'http://x', pdfPath: '/tmp/b1.pdf',
+    pageCount: 2, unitCount: 2, status: 'tied', requestJson: '[]', statsJson: '[]',
+  })
+  insertLabelPages(db, 'b1', [
+    { pageIndex: 0, fulfillUnitId: 'U1', orderId: 'o1', matchMethod: 'generate-order' },
+    { pageIndex: 1, fulfillUnitId: 'U2', orderId: null, matchMethod: 'unmatched' },
+  ])
+  expect(listLabelBatches(db).map((b) => b.id)).toEqual(['b1'])
+  expect(getLabelBatch(db, 'b1')!.pageCount).toBe(2)
+  expect(getLabelPages(db, 'b1')).toHaveLength(2)
+
+  const paths = clearLabels(db)
+  expect(paths).toEqual(['/tmp/b1.pdf'])
+  expect(listLabelBatches(db)).toHaveLength(0)
+  expect(getLabelPages(db, 'b1')).toHaveLength(0)
 })
 
 describe('show names store', () => {
