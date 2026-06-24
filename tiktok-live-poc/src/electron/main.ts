@@ -58,9 +58,14 @@ async function ensureMonitorLoaded(): Promise<boolean> {
   const wc = monitor.webContents
   if (!wc.isLoading()) return true
   await new Promise<void>((resolve) => {
-    const done = () => { wc.removeListener('did-finish-load', done); resolve() }
+    let t: ReturnType<typeof setTimeout> | undefined
+    const done = () => {
+      clearTimeout(t)
+      wc.removeListener('did-finish-load', done)
+      resolve()
+    }
     wc.once('did-finish-load', done)
-    setTimeout(done, 10000) // don't hang forever if the page stalls
+    t = setTimeout(done, 10000) // don't hang forever if the page stalls
   })
   return true
 }
