@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { openDb, upsertOrders, getSnapshot, setCost, setTranscript, setPicked, getShows, setShows, importLegacy, isMigrated, rekeyProductTemplates } from '../db'
+import { openDb, upsertOrders, getSnapshot, setCost, setTranscript, setPicked, getShows, setShows, getShowNames, setShowNames, importLegacy, isMigrated, rekeyProductTemplates } from '../db'
 import { mapTiktokOrder } from '../tiktok-orders'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -123,6 +123,19 @@ describe('db: roomId', () => {
         price: { cents: 100, formatted: '$1' }, paymentStatus: 'paid', createdAt: 100,
       }))
     expect(getSnapshot(db).orders[0]!.roomId).toBe('7653571353936759566')
+    db.close()
+  })
+})
+
+describe('show names store', () => {
+  it('merges room→name entries across calls and exposes them in the snapshot', () => {
+    const db = openDb(':memory:')
+    setShowNames(db, { 'room-1': { sessionId: 's1', name: 'Show One', startMs: 1000 } })
+    setShowNames(db, { 'room-2': { sessionId: 's2', name: 'Show Two', startMs: 2000 } })
+    const names = getShowNames(db)
+    expect(names['room-1']!.name).toBe('Show One')
+    expect(names['room-2']!.name).toBe('Show Two')
+    expect(getSnapshot(db).showNames['room-1']!.sessionId).toBe('s1')
     db.close()
   })
 })

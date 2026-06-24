@@ -7,6 +7,8 @@ import type { LedgerTranscript } from '../core/ledger'
 
 export type Db = Database.Database
 
+export type ShowNameStore = Record<string, { sessionId: string; name: string; startMs: number }>
+
 /** Remove address PII before persisting — we never store addresses on disk. */
 function stripForStorage(sale: Sale): Sale {
   return sale.detail?.address == null ? sale : { ...sale, detail: { ...sale.detail, address: undefined } }
@@ -53,6 +55,7 @@ export interface DbSnapshot {
   productTx: Record<string, LedgerTranscript>
   picked: string[]
   shows: unknown
+  showNames: ShowNameStore
 }
 
 export function openDb(path: string): Db {
@@ -128,7 +131,7 @@ export function getSnapshot(db: Db): DbSnapshot {
   }
   const picked = (db.prepare('SELECT order_id FROM picks').all() as { order_id: string }[]).map((r) => r.order_id)
   const showsRow = db.prepare("SELECT v FROM meta WHERE k = 'shows'").get() as { v: string } | undefined
-  return { orders, costs, productCosts, orderTx, productTx, picked, shows: showsRow ? JSON.parse(showsRow.v) : {} }
+  return { orders, costs, productCosts, orderTx, productTx, picked, shows: showsRow ? JSON.parse(showsRow.v) : {}, showNames: getShowNames(db) }
 }
 
 export function setCost(db: Db, scope: 'order' | 'product', key: string, cents: number | null, now: number): void {
@@ -156,6 +159,17 @@ export function getShows(db: Db): unknown {
 
 export function setShows(db: Db, store: unknown): void {
   db.prepare("INSERT INTO meta (k,v) VALUES ('shows',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").run(JSON.stringify(store))
+}
+
+export function getShowNames(db: Db): ShowNameStore {
+  const r = db.prepare("SELECT v FROM meta WHERE k = 'show_names'").get() as { v: string } | undefined
+  return r ? (JSON.parse(r.v) as ShowNameStore) : {}
+}
+
+/** Merge room→name entries into the persisted store (keyed by room id). */
+export function setShowNames(db: Db, map: ShowNameStore): void {
+  const merged = { ...getShowNames(db), ...map }
+  db.prepare("INSERT INTO meta (k,v) VALUES ('show_names',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").run(JSON.stringify(merged))
 }
 
 export interface LegacyBlob {
