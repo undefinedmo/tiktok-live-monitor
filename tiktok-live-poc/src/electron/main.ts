@@ -9,8 +9,9 @@ import { parsePin } from '../core/pin'
 import { AuctionResults } from '../core/auctionResults'
 import { decodeChat } from '../core/chat'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
-import { pullTiktokOrders, fetchOrderDetails } from './tiktok-orders'
-import { openDb, upsertOrders, getSnapshot, setCost, setTranscript, setPicked, getShows, setShows, importLegacy, rekeyProductTemplates, type LegacyBlob } from './db'
+import { pullTiktokOrders, fetchOrderDetails, pullTiktokOrdersSince, applyOrderDetails, filterOrdersForShow, SHOW_SYNC_BUFFER_MS } from './tiktok-orders'
+import { openDb, upsertOrders, getSnapshot, setCost, setTranscript, setPicked, getShows, setShows, importLegacy, rekeyProductTemplates, setShowNames, type LegacyBlob } from './db'
+import { parseShowList, roomNameMap, type ShowListing } from '../core/showList'
 import { buildClipMedia } from './clip'
 import type { LiveEvent, StatusEvent } from '../core/types'
 
@@ -49,6 +50,46 @@ async function tiktokLoggedIn(): Promise<boolean> {
 async function tiktokCookieHeader(): Promise<string> {
   const cookies = await session.fromPartition(TT_PARTITION).cookies.get({ url: 'https://seller-us.tiktok.com' })
   return cookies.map((c) => `${c.name}=${c.value}`).join('; ')
+}
+
+async function ensureMonitorLoaded(): Promise<boolean> {
+  if (!monitor) createMonitor()
+  if (!monitor) return false
+  const wc = monitor.webContents
+  if (!wc.isLoading()) return true
+  await new Promise<void>((resolve) => {
+    const done = () => { wc.removeListener('did-finish-load', done); resolve() }
+    wc.once('did-finish-load', done)
+    setTimeout(done, 10000) // don't hang forever if the page stalls
+  })
+  return true
+}
+
+let showsReqSeq = 0
+/** Ask the monitor page (signed streamer context) to fetch live_session/list, parse the
+ *  returned pages, persist the roomId→name map, and return the ShowListings. */
+async function fetchShowList(): Promise<{ ok: boolean; shows?: ShowListing[]; needsLogin?: boolean; capped?: boolean; reason?: string }> {
+  if (!(await tiktokLoggedIn())) { openSellerLogin(); return { ok: false, needsLogin: true } }
+  if (!(await ensureMonitorLoaded())) return { ok: false, reason: 'monitor window unavailable' }
+  const id = ++showsReqSeq
+  const pages: string[] = await new Promise((resolve) => {
+    const timer = setTimeout(() => { ipcMain.removeListener('tt-shows-result', onResult); resolve([]) }, 15000)
+    const onResult = (_e: unknown, res: { id: number; ok: boolean; pages: string[] }) => {
+      if (res.id !== id) return
+      clearTimeout(timer); ipcMain.removeListener('tt-shows-result', onResult)
+      resolve(res.ok ? res.pages : [])
+    }
+    ipcMain.on('tt-shows-result', onResult)
+    monitor!.webContents.send('tt-shows-fetch', { id })
+  })
+  if (!pages.length) return { ok: true, shows: [], capped: true }
+  const shows = pages.flatMap((p) => parseShowList(p))
+  if (db) {
+    const names: Record<string, { sessionId: string; name: string; startMs: number }> = {}
+    roomNameMap(shows).forEach((v, k) => { names[k] = v })
+    setShowNames(db, names)
+  }
+  return { ok: true, shows }
 }
 
 // Once the WS stream yields room_id + session_id, tell the preload to start
@@ -336,6 +377,35 @@ ipcMain.handle('tt-sync', async () => {
     if (db) { upsertOrders(db, orders, now); rekeyProductTemplates(db, now) }
     debug(`[tt] synced ${orders.length}/${total} orders`)
     return { ok: true, count: orders.length }
+  } catch (e) {
+    const msg = (e as Error).message
+    if (/code\s|HTTP 401|session may be expired/i.test(msg)) openSellerLogin()
+    return { ok: false, reason: msg.slice(0, 160) }
+  } finally {
+    orderSyncing = false
+  }
+})
+
+ipcMain.handle('tt-shows-list', async () => {
+  try { return await fetchShowList() }
+  catch (e) { return { ok: false, reason: (e as Error).message.slice(0, 160) } }
+})
+
+ipcMain.handle('tt-sync-show', async (_e, arg: { roomIds: string[]; startMs: number; endMs: number }) => {
+  if (orderSyncing) return { ok: false, reason: 'Sync already running' }
+  if (!(await tiktokLoggedIn())) { openSellerLogin(); return { ok: false, reason: 'Log into TikTok Seller Center (window opened), then Sync again' } }
+  orderSyncing = true
+  try {
+    const cookieHeader = await tiktokCookieHeader()
+    const since = arg.startMs - SHOW_SYNC_BUFFER_MS
+    const { orders } = await pullTiktokOrdersSince(cookieHeader, since)
+    const details = await fetchOrderDetails(orders.map((o) => o.externalOrderId), cookieHeader)
+    const enriched = applyOrderDetails(orders, details)
+    const kept = filterOrdersForShow(enriched, arg.roomIds, arg.startMs - SHOW_SYNC_BUFFER_MS, arg.endMs + SHOW_SYNC_BUFFER_MS)
+    const now = Date.now()
+    if (db) { upsertOrders(db, kept, now); rekeyProductTemplates(db, now) }
+    debug(`[tt] show-sync kept ${kept.length}/${orders.length} orders`)
+    return { ok: true, count: kept.length }
   } catch (e) {
     const msg = (e as Error).message
     if (/code\s|HTTP 401|session may be expired/i.test(msg)) openSellerLogin()
