@@ -1398,45 +1398,54 @@ function showModalEl(): HTMLElement | null { return document.getElementById('sho
 
 function closeShowModal() { const m = showModalEl(); if (m) m.style.display = 'none' }
 
+let showModalLoading = false
 async function openShowModal() {
   const modal = showModalEl(); const list = document.getElementById('showList')
-  if (!modal || !list) return
+  if (!modal || !list || showModalLoading) return
+  showModalLoading = true
   modal.style.display = 'flex'
   list.innerHTML = '<div class="sm-empty">Loading shows…</div>'
-  const res = await window.syncAPI!.showList()
-  if (res.needsLogin) { list.innerHTML = '<div class="sm-empty">Log into TikTok, then click Sync again.</div>'; return }
-  const shows = res.shows ?? []
-  if (!shows.length) {
-    list.innerHTML = `<div class="sm-empty">${res.capped ? "Couldn't load shows — use Full sync above." : 'No shows found.'}</div>`
-    return
-  }
-  // how many orders we already have per room, to show the synced status
-  const haveByRoom = new Map<string, number>()
-  for (const s of syncedOrders) if (s.roomId) haveByRoom.set(s.roomId, (haveByRoom.get(s.roomId) ?? 0) + 1)
-  const fmtDate = (sec: number) => new Date(sec * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-  const fmtDur = (sec: number) => { const m = Math.round(sec / 60); const h = Math.floor(m / 60); return h ? `${h}h ${m % 60}m` : `${m}m` }
-  list.innerHTML = ''
-  for (const sh of shows) {
-    const have = sh.roomIds.reduce((n, r) => n + (haveByRoom.get(r) ?? 0), 0)
-    const chips = [sh.productCnt != null ? `${sh.productCnt} products` : '', sh.reservations != null ? `${sh.reservations} reserved` : ''].filter(Boolean).join(' · ')
-    const row = document.createElement('div')
-    row.className = 'sm-row'
-    // Build via DOM so no user-supplied text ever reaches innerHTML
-    const left = document.createElement('div')
-    left.style.cssText = 'flex:1;min-width:0'
-    const nm = document.createElement('div'); nm.className = 'sm-nm'
-    nm.textContent = sh.name
-    const meta = document.createElement('div'); meta.className = 'sm-meta'
-    meta.textContent = `${fmtDate(sh.startTime)} · ${fmtDur(sh.durationSec)}${chips ? ' · ' + chips : ''}`
-    left.appendChild(nm); left.appendChild(meta)
-    const right = document.createElement('div'); right.className = 'sm-right'
-    const badge = document.createElement('span')
-    badge.className = have ? 'sm-synced' : 'sm-go'
-    badge.textContent = have ? `✓ ${have} orders` : 'Sync →'
-    right.appendChild(badge)
-    row.appendChild(left); row.appendChild(right)
-    row.addEventListener('click', () => void syncOneShow(sh))
-    list.appendChild(row)
+  try {
+    const res = await window.syncAPI!.showList()
+    if (res.needsLogin) { list.innerHTML = '<div class="sm-empty">Log into TikTok, then click Sync again.</div>'; return }
+    const shows = res.shows ?? []
+    if (!shows.length) {
+      // all branches below are hardcoded string literals — never interpolate res.reason or other API strings here
+      list.innerHTML = `<div class="sm-empty">${res.capped ? "Couldn't load shows — use Full sync above." : 'No shows found.'}</div>`
+      return
+    }
+    // how many orders we already have per room, to show the synced status
+    const haveByRoom = new Map<string, number>()
+    for (const s of syncedOrders) if (s.roomId) haveByRoom.set(s.roomId, (haveByRoom.get(s.roomId) ?? 0) + 1)
+    const fmtDate = (sec: number) => new Date(sec * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    const fmtDur = (sec: number) => { const m = Math.round(sec / 60); const h = Math.floor(m / 60); return h ? `${h}h ${m % 60}m` : `${m}m` }
+    list.innerHTML = ''
+    for (const sh of shows) {
+      const have = sh.roomIds.reduce((n, r) => n + (haveByRoom.get(r) ?? 0), 0)
+      const chips = [sh.productCnt != null ? `${sh.productCnt} products` : '', sh.reservations != null ? `${sh.reservations} reserved` : ''].filter(Boolean).join(' · ')
+      const row = document.createElement('div')
+      row.className = 'sm-row'
+      // Build via DOM so no user-supplied text ever reaches innerHTML
+      const left = document.createElement('div')
+      left.style.cssText = 'flex:1;min-width:0'
+      const nm = document.createElement('div'); nm.className = 'sm-nm'
+      nm.textContent = sh.name
+      const meta = document.createElement('div'); meta.className = 'sm-meta'
+      meta.textContent = `${fmtDate(sh.startTime)} · ${fmtDur(sh.durationSec)}${chips ? ' · ' + chips : ''}`
+      left.appendChild(nm); left.appendChild(meta)
+      const right = document.createElement('div'); right.className = 'sm-right'
+      const badge = document.createElement('span')
+      badge.className = have ? 'sm-synced' : 'sm-go'
+      badge.textContent = have ? `✓ ${have} orders` : 'Sync →'
+      right.appendChild(badge)
+      row.appendChild(left); row.appendChild(right)
+      row.addEventListener('click', () => void syncOneShow(sh))
+      list.appendChild(row)
+    }
+  } catch {
+    list.innerHTML = '<div class="sm-empty">Failed to load shows.</div>'
+  } finally {
+    showModalLoading = false
   }
 }
 
