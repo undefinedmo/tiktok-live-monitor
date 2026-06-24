@@ -246,9 +246,9 @@
       .cost-suggest .cs-item:hover{background:#1c2230;}
       .cost-suggest .cs-val{color:#eef1f7;font-variant-numeric:tabular-nums;}
       .cost-suggest .cs-meta{color:#6b7488;}
-      .show-modal { position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; z-index:1000; }
-      .show-modal-card { width:560px; max-width:92vw; max-height:80vh; overflow:hidden; display:flex; flex-direction:column; background:#0e0f13; border:1px solid #2a2d36; border-radius:10px; }
-      .show-modal-top { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; border-bottom:1px solid #2a2d36; background:#15171d; font-weight:600; }
+      .show-modal { position:fixed; inset:0; background:rgba(0,0,0,.66); backdrop-filter:blur(2px); display:flex; align-items:center; justify-content:center; z-index:1000; }
+      .show-modal-card { width:560px; max-width:92vw; max-height:80vh; overflow:hidden; display:flex; flex-direction:column; background:#1a1e27; border:1px solid #3a4150; border-radius:10px; box-shadow:0 16px 48px rgba(0,0,0,.6); }
+      .show-modal-top { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; border-bottom:1px solid #2f3440; background:#222734; font-weight:600; }
       .show-modal-x { background:none; border:none; color:#7b8090; cursor:pointer; font-size:14px; }
       .show-modal-full { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:#161a22; border-bottom:1px solid #2a2d36; cursor:pointer; }
       .show-modal-full:hover { background:#1b2030; }
@@ -553,7 +553,8 @@
         })
       }
     </script>
-    <script src="./renderer.js"></script>
+    <!-- Modal markup must precede renderer.js: setupSync() runs at script eval and wires the
+         close/backdrop/full-sync listeners by id, so these elements must already exist. -->
     <div id="showModal" class="show-modal" style="display:none">
       <div class="show-modal-card">
         <div class="show-modal-top">
@@ -567,5 +568,6 @@
         <div id="showList" class="show-modal-list"><div class="sm-empty">Loading shows…</div></div>
       </div>
     </div>
+    <script src="./renderer.js"></script>
   </body>
 </html>

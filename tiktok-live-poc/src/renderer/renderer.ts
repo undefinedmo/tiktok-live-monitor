@@ -737,7 +737,9 @@ if (demoSeed.__demoProductTx) Object.assign(productTx, demoSeed.__demoProductTx)
 let ledgerFilters: LedgerFilters = { q: '', status: '', cost: '', profit: '', min: null, max: null }
 let ledgerSort: { key: SortKey; dir: 1 | -1 } = { key: 'date', dir: -1 }
 let ledgerExpanded: string | null = null
-let excludeFailed = localStorage.getItem('tt-kpi-exclude-failed') === '1'
+// Default ON (exclude failed/refunded from totals); only off if the user explicitly unchecked it
+// (the toggle persists '0' on uncheck, '1' on check — see ledgerExclFailed handler).
+let excludeFailed = localStorage.getItem('tt-kpi-exclude-failed') !== '0'
 let currentScreen: 'monitor' | 'ledger' | 'picklist' | 'settings' = 'monitor'
 const fmtCents = (c: number) => '$' + (c / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
