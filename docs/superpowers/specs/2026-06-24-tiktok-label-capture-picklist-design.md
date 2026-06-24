@@ -31,7 +31,7 @@ When the seller selects orders in the To-Ship tab and prints shipping labels, th
 1. `POST /api/fulfillment/na/order/batch_action/verify`
 2. `POST /api/fulfillment/na/order/batch_action/filter_order`
 3. `GET  /api/v1/fulfillment/seller_print_setting/na/get`
-4. `POST /api/v1/fulfillment/na/doc/print_status/verify` — response maps `fulfill_unit_id` → `main_order_ids`
+4. `POST /api/v1/fulfillment/na/doc/print_status/verify` — response maps `fulfill_unit_id` → `main_order_ids[]` (the only place this explicit map appears; one unit can carry several main orders = a combined shipment)
 5. **`POST /api/v1/fulfillment/na/shipping_doc/generate`** — the pivotal call.
 
 `generate` request body (abridged):
@@ -47,8 +47,10 @@ When the seller selects orders in the To-Ship tab and prints shipping labels, th
 ```json
 { "code": 0, "data": {
     "doc_url": "https://seller-us.tiktok.com/wsos_v2/.../object/wsos...?expire=...&skipCookie=true&timeStamp=...&sign=...",
-    "stats": [ { "order_id": "577445740374037176", "detail_list": [ { "content_type": 1, "status": 0 } ] }, ... ] } }
+    "stats": [ { "order_id": "1156730386024534712", "detail_list": [ { "content_type": 1, "status": 0 } ] }, ... ] } }
 ```
+
+> **Note on `stats[].order_id`:** verified against the real response, this value equals the **`fulfill_unit_id`** (the `1156…` series), in the same order as the request `fulfill_unit_id_list` — it confirms page/unit alignment but is **not** the main order id. The `fulfill_unit_id → main_order_ids[]` map comes from `print_status/verify`, or (preferred) from our own `orders.fulfill_unit_id`.
 
 **Verified facts** (from the captured HAR, `seller-us.tiktok.com-613-shipping_labels.har`):
 - `doc_url` is a **single merged PDF** for all selected units (65 units → one PDF in the sample).
@@ -81,7 +83,7 @@ TikTok dashboard (monitor webview)        Electron main process            Viewe
 **End-to-end:**
 1. **Capture.** The existing `preload.ts` fetch/XHR wrapper gains a matcher for `…/shipping_doc/generate`. On a hit it forwards `{ url, requestBody, responseText }` to main over a new `tt-label-batch` IPC channel (same shape/pattern as `tt-rest-data`).
 2. **Download.** `main.ts` (`ipcMain.on('tt-label-batch')`) parses the request/response and immediately fetches `doc_url` with `net.fetch` (cookie-less, pre-signed). The merged PDF is written to `capture/labels/<batch_id>.pdf`.
-3. **Tie.** Each PDF page → `fulfill_unit_id` (by generate-order index) → `main_order_ids` (from `stats[]`) → our order records. Barcode decode is verification/fallback, not the hot path (see §4).
+3. **Tie.** Each PDF page → `fulfill_unit_id` (by generate-order index, cross-checked against `stats[i].order_id`) → our order records via `orders.fulfill_unit_id` (a combined shipment fans out to several orders). The captured `print_status/verify` map is stored as a secondary source for when an order has not been synced yet. Barcode decode is verification/fallback, not the hot path (see §4).
 4. **Restack.** Ported `sortlogic` computes the sequence (newest-first, grouped by buyer) from order data already in SQLite.
 5. **Outputs.** `pdf-lib` builds the reordered-labels PDF (pages copied in sequence) and the packing-sheet PDF.
 6. **Screen.** The picklist renderer shows the sequence interactively and drives exports.
@@ -92,7 +94,7 @@ TikTok dashboard (monitor webview)        Electron main process            Viewe
 
 | Path | How | Role |
 |---|---|---|
-| **Generate-order (primary)** | request `fulfill_unit_id_list[i]` ↔ PDF page `i` ↔ `stats[i].order_id` ↔ `orders.order_id` | Deterministic, exact, no rasterization. Used when `page_count == unit_count`. |
+| **Generate-order (primary)** | request `fulfill_unit_id_list[i]` ↔ PDF page `i` ↔ `stats[i].order_id` (== the unit id, confirms alignment) → `orders.fulfill_unit_id` → order record(s) | Deterministic, exact, no rasterization. Used when `page_count == unit_count`. Fans out for combined shipments. |
 | **Barcode decode (fallback/verify)** | rasterize page → Code 128 → tracking digits → match `orders.tracking_no` (substring of normalized digits, per restack §9) | Confirms the index tie; **takes over** when `page_count ≠ unit_count` (multi-page labels) or when a PDF was captured without its `generate` request. |
 
 > **Spike #1 (first task in the plan).** Against the real 4.7 MB sample PDF, confirm: `page_count == 65`, exactly one barcode per page, and page order == request `fulfill_unit_id_list` order. If true, the generate-order path is primary and barcode decode is pure verification. If false, barcode decode is primary — which is exactly what `tiktok-label-restack` does today, so we are never worse off than the current tool. The spike's outcome decides whether `label-decode.ts` is on the critical path.
@@ -120,22 +122,22 @@ CREATE TABLE IF NOT EXISTS label_batch (
   pdf_path      TEXT,               -- on-disk merged PDF
   page_count    INTEGER,
   unit_count    INTEGER,            -- from fulfill_unit_id_list
-  request_json  TEXT,               -- ordered fulfill_unit_id_list
-  stats_json    TEXT,               -- unit -> main_order_ids
+  request_json  TEXT,               -- ordered fulfill_unit_id_list (page-order source)
+  stats_json    TEXT,               -- generate stats[] (unit-id list; confirms count/order) + print_status/verify unit->main_order_ids map if captured
   status        TEXT                -- captured | tied | exported | error
 );
 CREATE TABLE IF NOT EXISTS label_page (
   batch_id        TEXT,
   page_index      INTEGER,
-  fulfill_unit_id TEXT,
-  order_id        TEXT,             -- tied main order (FK orders.order_id), nullable until synced
+  fulfill_unit_id TEXT,            -- authoritative tie key (joins orders.fulfill_unit_id)
+  order_id        TEXT,             -- resolved primary order for the 1:1 case (FK orders.order_id), nullable
   tracking_decoded TEXT,           -- null unless barcode verify ran
   match_method    TEXT,            -- generate-order | barcode | unmatched
   PRIMARY KEY (batch_id, page_index)
 );
 ```
 
-**Tie resolution.** `label_page.order_id` is filled at capture time via the generate-order path; `match_method` records how. Split/combined units (one `fulfill_unit_id` → several `main_order_ids`) are expected — one label page is tied to all those orders, all pointing at the same page.
+**Tie resolution.** The authoritative key on each page is `fulfill_unit_id` (from `fulfill_unit_id_list[page_index]`). The order(s) for a page are resolved by joining `orders.fulfill_unit_id` — a **combined shipment** (one unit → several `main_order_ids`) naturally returns multiple orders for the one page, so the page-to-order relation is one-to-many via the join rather than a single `order_id` column. `label_page.order_id` caches the resolved order for the common 1:1 case; `match_method` records how the tie was made.
 
 **Storage and PII.** The merged label PDF contains buyer **addresses**, which this codebase otherwise never persists (`stripForStorage` removes addresses from `sale_json`). The console needs the PDF available to view/print per-order until shipping, so pure-ephemeral handling (as in restack) does not fit. Decision:
 - Store under `capture/labels/<batch_id>.pdf`.
