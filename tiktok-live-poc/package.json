@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^11.8.0",
-    "flv.js": "^1.6.2"
+    "flv.js": "^1.6.2",
+    "pdf-lib": "^1.17.1"
   }
 }
