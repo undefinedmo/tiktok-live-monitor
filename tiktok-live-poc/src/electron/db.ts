@@ -368,8 +368,10 @@ export function getLabelPages(db: Db, batchId: string): { pageIndex: number; ful
 
 /** Delete all label rows; return the on-disk pdf paths the caller must unlink. */
 export function clearLabels(db: Db): string[] {
-  const paths = (db.prepare('SELECT pdf_path FROM label_batch WHERE pdf_path IS NOT NULL').all() as { pdf_path: string }[]).map((r) => r.pdf_path)
-  const run = db.transaction(() => { db.exec('DELETE FROM label_page; DELETE FROM label_batch;') })
-  run()
-  return paths
+  const run = db.transaction(() => {
+    const paths = (db.prepare('SELECT pdf_path FROM label_batch WHERE pdf_path IS NOT NULL').all() as { pdf_path: string }[]).map((r) => r.pdf_path)
+    db.exec('DELETE FROM label_page; DELETE FROM label_batch;')
+    return paths
+  })
+  return run()
 }
