@@ -59,12 +59,14 @@ export interface DbSnapshot {
 }
 
 function hasColumn(db: Db, table: string, col: string): boolean {
-  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+  const rows = db.prepare(`PRAGMA table_info("${table}")`).all() as { name: string }[]
   return rows.some((r) => r.name === col)
 }
 
 /** Additive v2 migration: order tie columns, pack timestamp, label tables. Idempotent. */
 function migrateV2(db: Db): void {
+  const vRow = db.prepare("SELECT v FROM meta WHERE k = 'schema_version'").get() as { v: string } | undefined
+  const alreadyV2 = vRow?.v === '2'
   if (!hasColumn(db, 'orders', 'fulfill_unit_id')) db.exec('ALTER TABLE orders ADD COLUMN fulfill_unit_id TEXT')
   if (!hasColumn(db, 'orders', 'tracking_no')) db.exec('ALTER TABLE orders ADD COLUMN tracking_no TEXT')
   if (!hasColumn(db, 'picks', 'packed_at')) db.exec('ALTER TABLE picks ADD COLUMN packed_at INTEGER')
@@ -79,8 +81,8 @@ function migrateV2(db: Db): void {
       tracking_decoded TEXT, match_method TEXT, PRIMARY KEY (batch_id, page_index)
     );
   `)
-  // backfill tie columns from sale_json for rows synced before v2
-  backfillTieColumns(db)
+  // backfill tie columns from sale_json for rows synced before v2 — skip if already migrated
+  if (!alreadyV2) backfillTieColumns(db)
   db.prepare("INSERT INTO meta (k,v) VALUES ('schema_version','2') ON CONFLICT(k) DO UPDATE SET v='2'").run()
 }
 
