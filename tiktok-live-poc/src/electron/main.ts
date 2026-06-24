@@ -1,6 +1,6 @@
-import { app, BrowserWindow, ipcMain, session, Menu, nativeTheme, net } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, session, Menu, nativeTheme, net } from 'electron'
 import { join } from 'node:path'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, rmSync, writeFileSync } from 'node:fs'
 import { gunzipSync } from 'node:zlib'
 import { parsePushFrame } from '../core/pushFrame'
 import { LiveFeed } from '../core/liveFeed'
@@ -10,10 +10,12 @@ import { AuctionResults } from '../core/auctionResults'
 import { decodeChat } from '../core/chat'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
 import { pullTiktokOrders, fetchOrderDetails, pullTiktokOrdersSince, applyOrderDetails, filterOrdersForShow, SHOW_SYNC_BUFFER_MS } from './tiktok-orders'
-import { openDb, upsertOrders, getSnapshot, setCost, setTranscript, setPicked, getShows, setShows, importLegacy, rekeyProductTemplates, setShowNames, getOrdersByFulfillUnit, insertLabelBatch, insertLabelPages, type LegacyBlob } from './db'
+import { openDb, upsertOrders, getSnapshot, setCost, setTranscript, setPicked, getShows, setShows, importLegacy, rekeyProductTemplates, setShowNames, getOrdersByFulfillUnit, insertLabelBatch, insertLabelPages, getOrdersForRestack, listLabelBatches, getLabelBatch, getLabelPages, clearLabels, setPacked, setBatchStatus, type LegacyBlob } from './db'
 import { parseGenerateCapture } from '../core/restack/capture'
 import { tieByGenerateOrder } from '../core/restack/tie'
-import { pdfPageCount } from './label-pdf'
+import { orderedOrders, type RestackOrder } from '../core/restack/sortlogic'
+import { binOf } from '../core/restack/bins'
+import { pdfPageCount, reorderLabels, extractPage, buildPackingSheet, type SheetRow } from './label-pdf'
 import { parseShowList, roomNameMap, type ShowListing } from '../core/showList'
 import { buildClipMedia } from './clip'
 import type { LiveEvent, StatusEvent } from '../core/types'
@@ -669,6 +671,77 @@ ipcMain.handle('print-label', async (_e, args: { labelData: LabelData; printerNa
     win?.close()
   }
 })
+
+// ── Picklist / label batch IPC handlers ──────────────────────────────────────
+ipcMain.handle('tt-label:list', () => (db ? listLabelBatches(db).map((b) => ({ id: b.id, capturedAt: b.capturedAt, pageCount: b.pageCount, unitCount: b.unitCount, status: b.status })) : []))
+
+ipcMain.handle('tt-label:get', (_e, batchId: string) => {
+  if (!db) return null
+  const batch = getLabelBatch(db, batchId)
+  if (!batch) return null
+  const pages = getLabelPages(db, batchId)
+  const units = new Set(JSON.parse(batch.requestJson) as string[])
+  const orders = getOrdersForRestack(db).filter((o) => o.fulfillUnitId && units.has(o.fulfillUnitId))
+  return { batch, pages, orders }
+})
+
+ipcMain.handle('tt-label:pagePdf', async (_e, p: { batchId: string; pageIndex: number }) => {
+  if (!db) return null
+  const batch = getLabelBatch(db, p.batchId)
+  if (!batch?.pdfPath) return null
+  try { return await extractPage(new Uint8Array(readFileSync(batch.pdfPath)), p.pageIndex) } catch { return null }
+})
+
+function restackSequence(orders: ReturnType<typeof getOrdersForRestack>): string[] {
+  const ro: RestackOrder[] = orders.map((o) => ({ orderId: o.orderId, buyer: o.buyer, createdMs: o.placedAt }))
+  return orderedOrders(ro).map((o) => o.orderId)
+}
+
+ipcMain.handle('tt-label:export', async (_e, p: { batchId: string; kind: 'labels' | 'sheet' }) => {
+  if (!db) return { ok: false, error: 'no db' }
+  const batch = getLabelBatch(db, p.batchId)
+  if (!batch?.pdfPath) return { ok: false, error: 'batch has no PDF' }
+  const pages = getLabelPages(db, p.batchId)
+  const orders = getOrdersForRestack(db).filter((o) => o.fulfillUnitId && pages.some((pg) => pg.fulfillUnitId === o.fulfillUnitId))
+  const seq = restackSequence(orders)
+  // map order -> the page index of its fulfill_unit
+  const pageOfUnit = new Map(pages.map((pg) => [pg.fulfillUnitId, pg.pageIndex]))
+  const unitOfOrder = new Map(orders.map((o) => [o.orderId, o.fulfillUnitId!]))
+  try {
+    let bytes: Uint8Array
+    let suggested: string
+    if (p.kind === 'labels') {
+      const pageSeq = seq.map((oid) => pageOfUnit.get(unitOfOrder.get(oid)!)).filter((i): i is number => i != null)
+      bytes = await reorderLabels(new Uint8Array(readFileSync(batch.pdfPath)), [...new Set(pageSeq)])
+      suggested = 'Labels_sorted_newest_to_oldest.pdf'
+    } else {
+      const byId = new Map(orders.map((o) => [o.orderId, o]))
+      const rows: SheetRow[] = seq.map((oid, i) => {
+        const o = byId.get(oid)!
+        const items = o.items.map((it) => `${it.sku ?? '?'} (Bin ${binOf(it.productName)})`).join(', ')
+        return { seq: i + 1, buyer: o.buyer, purchased: o.placedAt ? new Date(o.placedAt).toLocaleTimeString() : '', items, multi: o.items.length > 1 }
+      })
+      bytes = await buildPackingSheet(rows)
+      suggested = 'Packing_sheet.pdf'
+    }
+    const save = await dialog.showSaveDialog({ defaultPath: suggested })
+    if (save.canceled || !save.filePath) return { ok: false, error: 'cancelled' }
+    writeFileSync(save.filePath, bytes)
+    setBatchStatus(db, p.batchId, 'exported')
+    return { ok: true, path: save.filePath }
+  } catch (e) {
+    return { ok: false, error: (e as Error).message }
+  }
+})
+
+ipcMain.handle('tt-label:clear', () => {
+  if (!db) return { ok: false }
+  for (const path of clearLabels(db)) { try { unlinkSync(path) } catch { /* ignore */ } }
+  try { rmSync(labelsDir(), { recursive: true, force: true }) } catch { /* ignore */ }
+  return { ok: true }
+})
+
+ipcMain.handle('tt-label:setPacked', (_e, p: { orderId: string; packed: boolean }) => { if (db) setPacked(db, p.orderId, p.packed, Date.now()); return true })
 
 app.whenReady().then(() => {
   app.userAgentFallback = CHROME_UA

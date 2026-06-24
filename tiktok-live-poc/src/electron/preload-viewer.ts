@@ -41,3 +41,13 @@ contextBridge.exposeInMainWorld('dbAPI', {
   setShows: (store: unknown) => ipcRenderer.invoke('tt-db:setShows', store),
   importLegacy: (blob: unknown) => ipcRenderer.invoke('tt-db:importLegacy', blob),
 })
+
+contextBridge.exposeInMainWorld('picklistAPI', {
+  list: () => ipcRenderer.invoke('tt-label:list'),
+  get: (batchId: string) => ipcRenderer.invoke('tt-label:get', batchId),
+  pagePdf: (batchId: string, pageIndex: number) => ipcRenderer.invoke('tt-label:pagePdf', { batchId, pageIndex }),
+  exportDoc: (batchId: string, kind: 'labels' | 'sheet') => ipcRenderer.invoke('tt-label:export', { batchId, kind }),
+  clear: () => ipcRenderer.invoke('tt-label:clear'),
+  setPacked: (orderId: string, packed: boolean) => ipcRenderer.invoke('tt-label:setPacked', { orderId, packed }),
+  onBatchReady: (cb: (p: unknown) => void) => ipcRenderer.on('tt-label-batch-ready', (_e, p) => cb(p)),
+})
