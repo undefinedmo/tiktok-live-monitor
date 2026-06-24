@@ -203,7 +203,7 @@ ipcRenderer.on('tt-shows-fetch', async (_e, req: { id: number }) => {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-tt-store-region': 'us' },
       body: JSON.stringify({ page_size: PAGE, cur_page: cur, search_type: 2, search_order: 2, with_reservations: true }),
-    }).then((r) => r.text())
+    }).then((r) => { if (!r.ok) throw new Error('live_session/list HTTP ' + r.status); return r.text() })
   try {
     const pages: string[] = []
     const first = await fetchPage(1)
