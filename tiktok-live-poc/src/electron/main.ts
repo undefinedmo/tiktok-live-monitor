@@ -234,7 +234,7 @@ ipcMain.on('tt-label-batch', async (_e, msg: { url?: string; reqBody?: string; r
     writeFileSync(pdfPath, bytes)
     const pageCount = await pdfPageCount(bytes)
     const ties = tieByGenerateOrder(cap.fulfillUnitIds, getOrdersByFulfillUnit(db))
-    const status = pageCount === cap.fulfillUnitIds.length ? 'tied' : 'error' // count mismatch -> needs barcode (Task 12)
+    const status = pageCount === cap.fulfillUnitIds.length ? 'tied' : 'page_mismatch' // page/unit mismatch -> barcode-tie fallback (Task 13)
     insertLabelBatch(db, {
       id: batchId, capturedAt: Date.now(), roomId: pollRoomId ?? null, docUrl: cap.docUrl, pdfPath,
       pageCount, unitCount: cap.fulfillUnitIds.length, status,
