@@ -40,6 +40,11 @@ describe('parseShowList', () => {
     expect(parseShowList('{"code":1,"message":"nope"}')).toEqual([])
     expect(parseShowList('not json')).toEqual([])
   })
+
+  it('drops a null room_id', () => {
+    const raw = '{"code":0,"data":{"live_sessions":[{"id":"9","name":"N","start_time":"1","during_time":"1","event_id":"7","live_room_infos":[{"room_id":null},{"room_id":"7642505372850195231"}]}]}}'
+    expect(parseShowList(raw)[0]!.roomIds).toEqual(['7642505372850195231'])
+  })
 })
 
 describe('showWindowMs', () => {

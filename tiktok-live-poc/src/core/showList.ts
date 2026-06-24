@@ -46,7 +46,7 @@ export function parseShowList(rawText: string): ShowListing[] {
       durationSec: intOr(get(s, 'during_time'), 0),
       description: typeof desc === 'string' && desc.length ? desc : undefined,
       eventId: String(get(s, 'event_id') ?? ''),
-      roomIds: rooms.map((r) => String((r as Raw).room_id)).filter((id) => id && id !== 'undefined'),
+      roomIds: rooms.map((r) => (r as Raw).room_id).filter((id) => id != null).map((id) => String(id)),
       productCnt: get(s, 'session_statistic.product_cnt') != null ? intOr(get(s, 'session_statistic.product_cnt'), 0) : undefined,
       reservations: get(s, 'num_reservations') != null ? intOr(get(s, 'num_reservations'), 0) : undefined,
     }
