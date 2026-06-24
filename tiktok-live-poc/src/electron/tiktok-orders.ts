@@ -357,7 +357,7 @@ export function pageReachedSince(orders: MappedOrder[], sinceMs: number): boolea
 export function applyOrderDetails(orders: MappedOrder[], details: Map<string, OrderDetail>): MappedOrder[] {
   return orders.map((o) => {
     const d = details.get(o.externalOrderId)
-    if (!d) return o
+    if (!d) return { ...o }
     return {
       ...o,
       roomId: d.roomId ?? o.roomId,

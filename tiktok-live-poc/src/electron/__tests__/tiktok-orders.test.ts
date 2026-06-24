@@ -212,8 +212,10 @@ describe('applyOrderDetails', () => {
     expect(out[0]!.videoReceiptTs).toBe(42)
   })
   it('leaves orders without a detail entry unchanged', () => {
-    const out = applyOrderDetails([ord('a', 1000, 'keep')], new Map())
+    const input = [ord('a', 1000, 'keep')]
+    const out = applyOrderDetails(input, new Map())
     expect(out[0]!.roomId).toBe('keep')
+    expect(out[0]).not.toBe(input[0])   // contract: new object, inputs untouched
   })
 })
 
@@ -230,5 +232,9 @@ describe('filterOrdersForShow', () => {
   it('drops room-less orders outside the window', () => {
     const out = filterOrdersForShow([ord('d', 999999, null)], ['room-1'], startMs, endMs)
     expect(out).toEqual([])
+  })
+  it('treats an empty-string roomId as room-less (kept only inside the window)', () => {
+    expect(filterOrdersForShow([ord('e', 15_000, '')], ['room-1'], startMs, endMs).map((o) => o.externalOrderId)).toEqual(['e'])
+    expect(filterOrdersForShow([ord('f', 999_999, '')], ['room-1'], startMs, endMs)).toEqual([])
   })
 })
