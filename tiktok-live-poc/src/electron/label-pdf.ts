@@ -13,3 +13,20 @@ export async function pdfPageCount(bytes: Uint8Array): Promise<number> {
   const doc = await PDFDocument.load(bytes)
   return doc.getPageCount()
 }
+
+export async function reorderLabels(srcBytes: Uint8Array, sequence: number[]): Promise<Uint8Array> {
+  const src = await PDFDocument.load(srcBytes)
+  const out = await PDFDocument.create()
+  const valid = sequence.filter((i) => i >= 0 && i < src.getPageCount())
+  const pages = await out.copyPages(src, valid)
+  pages.forEach((p) => out.addPage(p))
+  return out.save()
+}
+
+export async function extractPage(srcBytes: Uint8Array, pageIndex: number): Promise<Uint8Array> {
+  const src = await PDFDocument.load(srcBytes)
+  const out = await PDFDocument.create()
+  const [p] = await out.copyPages(src, [pageIndex])
+  out.addPage(p)
+  return out.save()
+}
