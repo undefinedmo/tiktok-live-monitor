@@ -35,6 +35,7 @@ export function parseShowList(rawText: string): ShowListing[] {
     return []
   }
   if (j.code !== 0 && j.code != null) return []
+  // code:0 with absent/empty live_sessions → [] (e.g. a seller with no past shows)
   const sessions = (get(j, 'data.live_sessions') as Raw[]) || []
   return sessions.map((s): ShowListing => {
     const rooms = (get(s, 'live_room_infos') as Raw[]) || []

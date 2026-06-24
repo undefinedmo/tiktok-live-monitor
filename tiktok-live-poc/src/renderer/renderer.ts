@@ -1408,6 +1408,7 @@ async function openShowModal() {
   try {
     const res = await window.syncAPI!.showList()
     if (res.needsLogin) { list.innerHTML = '<div class="sm-empty">Log into TikTok, then click Sync again.</div>'; return }
+    if (!res.ok) { list.innerHTML = '<div class="sm-empty">Couldn\'t reach TikTok — use Full sync above, or reopen the monitor window.</div>'; return }
     const shows = res.shows ?? []
     if (!shows.length) {
       // all branches below are hardcoded string literals — never interpolate res.reason or other API strings here

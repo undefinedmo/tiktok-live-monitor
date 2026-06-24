@@ -266,4 +266,15 @@ describe('pullTiktokOrdersSince', () => {
     expect(res.stopped).toBe(true)
     expect(res.orders.map((o) => o.externalOrderId)).toEqual(['a', 'b', 'c', 'd'])
   })
+
+  it('returns stopped:false when pagination exhausts before the time bound', async () => {
+    const sinceSec = 1_000_000
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(page([{ id: 'a', t: sinceSec + 500 }], true))
+      .mockResolvedValueOnce(page([{ id: 'b', t: sinceSec + 400 }], false)) // has_more:false → normal exhaustion
+    vi.stubGlobal('fetch', fetchMock)
+    const res = await pullTiktokOrdersSince('cookie=1', sinceSec * 1000)
+    expect(res.stopped).toBe(false)
+    expect(res.orders.map((o) => o.externalOrderId)).toEqual(['a', 'b'])
+  })
 })

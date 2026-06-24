@@ -53,8 +53,8 @@ async function tiktokCookieHeader(): Promise<string> {
 }
 
 async function ensureMonitorLoaded(): Promise<boolean> {
-  if (!monitor) createMonitor()
-  if (!monitor) return false
+  if (!monitor || monitor.isDestroyed()) createMonitor()
+  if (!monitor || monitor.isDestroyed()) return false
   const wc = monitor.webContents
   if (!wc.isLoading()) return true
   await new Promise<void>((resolve) => {
@@ -185,6 +185,7 @@ function createMonitor() {
   })
   monitor.webContents.on('did-navigate-in-page', (_e, url) => debug(`[tt] nav-in-page ${url}`))
   monitor.webContents.on('did-finish-load', () => debug(`[tt] loaded ${monitor?.webContents.getURL() ?? ''}`))
+  monitor.on('closed', () => { monitor = null })
 }
 
 // Open TikTok Seller Center in its own window so the user can log in for order Sync.
