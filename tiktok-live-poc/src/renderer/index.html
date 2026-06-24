@@ -246,6 +246,19 @@
       .cost-suggest .cs-item:hover{background:#1c2230;}
       .cost-suggest .cs-val{color:#eef1f7;font-variant-numeric:tabular-nums;}
       .cost-suggest .cs-meta{color:#6b7488;}
+      .show-modal { position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; z-index:1000; }
+      .show-modal-card { width:560px; max-width:92vw; max-height:80vh; overflow:hidden; display:flex; flex-direction:column; background:#0e0f13; border:1px solid #2a2d36; border-radius:10px; }
+      .show-modal-top { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; border-bottom:1px solid #2a2d36; background:#15171d; font-weight:600; }
+      .show-modal-x { background:none; border:none; color:#7b8090; cursor:pointer; font-size:14px; }
+      .show-modal-full { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:#161a22; border-bottom:1px solid #2a2d36; cursor:pointer; }
+      .show-modal-full:hover { background:#1b2030; }
+      .sm-lbl { font-weight:600; } .sm-sub { color:#7b8090; font-size:11px; } .sm-go { color:#6ea8ff; font-size:11px; }
+      .show-modal-list { overflow:auto; }
+      .sm-row { padding:9px 14px; border-bottom:1px solid #20232b; display:flex; align-items:center; gap:10px; cursor:pointer; }
+      .sm-row:hover { background:#161a22; }
+      .sm-nm { font-weight:600; } .sm-meta { color:#8a90a0; font-size:11px; }
+      .sm-right { margin-left:auto; text-align:right; white-space:nowrap; }
+      .sm-synced { color:#4ec98a; font-size:11px; } .sm-empty { padding:20px 14px; color:#8a90a0; }
     </style>
   </head>
   <body>
@@ -541,5 +554,18 @@
       }
     </script>
     <script src="./renderer.js"></script>
+    <div id="showModal" class="show-modal" style="display:none">
+      <div class="show-modal-card">
+        <div class="show-modal-top">
+          <span>Sync orders — pick a show</span>
+          <button id="showModalClose" class="show-modal-x" aria-label="Close">✕</button>
+        </div>
+        <div class="show-modal-full" id="showFull">
+          <div><div class="sm-lbl">↻ Full sync</div><div class="sm-sub">Pull entire order history</div></div>
+          <span class="sm-go">Sync all</span>
+        </div>
+        <div id="showList" class="show-modal-list"><div class="sm-empty">Loading shows…</div></div>
+      </div>
+    </div>
   </body>
 </html>

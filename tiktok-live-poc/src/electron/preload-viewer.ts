@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('recapAPI', {
 
 contextBridge.exposeInMainWorld('syncAPI', {
   now: () => ipcRenderer.invoke('tt-sync'),
+  showList: () => ipcRenderer.invoke('tt-shows-list'),
+  syncShow: (arg: { roomIds: string[]; startMs: number; endMs: number }) => ipcRenderer.invoke('tt-sync-show', arg),
   connection: () => ipcRenderer.invoke('tt-connection'),
   openMonitor: () => ipcRenderer.invoke('tt-open-monitor'),
 })

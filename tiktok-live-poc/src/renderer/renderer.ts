@@ -4,6 +4,7 @@ import { computeKpis, filterRows, sortRows, profitCents, marginPct, statusLabel,
 import { healthCounts, activeFilterChips, selectSimilar, duplicateOrderIds, costSuggestions, type SimilarBy } from '../core/ledgerView'
 import { upsertShow, listShows, salesForShow, type ShowMeta, type ShowStore } from '../core/shows'
 import { deriveShowsFromOrders, type DerivedShow } from '../core/sessions'
+import { showWindowMs, type RoomNameMeta } from '../core/showList'
 import { urgency } from '../core/urgency'
 import { classifyException } from '../core/exceptions'
 import { labelHtml, LABEL_SIZES } from '../electron/label' // portable (no electron deps) — renders the real print HTML for the preview
@@ -43,7 +44,9 @@ declare global {
       onTranscribeProgress: (cb: (p: { done: number; total: number; orderId: string; phase: 'start' | 'done'; ok?: boolean }) => void) => void
     }
     syncAPI?: {
-      now: () => Promise<{ ok: boolean; reason?: string; count?: number }>
+      now: () => Promise<{ ok: boolean; count?: number; reason?: string }>
+      showList: () => Promise<{ ok: boolean; shows?: import('../core/showList').ShowListing[]; needsLogin?: boolean; capped?: boolean; reason?: string }>
+      syncShow: (arg: { roomIds: string[]; startMs: number; endMs: number }) => Promise<{ ok: boolean; count?: number; reason?: string }>
       connection: () => Promise<{ loggedIn: boolean; hasShow: boolean; polling: boolean }>
       openMonitor: () => Promise<{ ok: boolean }>
     }
@@ -52,7 +55,7 @@ declare global {
       onSent: (cb: (r: { ok: boolean; error?: string }) => void) => void
     }
     dbAPI?: {
-      getSnapshot: () => Promise<{ orders: Sale[]; costs: Record<string, number>; productCosts: Record<string, number>; orderTx: Record<string, LedgerTranscript>; productTx: Record<string, LedgerTranscript>; picked: string[]; shows: unknown }>
+      getSnapshot: () => Promise<{ orders: Sale[]; costs: Record<string, number>; productCosts: Record<string, number>; orderTx: Record<string, LedgerTranscript>; productTx: Record<string, LedgerTranscript>; picked: string[]; shows: unknown; showNames?: Record<string, unknown> }>
       setCost: (orderId: string, cents: number | null) => Promise<boolean>
       setProductCost: (productId: string, cents: number | null) => Promise<boolean>
       setTranscript: (scope: 'order' | 'product', key: string, transcript: unknown | null) => Promise<boolean>
@@ -714,6 +717,7 @@ const orderTx: Record<string, LedgerTranscript> = {} // orderId → per-ITEM str
 // Synced order book from Seller-Center order/list (decoupled from the live stream). When present
 // it is the Ledger/Picklist source; grouped into real shows by live_room_id (time-gap fallback).
 let syncedOrders: Sale[] = []
+let roomNames = new Map<string, RoomNameMeta>()
 // Derived-shows cache for the synced order book. Recomputed only when the syncedOrders array
 // reference changes (it is reassigned on sync/hydrate, never mutated in place).
 let _derivedShowsSrc: Sale[] | null = null
@@ -721,7 +725,7 @@ let derivedShows: DerivedShow[] = []
 let showIdByOrder = new Map<string, string>()
 function ensureDerivedShows(): void {
   if (_derivedShowsSrc === syncedOrders) return
-  const r = deriveShowsFromOrders(syncedOrders)
+  const r = deriveShowsFromOrders(syncedOrders, roomNames)
   derivedShows = r.shows
   showIdByOrder = r.showIdByOrder
   _derivedShowsSrc = syncedOrders
@@ -1386,33 +1390,96 @@ async function refreshConnection() {
 
 async function runSync() {
   if (syncing) return
-  syncing = true
-  const navSync = document.getElementById('navSync')
-  navSync?.classList.add('syncing')
-  try {
-    if (window.syncAPI) {
-      const res = await window.syncAPI.now()
-      if (res.ok) {
-        await hydrateFromDb()
-        if (selectedShowId === 'live' && syncedOrders.length) selectedShowId = 'all'
-        refreshShowOptions(); renderLedger(); renderPicklist()
-        flashSync(`✓ ${res.count ?? ''} orders`.replace('  ', ' '))
-      }
-      else { flashSync('⚠ ' + (res.reason ?? 'failed')); console.warn('sync:', res.reason) }
-      await refreshConnection()
-    } else {
-      await new Promise((r) => window.setTimeout(r, 900)) // static demo feedback
-      flashSync('✓ Synced')
-    }
-  } finally {
-    navSync?.classList.remove('syncing')
-    syncing = false
+  if (!window.syncAPI) { await new Promise((r) => window.setTimeout(r, 900)); flashSync('✓ Synced'); return }
+  openShowModal()
+}
+
+function showModalEl(): HTMLElement | null { return document.getElementById('showModal') }
+
+function closeShowModal() { const m = showModalEl(); if (m) m.style.display = 'none' }
+
+async function openShowModal() {
+  const modal = showModalEl(); const list = document.getElementById('showList')
+  if (!modal || !list) return
+  modal.style.display = 'flex'
+  list.innerHTML = '<div class="sm-empty">Loading shows…</div>'
+  const res = await window.syncAPI!.showList()
+  if (res.needsLogin) { list.innerHTML = '<div class="sm-empty">Log into TikTok, then click Sync again.</div>'; return }
+  const shows = res.shows ?? []
+  if (!shows.length) {
+    list.innerHTML = `<div class="sm-empty">${res.capped ? "Couldn't load shows — use Full sync above." : 'No shows found.'}</div>`
+    return
   }
+  // how many orders we already have per room, to show the synced status
+  const haveByRoom = new Map<string, number>()
+  for (const s of syncedOrders) if (s.roomId) haveByRoom.set(s.roomId, (haveByRoom.get(s.roomId) ?? 0) + 1)
+  const fmtDate = (sec: number) => new Date(sec * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  const fmtDur = (sec: number) => { const m = Math.round(sec / 60); const h = Math.floor(m / 60); return h ? `${h}h ${m % 60}m` : `${m}m` }
+  list.innerHTML = ''
+  for (const sh of shows) {
+    const have = sh.roomIds.reduce((n, r) => n + (haveByRoom.get(r) ?? 0), 0)
+    const chips = [sh.productCnt != null ? `${sh.productCnt} products` : '', sh.reservations != null ? `${sh.reservations} reserved` : ''].filter(Boolean).join(' · ')
+    const row = document.createElement('div')
+    row.className = 'sm-row'
+    // Build via DOM so no user-supplied text ever reaches innerHTML
+    const left = document.createElement('div')
+    left.style.cssText = 'flex:1;min-width:0'
+    const nm = document.createElement('div'); nm.className = 'sm-nm'
+    nm.textContent = sh.name
+    const meta = document.createElement('div'); meta.className = 'sm-meta'
+    meta.textContent = `${fmtDate(sh.startTime)} · ${fmtDur(sh.durationSec)}${chips ? ' · ' + chips : ''}`
+    left.appendChild(nm); left.appendChild(meta)
+    const right = document.createElement('div'); right.className = 'sm-right'
+    const badge = document.createElement('span')
+    badge.className = have ? 'sm-synced' : 'sm-go'
+    badge.textContent = have ? `✓ ${have} orders` : 'Sync →'
+    right.appendChild(badge)
+    row.appendChild(left); row.appendChild(right)
+    row.addEventListener('click', () => void syncOneShow(sh))
+    list.appendChild(row)
+  }
+}
+
+async function syncOneShow(sh: import('../core/showList').ShowListing) {
+  if (syncing) return
+  syncing = true
+  const navSync = document.getElementById('navSync'); navSync?.classList.add('syncing')
+  try {
+    const { startMs, endMs } = showWindowMs(sh)
+    const res = await window.syncAPI!.syncShow({ roomIds: sh.roomIds, startMs, endMs })
+    if (res.ok) {
+      await hydrateFromDb()
+      if (selectedShowId === 'live' && syncedOrders.length) selectedShowId = 'all'
+      refreshShowOptions(); renderLedger(); renderPicklist()
+      flashSync(`✓ ${res.count ?? 0} orders`)
+      closeShowModal()
+    } else { flashSync('⚠ ' + (res.reason ?? 'failed')); console.warn('sync-show:', res.reason) }
+    await refreshConnection()
+  } finally { navSync?.classList.remove('syncing'); syncing = false }
+}
+
+async function fullSync() {
+  if (syncing) return
+  syncing = true
+  const navSync = document.getElementById('navSync'); navSync?.classList.add('syncing')
+  try {
+    const res = await window.syncAPI!.now()
+    if (res.ok) {
+      await hydrateFromDb()
+      if (selectedShowId === 'live' && syncedOrders.length) selectedShowId = 'all'
+      refreshShowOptions(); renderLedger(); renderPicklist()
+      flashSync(`✓ ${res.count ?? ''} orders`.replace('  ', ' ')); closeShowModal()
+    } else { flashSync('⚠ ' + (res.reason ?? 'failed')); console.warn('sync:', res.reason) }
+    await refreshConnection()
+  } finally { navSync?.classList.remove('syncing'); syncing = false }
 }
 
 function setupSync() {
   document.getElementById('navSync')?.addEventListener('click', () => void runSync())
   document.getElementById('ledgerSync')?.addEventListener('click', () => void runSync())
+  document.getElementById('showModalClose')?.addEventListener('click', closeShowModal)
+  document.getElementById('showFull')?.addEventListener('click', () => void fullSync())
+  document.getElementById('showModal')?.addEventListener('click', (e) => { if (e.target === e.currentTarget) closeShowModal() })
   void refreshConnection()
   window.setInterval(() => void refreshConnection(), 12000)
 }
@@ -1653,6 +1720,9 @@ async function hydrateFromDb(): Promise<void> {
   if (!window.dbAPI) return
   const s = await window.dbAPI.getSnapshot()
   syncedOrders = s.orders
+  // build the roomId→name map so derived shows render real titles
+  roomNames = new Map(Object.entries(s.showNames ?? {}).map(([roomId, v]) => [roomId, v as RoomNameMeta]))
+  _derivedShowsSrc = null // force re-derive with the names
   // costMap/productCostMap/orderTx/productTx are the live mirrors of the DB — clear before
   // assigning so a re-hydrate (e.g. after sync) drops rows that no longer exist in the store.
   for (const k of Object.keys(costMap)) delete costMap[k]
