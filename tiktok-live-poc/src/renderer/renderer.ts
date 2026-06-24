@@ -8,6 +8,7 @@ import { showWindowMs, type RoomNameMeta } from '../core/showList'
 import { urgency } from '../core/urgency'
 import { classifyException } from '../core/exceptions'
 import { labelHtml, LABEL_SIZES } from '../electron/label' // portable (no electron deps) — renders the real print HTML for the preview
+import { initPicklist } from './picklist'
 
 // One source of truth for how an urgency bucket renders (CSS class + human label),
 // shared by the Ledger row pill and the expanded-detail line.
@@ -740,7 +741,7 @@ let ledgerExpanded: string | null = null
 // Default ON (exclude failed/refunded from totals); only off if the user explicitly unchecked it
 // (the toggle persists '0' on uncheck, '1' on check — see ledgerExclFailed handler).
 let excludeFailed = localStorage.getItem('tt-kpi-exclude-failed') !== '0'
-let currentScreen: 'monitor' | 'ledger' | 'picklist' | 'settings' = 'monitor'
+let currentScreen: 'monitor' | 'ledger' | 'picklist' | 'picklist-labels' | 'settings' = 'monitor'
 const fmtCents = (c: number) => '$' + (c / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 // bulk-selection + cost state
@@ -1262,16 +1263,19 @@ function renderLedger() {
   updateBulkBar()
 }
 
-function showScreen(s: 'monitor' | 'ledger' | 'picklist' | 'settings') {
+function showScreen(s: 'monitor' | 'ledger' | 'picklist' | 'picklist-labels' | 'settings') {
   currentScreen = s
   $('monitorScreen').style.display = s === 'monitor' ? 'flex' : 'none'
   $('ledgerScreen').style.display = s === 'ledger' ? 'flex' : 'none'
   $('picklistScreen').style.display = s === 'picklist' ? 'flex' : 'none'
+  const picklistLabels = document.getElementById('picklist')
+  if (picklistLabels) picklistLabels.style.display = s === 'picklist-labels' ? 'flex' : 'none'
   const settings = document.getElementById('settingsScreen')
   if (settings) settings.style.display = s === 'settings' ? 'flex' : 'none'
   $('navMonitor').classList.toggle('active', s === 'monitor')
   $('navLedger').classList.toggle('active', s === 'ledger')
   $('navPicklist').classList.toggle('active', s === 'picklist')
+  document.getElementById('nav-picklist')?.classList.toggle('active', s === 'picklist-labels')
   document.getElementById('navSettings2')?.classList.toggle('active', s === 'settings')
   // live status (connecting…) + room/viewers/elapsed only make sense on the Live Monitor
   const meters = document.getElementById('liveMeters')
@@ -1526,6 +1530,7 @@ function jumpToOrder(orderId: string) {
 function setupLedger() {
   $('navMonitor').addEventListener('click', () => showScreen('monitor'))
   $('navLedger').addEventListener('click', () => showScreen('ledger'))
+  document.getElementById('nav-picklist')?.addEventListener('click', () => showScreen('picklist-labels'))
   document.getElementById('navSettings2')?.addEventListener('click', () => showScreen('settings'))
 
   // ── Ctrl+K jump-to-order dropdown ──────────────────────────────────────────
@@ -1702,6 +1707,8 @@ setupLedger()
 setupPicklist()
 setupSync()
 setupShowFilter()
+const picklistLabelEl = document.getElementById('picklist')
+if (picklistLabelEl && window.picklistAPI) initPicklist(picklistLabelEl)
 
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && currentScreen === 'ledger') {

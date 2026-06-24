@@ -259,6 +259,22 @@
       .sm-nm { font-weight:600; } .sm-meta { color:#8a90a0; font-size:11px; }
       .sm-right { margin-left:auto; text-align:right; white-space:nowrap; }
       .sm-synced { color:#4ec98a; font-size:11px; } .sm-empty { padding:20px 14px; color:#8a90a0; }
+      /* ── Label Picklist screen (#picklist) ─────────────────────────────────── */
+      .picklist-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:none;padding-bottom:10px;border-bottom:1px solid #1a1e27;}
+      .picklist-toolbar select{background:#0c0e13;color:#aab2c0;border:1px solid #20242e;border-radius:7px;padding:6px 9px;font:inherit;font-size:12px;}
+      .picklist-toolbar button{height:30px;padding:0 12px;border-radius:6px;border:1px solid #2a3140;background:#161b24;color:#aab2c0;font-family:'IBM Plex Mono',monospace;font-size:11px;cursor:pointer;}
+      .picklist-toolbar button:hover{border-color:#3a4150;color:#eef1f7;}
+      #picklist .warnings{background:rgba(245,181,74,.10);border:1px solid rgba(245,181,74,.28);border-radius:7px;padding:8px 12px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#f5c172;flex:none;}
+      #picklist .warnings div+div{margin-top:4px;}
+      #picklist table.picklist{width:100%;border-collapse:collapse;font-size:13px;}
+      #picklist table.picklist thead tr{background:#0c0f16;}
+      #picklist table.picklist th{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1px;color:#707a8c;text-transform:uppercase;padding:9px 12px;border-bottom:1px solid #1a1e27;text-align:left;font-weight:500;}
+      #picklist table.picklist td{padding:8px 12px;border-bottom:1px solid #14171f;color:#dfe4ec;vertical-align:middle;}
+      #picklist table.picklist tr.multi td{background:rgba(138,120,255,.06);}
+      #picklist table.picklist tbody tr:hover td{background:#0c0f16;}
+      #picklist table.picklist button{height:26px;padding:0 10px;border-radius:5px;border:1px solid #2a3140;background:#161b24;color:#7da8ff;font-family:'IBM Plex Mono',monospace;font-size:11px;cursor:pointer;}
+      #picklist table.picklist input[type=checkbox]{accent-color:#36d9a4;width:15px;height:15px;cursor:pointer;}
+      #picklist p.empty{color:#4a525f;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:18px 0;}
     </style>
   </head>
   <body>
@@ -280,6 +296,7 @@
         <div class="navicon active" id="navMonitor" title="Live Monitor"><div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;width:16px;height:16px;"><div style="background:#7da8ff;border-radius:1px;"></div><div style="background:#8a78ff;border-radius:1px;"></div><div style="background:#8a78ff;border-radius:1px;"></div><div style="background:#9b6cf6;border-radius:1px;"></div></div></div>
         <div class="navicon" id="navLedger" title="Order Ledger">⚒</div>
         <div class="navicon" id="navPicklist" title="Picklist / Packlist"><div style="display:flex;align-items:end;justify-content:center;gap:2px;height:18px;"><div style="width:3px;height:8px;background:#5c6473;border-radius:1px;"></div><div style="width:3px;height:13px;background:#5c6473;border-radius:1px;"></div><div style="width:3px;height:6px;background:#5c6473;border-radius:1px;"></div></div></div>
+        <div class="navicon" id="nav-picklist" title="Label Picklist">&#128218;</div>
         <div style="flex:1;"></div>
         <div class="navicon" id="navSync" title="Sync orders now" style="position:relative;">↻<span id="syncDot" style="position:absolute;width:0;height:0;overflow:hidden;"></span></div>
         <div class="navicon" id="navSettings2" title="Label settings">⚙</div>
@@ -454,6 +471,9 @@
         </div>
         <div class="body sf-scroll" id="pickGroups" style="flex:1;min-height:0;display:flex;flex-direction:column;gap:12px;overflow-y:auto;"></div>
       </div>
+
+      <!-- ============ LABEL PICKLIST SCREEN ============ -->
+      <div id="picklist" class="sf-scroll" style="flex:1;display:none;flex-direction:column;min-width:0;padding:14px;gap:10px;overflow-y:auto;"></div>
 
       <!-- ============ SETTINGS SCREEN ============ -->
       <div id="settingsScreen" style="flex:1;display:none;flex-direction:column;min-width:0;padding:14px;gap:12px;overflow:hidden;">
