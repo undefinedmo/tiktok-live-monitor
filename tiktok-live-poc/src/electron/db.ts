@@ -283,6 +283,7 @@ export interface RestackOrderRow {
   placedAt: number | null
   fulfillUnitId: string | null
   trackingNo: string | null
+  packed: boolean
   items: { sku: string | null; productName: string | null; quantity: number | null }[]
 }
 
@@ -290,12 +291,14 @@ export function getOrdersForRestack(db: Db): RestackOrderRow[] {
   const orders = db.prepare('SELECT order_id, buyer_handle, placed_at, fulfill_unit_id, tracking_no FROM orders').all() as
     { order_id: string; buyer_handle: string | null; placed_at: number | null; fulfill_unit_id: string | null; tracking_no: string | null }[]
   const itemStmt = db.prepare('SELECT sku_id, product_name, quantity FROM order_items WHERE order_id = ? ORDER BY line_index')
+  const packedStmt = db.prepare('SELECT packed_at FROM picks WHERE order_id = ?')
   return orders.map((o) => ({
     orderId: o.order_id,
     buyer: o.buyer_handle ?? '',
     placedAt: o.placed_at,
     fulfillUnitId: o.fulfill_unit_id,
     trackingNo: o.tracking_no,
+    packed: ((packedStmt.get(o.order_id) as { packed_at: number | null } | undefined)?.packed_at) != null,
     items: (itemStmt.all(o.order_id) as { sku_id: string | null; product_name: string | null; quantity: number | null }[])
       .map((it) => ({ sku: it.sku_id, productName: it.product_name, quantity: it.quantity })),
   }))

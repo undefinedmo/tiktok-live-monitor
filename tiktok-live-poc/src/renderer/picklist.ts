@@ -1,8 +1,10 @@
 import { orderedOrders, type RestackOrder } from '../core/restack/sortlogic'
 import { binOf } from '../core/restack/bins'
 
+const esc = (s: unknown): string => String(s ?? '').replace(/[&<>"'`]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;' }[c]!))
+
 interface PageRow { pageIndex: number; fulfillUnitId: string; orderId: string | null; matchMethod: string }
-interface OrderRow { orderId: string; buyer: string; placedAt: number | null; fulfillUnitId: string | null; trackingNo: string | null; items: { sku: string | null; productName: string | null; quantity: number | null }[] }
+interface OrderRow { orderId: string; buyer: string; placedAt: number | null; fulfillUnitId: string | null; trackingNo: string | null; packed: boolean; items: { sku: string | null; productName: string | null; quantity: number | null }[] }
 interface BatchData { batch: { id: string; status: string; pageCount: number; unitCount: number }; pages: PageRow[]; orders: OrderRow[] }
 
 declare global {
@@ -49,15 +51,15 @@ function render(batches: { id: string; pageCount: number; unitCount: number; sta
   const unmatched = data.pages.filter((p) => p.matchMethod === 'unmatched').length
   if (unmatched) warnings.push(`${unmatched} label page(s) not tied to a synced order.`)
 
-  const sel = batches.map((b) => `<option value="${b.id}"${b.id === currentBatch ? ' selected' : ''}>${b.id} — ${b.pageCount}p (${b.status})</option>`).join('')
+  const sel = batches.map((b) => `<option value="${esc(b.id)}"${b.id === currentBatch ? ' selected' : ''}>${esc(b.id)} — ${b.pageCount}p (${esc(b.status)})</option>`).join('')
   const rows = seq.map((o) => {
     const ord = byId.get(o.orderId)!
-    const items = ord.items.map((it) => `${it.sku ?? '?'} (Bin ${binOf(it.productName)})`).join(', ')
+    const items = ord.items.map((it) => `${esc(it.sku ?? '?')} (Bin ${binOf(it.productName)})`).join(', ')
     const pageIdx = ord.fulfillUnitId != null ? pageOfUnit.get(ord.fulfillUnitId) : undefined
     const multi = ord.items.length > 1 ? ' class="multi"' : ''
     const view = pageIdx != null ? `<button data-page="${pageIdx}">View label</button>` : '—'
-    return `<tr${multi}><td>${ord.buyer}</td><td>${ord.placedAt ? new Date(ord.placedAt).toLocaleTimeString() : ''}</td><td>${items}</td>
-      <td><input type="checkbox" class="pack" data-order="${ord.orderId}"></td><td>${view}</td></tr>`
+    return `<tr${multi}><td>${esc(ord.buyer)}</td><td>${ord.placedAt ? new Date(ord.placedAt).toLocaleTimeString() : ''}</td><td>${items}</td>
+      <td><input type="checkbox" class="pack" data-order="${esc(ord.orderId)}"${ord.packed ? ' checked' : ''}></td><td>${view}</td></tr>`
   }).join('')
 
   host.innerHTML = `
@@ -78,7 +80,7 @@ function render(batches: { id: string; pageCount: number; unitCount: number; sta
   host.querySelectorAll<HTMLButtonElement>('button[data-page]').forEach((b) => {
     b.onclick = async () => {
       const bytes = await window.picklistAPI.pagePdf(currentBatch!, Number(b.dataset.page))
-      if (bytes) { const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })); window.open(url, '_blank') }
+      if (bytes) { const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })); window.open(url, '_blank'); setTimeout(() => URL.revokeObjectURL(url), 60000) }
     }
   })
 }
