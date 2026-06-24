@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { PDFDocument } from 'pdf-lib'
-import { pdfPageCount, reorderLabels, extractPage } from '../label-pdf'
+import { pdfPageCount, reorderLabels, extractPage, buildPackingSheet } from '../label-pdf'
 
 async function makePdf(n: number): Promise<Uint8Array> {
   const d = await PDFDocument.create()
@@ -25,5 +25,22 @@ describe('reorderLabels / extractPage', () => {
     const src = await makePdf(4)
     const out = await extractPage(src, 1)
     expect(await pdfPageCount(out)).toBe(1)
+  })
+})
+
+describe('buildPackingSheet', () => {
+  it('produces a valid multi-row PDF', async () => {
+    const rows = Array.from({ length: 3 }, (_, i) => ({
+      seq: i + 1, buyer: `buyer${i}`, purchased: '8:36 AM', items: 's1 (Bin A)', multi: i === 0,
+    }))
+    const out = await buildPackingSheet(rows)
+    expect(Buffer.from(out.slice(0, 5)).toString()).toBe('%PDF-')
+    expect(await pdfPageCount(out)).toBeGreaterThanOrEqual(1)
+  })
+
+  it('paginates large row counts', async () => {
+    const rows = Array.from({ length: 80 }, (_, i) => ({ seq: i + 1, buyer: `b${i}`, purchased: '8:36 AM', items: 's', multi: false }))
+    const out = await buildPackingSheet(rows)
+    expect(await pdfPageCount(out)).toBeGreaterThanOrEqual(2)
   })
 })
