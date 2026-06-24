@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { mapTiktokOrder, orderToSale } from '../tiktok-orders'
+import { mapTiktokOrder, orderToSale, SHOW_SYNC_BUFFER_MS, pageReachedSince, applyOrderDetails, filterOrdersForShow } from '../tiktok-orders'
+import type { MappedOrder, OrderDetail } from '../tiktok-orders'
 
 const raw = {
   main_order_id: '5800000000001',
@@ -174,5 +175,60 @@ describe('orderToSale — fulfillment + SLA deadlines (Phase 2)', () => {
     // With no fulfillment_module, all fulfillment fields are undefined
     expect(sale.fulfillment?.packageId).toBeUndefined()
     expect(sale.fulfillment?.isSplitOrCombined).toBe(false)
+  })
+})
+
+function ord(id: string, placedAt: number | null, roomId: string | null = null): MappedOrder {
+  return {
+    externalOrderId: id, status: 'To ship', statusCode: '102', buyerHandle: null, buyerName: null,
+    subtotalCents: 0, shippingCents: 0, shippingDiscountCents: 0, platformDiscountCents: 0,
+    sellerDiscountCents: 0, taxCents: 0, originSaleCents: 0, totalCents: 0, address: null,
+    carrier: null, tracking: null, liveTag: null, isAuction: false, isReversed: false,
+    placedAt, roomId, videoReceiptTs: null, items: [],
+  }
+}
+
+describe('SHOW_SYNC_BUFFER_MS', () => {
+  it('is 6 hours', () => { expect(SHOW_SYNC_BUFFER_MS).toBe(6 * 60 * 60 * 1000) })
+})
+
+describe('pageReachedSince', () => {
+  it('true once a page contains an order older than sinceMs', () => {
+    expect(pageReachedSince([ord('a', 5000), ord('b', 1000)], 2000)).toBe(true)
+  })
+  it('false when every order is at or after sinceMs', () => {
+    expect(pageReachedSince([ord('a', 5000), ord('b', 3000)], 2000)).toBe(false)
+  })
+  it('ignores orders with no placedAt', () => {
+    expect(pageReachedSince([ord('a', null)], 2000)).toBe(false)
+  })
+})
+
+describe('applyOrderDetails', () => {
+  it('merges roomId + videoReceiptTs from details by order id', () => {
+    const details = new Map<string, OrderDetail>([['a', { videoUrl: null, roomId: 'room-9', receiptTsMs: 42 }]])
+    const out = applyOrderDetails([ord('a', 1000)], details)
+    expect(out[0]!.roomId).toBe('room-9')
+    expect(out[0]!.videoReceiptTs).toBe(42)
+  })
+  it('leaves orders without a detail entry unchanged', () => {
+    const out = applyOrderDetails([ord('a', 1000, 'keep')], new Map())
+    expect(out[0]!.roomId).toBe('keep')
+  })
+})
+
+describe('filterOrdersForShow', () => {
+  const startMs = 10_000, endMs = 20_000
+  it('keeps orders whose roomId is in the show', () => {
+    const out = filterOrdersForShow([ord('a', 999999, 'room-1'), ord('b', 999999, 'room-x')], ['room-1'], startMs, endMs)
+    expect(out.map((o) => o.externalOrderId)).toEqual(['a'])
+  })
+  it('keeps room-less orders that fall inside the window', () => {
+    const out = filterOrdersForShow([ord('c', 15_000, null)], ['room-1'], startMs, endMs)
+    expect(out.map((o) => o.externalOrderId)).toEqual(['c'])
+  })
+  it('drops room-less orders outside the window', () => {
+    const out = filterOrdersForShow([ord('d', 999999, null)], ['room-1'], startMs, endMs)
+    expect(out).toEqual([])
   })
 })

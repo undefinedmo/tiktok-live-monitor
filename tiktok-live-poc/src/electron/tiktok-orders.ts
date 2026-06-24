@@ -339,3 +339,45 @@ export async function fetchOrderDetails(
   }
   return out
 }
+
+// ── Scoped (per-show) sync helpers ───────────────────────────────────────────
+// order/list carries no room id and no room filter, so a show's orders are isolated
+// by time-bounding the pull then matching room ids resolved via order/get. This buffer
+// pads the show window for late payments / unpaid→paid lag.
+export const SHOW_SYNC_BUFFER_MS = 6 * 60 * 60 * 1000
+
+/** True once a (newest-first) page contains an order placed before sinceMs — the signal
+ *  to stop paging order/list for a time-bounded pull. */
+export function pageReachedSince(orders: MappedOrder[], sinceMs: number): boolean {
+  return orders.some((o) => o.placedAt != null && o.placedAt < sinceMs)
+}
+
+/** Merge order/get detail (roomId + video receipt ts) into the list-derived orders, keyed
+ *  by externalOrderId. Returns new objects; inputs untouched. */
+export function applyOrderDetails(orders: MappedOrder[], details: Map<string, OrderDetail>): MappedOrder[] {
+  return orders.map((o) => {
+    const d = details.get(o.externalOrderId)
+    if (!d) return o
+    return {
+      ...o,
+      roomId: d.roomId ?? o.roomId,
+      videoReceiptTs: d.receiptTsMs ?? o.videoReceiptTs,
+    }
+  })
+}
+
+/** Keep orders belonging to a show: room id in `roomIds`, OR room-less orders placed inside
+ *  the [startMs, endMs] window (cancelled / non-auction orders carry no room id). */
+export function filterOrdersForShow(
+  orders: MappedOrder[],
+  roomIds: string[],
+  startMs: number,
+  endMs: number,
+): MappedOrder[] {
+  const rooms = new Set(roomIds)
+  return orders.filter((o) => {
+    if (o.roomId && rooms.has(o.roomId)) return true
+    if (!o.roomId && o.placedAt != null && o.placedAt >= startMs && o.placedAt <= endMs) return true
+    return false
+  })
+}
