@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { openDb, upsertOrders, getSnapshot, setCost, setTranscript, setPicked, getShows, setShows, getShowNames, setShowNames, importLegacy, isMigrated, rekeyProductTemplates } from '../db'
+import { openDb, upsertOrders, getSnapshot, setCost, setTranscript, setPicked, getShows, setShows, getShowNames, setShowNames, importLegacy, isMigrated, rekeyProductTemplates, getOrdersForRestack, getOrdersByFulfillUnit, setPacked } from '../db'
 import { mapTiktokOrder } from '../tiktok-orders'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -123,6 +123,36 @@ describe('db: roomId', () => {
         price: { cents: 100, formatted: '$1' }, paymentStatus: 'paid', createdAt: 100,
       }))
     expect(getSnapshot(db).orders[0]!.roomId).toBe('7653571353936759566')
+    db.close()
+  })
+})
+
+describe('db: v2 migration + restack queries', () => {
+  it('migration adds fulfill_unit_id/tracking_no and exposes restack queries', () => {
+    const db = openDb(':memory:')
+    upsertOrders(db, [
+      {
+        externalOrderId: 'o1', status: 'TO_SHIP', statusCode: '111', buyerHandle: 'amy', buyerName: 'Amy',
+        subtotalCents: 0, shippingCents: 0, shippingDiscountCents: 0, platformDiscountCents: 0,
+        sellerDiscountCents: 0, taxCents: 0, originSaleCents: 0, totalCents: 0,
+        address: null, carrier: null, tracking: 'TRK1', liveTag: null, isAuction: false, isReversed: false,
+        placedAt: 100, roomId: 'r1', videoReceiptTs: null,
+        fulfillment: { fulfillUnitId: 'U1', trackingNo: 'TRK1', isSplitOrCombined: false },
+        items: [{ productId: 'p1', skuId: 's1', productName: 'Pull (Bin A)', variant: '', quantity: 1, unitPriceCents: 0, totalPriceCents: 0, imageUrl: '', orderLineIds: [] }],
+      },
+    ] as never, Date.now())
+
+    const rows = getOrdersForRestack(db)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ orderId: 'o1', buyer: 'amy', placedAt: 100, fulfillUnitId: 'U1', trackingNo: 'TRK1' })
+    expect(rows[0]!.items[0]).toMatchObject({ sku: 's1', productName: 'Pull (Bin A)', quantity: 1 })
+
+    const byUnit = getOrdersByFulfillUnit(db)
+    expect(byUnit.get('U1')).toEqual(['o1'])
+
+    setPacked(db, 'o1', true, Date.now())
+    const packed = db.prepare('SELECT packed_at FROM picks WHERE order_id = ?').get('o1') as { packed_at: number | null }
+    expect(packed.packed_at).toBeTruthy()
     db.close()
   })
 })

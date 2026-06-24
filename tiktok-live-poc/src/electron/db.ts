@@ -58,23 +58,66 @@ export interface DbSnapshot {
   showNames: ShowNameStore
 }
 
+function hasColumn(db: Db, table: string, col: string): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+  return rows.some((r) => r.name === col)
+}
+
+/** Additive v2 migration: order tie columns, pack timestamp, label tables. Idempotent. */
+function migrateV2(db: Db): void {
+  if (!hasColumn(db, 'orders', 'fulfill_unit_id')) db.exec('ALTER TABLE orders ADD COLUMN fulfill_unit_id TEXT')
+  if (!hasColumn(db, 'orders', 'tracking_no')) db.exec('ALTER TABLE orders ADD COLUMN tracking_no TEXT')
+  if (!hasColumn(db, 'picks', 'packed_at')) db.exec('ALTER TABLE picks ADD COLUMN packed_at INTEGER')
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_orders_fulfill_unit ON orders(fulfill_unit_id);
+    CREATE TABLE IF NOT EXISTS label_batch (
+      id TEXT PRIMARY KEY, captured_at INTEGER, room_id TEXT, doc_url TEXT, pdf_path TEXT,
+      page_count INTEGER, unit_count INTEGER, request_json TEXT, stats_json TEXT, status TEXT
+    );
+    CREATE TABLE IF NOT EXISTS label_page (
+      batch_id TEXT, page_index INTEGER, fulfill_unit_id TEXT, order_id TEXT,
+      tracking_decoded TEXT, match_method TEXT, PRIMARY KEY (batch_id, page_index)
+    );
+  `)
+  // backfill tie columns from sale_json for rows synced before v2
+  backfillTieColumns(db)
+  db.prepare("INSERT INTO meta (k,v) VALUES ('schema_version','2') ON CONFLICT(k) DO UPDATE SET v='2'").run()
+}
+
+function backfillTieColumns(db: Db): void {
+  const rows = db.prepare('SELECT order_id, sale_json FROM orders WHERE fulfill_unit_id IS NULL').all() as { order_id: string; sale_json: string }[]
+  const up = db.prepare('UPDATE orders SET fulfill_unit_id=?, tracking_no=? WHERE order_id=?')
+  const run = db.transaction(() => {
+    for (const r of rows) {
+      try {
+        const sale = JSON.parse(r.sale_json) as { fulfillment?: { fulfillUnitId?: string; trackingNo?: string } }
+        const fu = sale.fulfillment?.fulfillUnitId ?? null
+        const tn = sale.fulfillment?.trackingNo ?? null
+        if (fu || tn) up.run(fu, tn, r.order_id)
+      } catch { /* ignore */ }
+    }
+  })
+  run()
+}
+
 export function openDb(path: string): Db {
   const db = new Database(path)
   db.pragma('journal_mode = WAL')
   db.exec(SCHEMA)
   db.prepare("INSERT OR IGNORE INTO meta (k, v) VALUES ('schema_version', '1')").run()
+  migrateV2(db)
   return db
 }
 
 const UPSERT_ORDER = `
-INSERT INTO orders (order_id,status,status_code,buyer_handle,buyer_name,total_cents,subtotal_cents,shipping_cents,shipping_discount_cents,platform_discount_cents,seller_discount_cents,tax_cents,origin_sale_cents,live_tag,room_id,is_auction,is_reversed,placed_at,video_receipt_ts,payment_status,sale_json,synced_at)
-VALUES (@order_id,@status,@status_code,@buyer_handle,@buyer_name,@total_cents,@subtotal_cents,@shipping_cents,@shipping_discount_cents,@platform_discount_cents,@seller_discount_cents,@tax_cents,@origin_sale_cents,@live_tag,@room_id,@is_auction,@is_reversed,@placed_at,@video_receipt_ts,@payment_status,@sale_json,@synced_at)
+INSERT INTO orders (order_id,status,status_code,buyer_handle,buyer_name,total_cents,subtotal_cents,shipping_cents,shipping_discount_cents,platform_discount_cents,seller_discount_cents,tax_cents,origin_sale_cents,live_tag,room_id,is_auction,is_reversed,placed_at,video_receipt_ts,payment_status,sale_json,synced_at,fulfill_unit_id,tracking_no)
+VALUES (@order_id,@status,@status_code,@buyer_handle,@buyer_name,@total_cents,@subtotal_cents,@shipping_cents,@shipping_discount_cents,@platform_discount_cents,@seller_discount_cents,@tax_cents,@origin_sale_cents,@live_tag,@room_id,@is_auction,@is_reversed,@placed_at,@video_receipt_ts,@payment_status,@sale_json,@synced_at,@fulfill_unit_id,@tracking_no)
 ON CONFLICT(order_id) DO UPDATE SET
   status=@status,status_code=@status_code,buyer_handle=@buyer_handle,buyer_name=@buyer_name,
   total_cents=@total_cents,subtotal_cents=@subtotal_cents,shipping_cents=@shipping_cents,shipping_discount_cents=@shipping_discount_cents,
   platform_discount_cents=@platform_discount_cents,seller_discount_cents=@seller_discount_cents,tax_cents=@tax_cents,origin_sale_cents=@origin_sale_cents,
   live_tag=@live_tag,room_id=@room_id,is_auction=@is_auction,is_reversed=@is_reversed,placed_at=@placed_at,video_receipt_ts=@video_receipt_ts,
-  payment_status=@payment_status,sale_json=@sale_json,synced_at=@synced_at`
+  payment_status=@payment_status,sale_json=@sale_json,synced_at=@synced_at,fulfill_unit_id=@fulfill_unit_id,tracking_no=@tracking_no`
 
 export function upsertOrders(db: Db, orders: MappedOrder[], now: number): void {
   const up = db.prepare(UPSERT_ORDER)
@@ -95,6 +138,8 @@ export function upsertOrders(db: Db, orders: MappedOrder[], now: number): void {
         is_auction: o.isAuction ? 1 : 0, is_reversed: o.isReversed ? 1 : 0,
         placed_at: o.placedAt, video_receipt_ts: o.videoReceiptTs,
         payment_status: sale.paymentStatus, sale_json: JSON.stringify(stripForStorage(sale)), synced_at: now,
+        fulfill_unit_id: o.fulfillment?.fulfillUnitId ?? null,
+        tracking_no: o.fulfillment?.trackingNo ?? o.tracking ?? null,
       })
       delItems.run(o.externalOrderId)
       o.items.forEach((it, i) =>
@@ -228,4 +273,48 @@ export function rekeyProductTemplates(db: Db, now: number): void {
     }
   })
   run()
+}
+
+export interface RestackOrderRow {
+  orderId: string
+  buyer: string
+  placedAt: number | null
+  fulfillUnitId: string | null
+  trackingNo: string | null
+  items: { sku: string | null; productName: string | null; quantity: number | null }[]
+}
+
+export function getOrdersForRestack(db: Db): RestackOrderRow[] {
+  const orders = db.prepare('SELECT order_id, buyer_handle, placed_at, fulfill_unit_id, tracking_no FROM orders').all() as
+    { order_id: string; buyer_handle: string | null; placed_at: number | null; fulfill_unit_id: string | null; tracking_no: string | null }[]
+  const itemStmt = db.prepare('SELECT sku_id, product_name, quantity FROM order_items WHERE order_id = ? ORDER BY line_index')
+  return orders.map((o) => ({
+    orderId: o.order_id,
+    buyer: o.buyer_handle ?? '',
+    placedAt: o.placed_at,
+    fulfillUnitId: o.fulfill_unit_id,
+    trackingNo: o.tracking_no,
+    items: (itemStmt.all(o.order_id) as { sku_id: string | null; product_name: string | null; quantity: number | null }[])
+      .map((it) => ({ sku: it.sku_id, productName: it.product_name, quantity: it.quantity })),
+  }))
+}
+
+export function getOrdersByFulfillUnit(db: Db): Map<string, string[]> {
+  const rows = db.prepare('SELECT order_id, fulfill_unit_id FROM orders WHERE fulfill_unit_id IS NOT NULL ORDER BY placed_at').all() as
+    { order_id: string; fulfill_unit_id: string }[]
+  const m = new Map<string, string[]>()
+  for (const r of rows) {
+    const arr = m.get(r.fulfill_unit_id)
+    if (arr) arr.push(r.order_id)
+    else m.set(r.fulfill_unit_id, [r.order_id])
+  }
+  return m
+}
+
+export function setPacked(db: Db, orderId: string, packed: boolean, now: number): void {
+  if (packed) {
+    db.prepare('INSERT INTO picks (order_id, packed_at) VALUES (?, ?) ON CONFLICT(order_id) DO UPDATE SET packed_at=excluded.packed_at').run(orderId, now)
+  } else {
+    db.prepare('UPDATE picks SET packed_at=NULL WHERE order_id=?').run(orderId)
+  }
 }
