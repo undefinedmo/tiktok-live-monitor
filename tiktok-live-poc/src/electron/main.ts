@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session, Menu, nativeTheme } from 'electron'
+import { app, BrowserWindow, ipcMain, session, Menu, nativeTheme, net } from 'electron'
 import { join } from 'node:path'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { gunzipSync } from 'node:zlib'
@@ -10,7 +10,10 @@ import { AuctionResults } from '../core/auctionResults'
 import { decodeChat } from '../core/chat'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
 import { pullTiktokOrders, fetchOrderDetails, pullTiktokOrdersSince, applyOrderDetails, filterOrdersForShow, SHOW_SYNC_BUFFER_MS } from './tiktok-orders'
-import { openDb, upsertOrders, getSnapshot, setCost, setTranscript, setPicked, getShows, setShows, importLegacy, rekeyProductTemplates, setShowNames, type LegacyBlob } from './db'
+import { openDb, upsertOrders, getSnapshot, setCost, setTranscript, setPicked, getShows, setShows, importLegacy, rekeyProductTemplates, setShowNames, getOrdersByFulfillUnit, insertLabelBatch, insertLabelPages, type LegacyBlob } from './db'
+import { parseGenerateCapture } from '../core/restack/capture'
+import { tieByGenerateOrder } from '../core/restack/tie'
+import { pdfPageCount } from './label-pdf'
 import { parseShowList, roomNameMap, type ShowListing } from '../core/showList'
 import { buildClipMedia } from './clip'
 import type { LiveEvent, StatusEvent } from '../core/types'
@@ -119,6 +122,12 @@ function capture(file: string | null, rec: unknown) {
   if (!file) return
   try { appendFileSync(file, JSON.stringify(rec) + '\n') } catch { /* ignore */ }
 }
+
+function labelsDir(): string {
+  const d = join(app.getPath('userData'), 'labels')
+  try { mkdirSync(d, { recursive: true }) } catch { /* ignore */ }
+  return d
+}
 const debug = (line: string) => { if (process.env.TT_DEBUG) console.log(line) }
 
 function send(ev: LiveEvent) {
@@ -195,7 +204,12 @@ function openSellerLogin() {
   seller = new BrowserWindow({
     width: 1100, height: 820, backgroundColor: '#07080b', autoHideMenuBar: true,
     title: 'TikTok Seller Center — log in for Sync',
-    webPreferences: { session: session.fromPartition(TT_PARTITION) },
+    webPreferences: {
+      session: session.fromPartition(TT_PARTITION),
+      contextIsolation: false,
+      sandbox: false,
+      preload: join(__dirname, 'preload-seller.cjs'),
+    },
   })
   seller.on('closed', () => { seller = null })
   void seller.loadURL('https://seller-us.tiktok.com/order')
@@ -203,6 +217,41 @@ function openSellerLogin() {
 
 ipcMain.on('tt-status', (_e, s: { status: StatusEvent['status']; detail?: string }) => {
   send({ kind: 'status', status: s.status, detail: s.detail })
+})
+
+ipcMain.on('tt-label-batch', async (_e, msg: { url?: string; reqBody?: string; respBody?: string }) => {
+  if (!db) return
+  const cap = parseGenerateCapture(msg?.reqBody ?? '', msg?.respBody ?? '')
+  if (!cap.fulfillUnitIds.length || !cap.docUrl) { debug('[tt] label batch: missing units or doc_url'); return }
+  const batchId = String(Date.now())
+  const pdfPath = join(labelsDir(), `${batchId}.pdf`)
+  try {
+    // doc_url is pre-signed (skipCookie=true); fetch via electron net.
+    const res = await net.fetch(cap.docUrl)
+    if (!res.ok) throw new Error(`doc_url HTTP ${res.status}`)
+    const bytes = new Uint8Array(await res.arrayBuffer())
+    if (bytes.length < 5 || Buffer.from(bytes.slice(0, 5)).toString() !== '%PDF-') throw new Error('not a PDF')
+    writeFileSync(pdfPath, bytes)
+    const pageCount = await pdfPageCount(bytes)
+    const ties = tieByGenerateOrder(cap.fulfillUnitIds, getOrdersByFulfillUnit(db))
+    const status = pageCount === cap.fulfillUnitIds.length ? 'tied' : 'error' // count mismatch -> needs barcode (Task 12)
+    insertLabelBatch(db, {
+      id: batchId, capturedAt: Date.now(), roomId: pollRoomId ?? null, docUrl: cap.docUrl, pdfPath,
+      pageCount, unitCount: cap.fulfillUnitIds.length, status,
+      requestJson: JSON.stringify(cap.fulfillUnitIds), statsJson: JSON.stringify(cap.statsUnitIds),
+    })
+    insertLabelPages(db, batchId, ties)
+    debug(`[tt] label batch ${batchId}: ${pageCount}p / ${cap.fulfillUnitIds.length}u status=${status}`)
+    viewer?.webContents.send('tt-label-batch-ready', { batchId, pageCount, unitCount: cap.fulfillUnitIds.length, status })
+  } catch (e) {
+    insertLabelBatch(db, {
+      id: batchId, capturedAt: Date.now(), roomId: pollRoomId ?? null, docUrl: cap.docUrl, pdfPath: null,
+      pageCount: 0, unitCount: cap.fulfillUnitIds.length, status: 'error',
+      requestJson: JSON.stringify(cap.fulfillUnitIds), statsJson: JSON.stringify(cap.statsUnitIds),
+    })
+    debug(`[tt] label batch ${batchId} failed: ${(e as Error).message}`)
+    viewer?.webContents.send('tt-label-batch-ready', { batchId, status: 'error', error: (e as Error).message })
+  }
 })
 
 // Viewer → monitor: post a chat message (only the monitor window has the SDK-signed fetch).
