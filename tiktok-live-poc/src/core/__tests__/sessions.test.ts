@@ -126,3 +126,17 @@ describe('deriveShowsFromOrders', () => {
     expect(deriveShowsFromOrders([])).toEqual({ shows: [], showIdByOrder: new Map() })
   })
 })
+
+describe('deriveShowsFromOrders with names', () => {
+  it('titles a room-matched show with the real name, others keep the date title', () => {
+    const names = new Map([
+      ['room-1', { sessionId: 's1', name: 'Alo Yoga — Final Sale', startMs: 1000 }],
+    ])
+    const { shows } = deriveShowsFromOrders([
+      sale('a', { roomId: 'room-1', createdAt: 1000 }),
+      sale('b', { roomId: 'room-2', createdAt: 2000 }),
+    ], names)
+    expect(shows.find((s) => s.id === 'room-1')!.title).toBe('Alo Yoga — Final Sale')
+    expect(shows.find((s) => s.id === 'room-2')!.title).toMatch(/^LIVE · /)
+  })
+})

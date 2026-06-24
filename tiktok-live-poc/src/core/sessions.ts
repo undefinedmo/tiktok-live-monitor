@@ -4,6 +4,7 @@
 // Zero electron/DOM deps so it stays unit-testable.
 
 import type { Sale } from './types'
+import type { RoomNameMeta } from './showList'
 
 export const SESSION_GAP_MS = 2.5 * 60 * 60 * 1000 // 2.5h — same threshold live-ledger uses
 
@@ -61,7 +62,7 @@ export interface DerivedShow {
  *  show whose time window they fall within (or nearest, within the session gap); any that match no
  *  room are time-gap clustered into derived date-titled shows.
  *  Returns the shows (most recent first) plus an orderId -> showId map for filtering. */
-export function deriveShowsFromOrders(sales: Sale[]): {
+export function deriveShowsFromOrders(sales: Sale[], names?: Map<string, RoomNameMeta>): {
   shows: DerivedShow[]
   showIdByOrder: Map<string, string>
 } {
@@ -135,7 +136,8 @@ export function deriveShowsFromOrders(sales: Sale[]): {
     // Title by date/time. The order's liveTag (sales_source_live_tag) is generic boilerplate in
     // real data ("Order contains one or more items from LIVE streams by …"), so it makes a useless
     // per-show label; the start date/time is the distinguishing, scannable title.
-    shows.push({ id, title: deriveTitle(startMs), startMs, endMs, count: g.length })
+    const named = names?.get(id)
+    shows.push({ id, title: named ? named.name : deriveTitle(startMs), startMs, endMs, count: g.length })
   }
 
   shows.sort((a, b) => b.startMs - a.startMs)
