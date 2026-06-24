@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { mapTiktokOrder, orderToSale, SHOW_SYNC_BUFFER_MS, pageReachedSince, applyOrderDetails, filterOrdersForShow } from '../tiktok-orders'
+import { mapTiktokOrder, orderToSale, SHOW_SYNC_BUFFER_MS, pageReachedSince, applyOrderDetails, filterOrdersForShow, pullTiktokOrdersSince } from '../tiktok-orders'
 import type { MappedOrder, OrderDetail } from '../tiktok-orders'
 
 const raw = {
@@ -236,5 +236,34 @@ describe('filterOrdersForShow', () => {
   it('treats an empty-string roomId as room-less (kept only inside the window)', () => {
     expect(filterOrdersForShow([ord('e', 15_000, '')], ['room-1'], startMs, endMs).map((o) => o.externalOrderId)).toEqual(['e'])
     expect(filterOrdersForShow([ord('f', 999_999, '')], ['room-1'], startMs, endMs)).toEqual([])
+  })
+})
+
+describe('pullTiktokOrdersSince', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  function page(orders: { id: string; t: number }[], has_more: boolean) {
+    const main_orders = orders.map((o) => ({
+      main_order_id: o.id,
+      order_status_module: [{ main_order_status: '102' }],
+      trade_order_module: { create_time: o.t }, // seconds
+      price_module: {}, sku_module: [],
+    }))
+    return { ok: true, text: async () => JSON.stringify({ code: 0, data: { main_orders, total_count: 99, has_more } }) }
+  }
+
+  it('stops paging once a page reaches before sinceMs', async () => {
+    const sinceSec = 1_000_000
+    const sinceMs = sinceSec * 1000
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(page([{ id: 'a', t: sinceSec + 500 }, { id: 'b', t: sinceSec + 400 }], true))
+      .mockResolvedValueOnce(page([{ id: 'c', t: sinceSec + 100 }, { id: 'd', t: sinceSec - 100 }], true))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await pullTiktokOrdersSince('cookie=1', sinceMs)
+
+    expect(fetchMock).toHaveBeenCalledTimes(2) // stopped after the page containing 'd'
+    expect(res.stopped).toBe(true)
+    expect(res.orders.map((o) => o.externalOrderId)).toEqual(['a', 'b', 'c', 'd'])
   })
 })

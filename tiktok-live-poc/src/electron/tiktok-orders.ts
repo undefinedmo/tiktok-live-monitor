@@ -381,3 +381,46 @@ export function filterOrdersForShow(
     return false
   })
 }
+
+/** Time-bounded order pull: pages order/list newest-first (sort_info '6') and stops once a
+ *  page contains an order placed before `sinceMs`. Cookie auth only — same as pullTiktokOrders.
+ *  Returns every order pulled up to (and including) the boundary page; caller filters/enriches. */
+export async function pullTiktokOrdersSince(
+  cookieHeader: string,
+  sinceMs: number,
+  onPage?: (pulled: number, total: number) => void,
+): Promise<{ orders: MappedOrder[]; total: number; stopped: boolean }> {
+  const all: MappedOrder[] = []
+  let offset = 0, total = 0, guard = 0, stopped = false
+  const count = 50
+  while (guard < 400) {
+    guard++
+    const res = await fetch(ORDER_LIST_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json', accept: 'application/json',
+        origin: 'https://seller-us.tiktok.com', referer: 'https://seller-us.tiktok.com/order',
+        'user-agent': UA, cookie: cookieHeader,
+      },
+      body: JSON.stringify({
+        sort_info: '6', search_condition: { condition_list: {} },
+        count, pagination_type: 0, offset, extra_data_list: TT_ORDER_EXTRA_DATA,
+      }),
+    })
+    if (!res.ok) throw new Error(`order/list HTTP ${res.status}`)
+    const text = await res.text()
+    const j = JSON.parse(text.replace(/"live_room_id":\s*(\d+)/g, '"live_room_id":"$1"')) as Raw
+    if (j.code !== 0 && j.code != null) {
+      throw new Error(`order/list code ${j.code} — ${String(j.message ?? 'rejected')} (session may be expired — re-open the monitor and log in)`)
+    }
+    const data = (j.data as Raw) || {}
+    const batch = ((data.main_orders as Raw[]) || []).map(mapTiktokOrder)
+    all.push(...batch)
+    total = Number(data.total_count || 0)
+    onPage?.(all.length, total)
+    if (pageReachedSince(batch, sinceMs)) { stopped = true; break }
+    offset += count
+    if (!(data.has_more && batch.length && offset < total + count)) break
+  }
+  return { orders: all, total, stopped }
+}
