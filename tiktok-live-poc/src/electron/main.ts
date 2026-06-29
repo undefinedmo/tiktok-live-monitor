@@ -133,6 +133,16 @@ function labelsDir(): string {
 }
 const debug = (line: string) => { if (process.env.TT_DEBUG) console.log(line) }
 
+// ── Label-latency instrumentation (TT_LAT=1 or TT_DEBUG=1) ───────────────────
+// Times a live sale from the WS sold-count tick (A) → poll fired/debounced (B) →
+// REST auction_result row arrives (C) → label queued/spooled (E), all on one
+// process clock. Hop A's upstream (gavel→socket) is TikTok-side and unmeasurable
+// here; we anchor at the tick. Zero overhead when the flag is off.
+const TIMING = !!(process.env.TT_LAT || process.env.TT_DEBUG)
+const lat = (line: string) => { if (TIMING) console.log(`[lat ${Date.now()}] ${line}`) }
+let lastWsTickAt = 0 // ms of the most recent WS sold-count tick
+const saleSeenAt = new Map<string, number>() // item# → ms when main first produced the sale row
+
 // Send to the dashboard ONLY when it's alive. `viewer?.` guards null but not a
 // destroyed window — sending to a closed webContents throws in main (uncaught →
 // the native crash dialog), which is what made the app unkillable on close.
@@ -319,7 +329,15 @@ ipcMain.on('tt-ws-frame', (_e, msg: { url?: string; data?: Uint8Array }) => {
       // a product's sold-count just ticked up on the WS → fetch the new sale immediately
       // (don't wait for the 3s poll cycle) so the label prints right away. Debounced.
       const t = Date.now()
-      if (t - lastSalePollNow > 600) { lastSalePollNow = t; monitor?.webContents.send('tt-poll-now') }
+      lastWsTickAt = t
+      lat(`A ws-tick product=${ev.productId} +${ev.delta}`)
+      if (t - lastSalePollNow > 600) {
+        lastSalePollNow = t
+        lat('B poll-now FIRED')
+        monitor?.webContents.send('tt-poll-now')
+      } else {
+        lat(`B poll-now DEBOUNCED (${Math.round(600 - (t - lastSalePollNow))}ms until next allowed)`)
+      }
     }
     send(ev)
   }
@@ -349,6 +367,17 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
   } else if (msg?.endpoint === 'auction_result') {
     const update = auctionResults.ingest(json, now)
     debug(`[tt] sales: +${update.newSales.length} new, ${update.totalSales} total, ${update.uniqueBuyers} buyers, ${update.failedPayments.length} failed`)
+    if (TIMING && update.newSales.length) {
+      lat(`C rest auction_result +${update.newSales.length} new (Δws-tick=${lastWsTickAt ? now - lastWsTickAt : '?'}ms)`)
+      for (const s of update.newSales) {
+        const item = (s.skuDesc ?? '').replace(/^#/, '')
+        if (item) {
+          saleSeenAt.set(item, now)
+          if (saleSeenAt.size > 500) saleSeenAt.delete(saleSeenAt.keys().next().value!) // bound the debug map
+        }
+        lat(`  C.row #${item} created=${now - s.createdAt}ms-ago paid=${s.paymentStatus}`)
+      }
+    }
     send(update)
   } else if (msg?.endpoint === 'room_status') {
     const url = (json as { data?: { live_stream_url?: string } })?.data?.live_stream_url
@@ -707,9 +736,20 @@ async function printLabelJob(args: { labelData: LabelData; printerName: string; 
 ipcMain.handle('print-label', (_e, args: { labelData: LabelData; printerName: string; template?: LabelTemplate }) => {
   // Serialize: the single hidden window renders+prints one label at a time, and
   // auto-print can fire several fresh sales at once. Chain so they queue in order.
+  const item = String(args?.labelData?.itemNumber ?? '')
+  const seen = TIMING ? saleSeenAt.get(item) : undefined
+  const queuedAt = Date.now()
+  lat(`E print QUEUED #${item}${seen ? ` (Δrest→queue=${queuedAt - seen}ms, Δws-tick=${lastWsTickAt ? queuedAt - lastWsTickAt : '?'}ms)` : ' (no live origin — manual/range)'}`)
   const run = printChain.then(() => printLabelJob(args))
   printChain = run.catch(() => {})
-  return run
+  return run.then((r) => {
+    if (TIMING) {
+      const done = Date.now()
+      lat(`E print DONE #${item} ok=${r.success} spool=${done - queuedAt}ms${seen ? ` · total(rest→label)=${done - seen}ms` : ''}`)
+      saleSeenAt.delete(item)
+    }
+    return r
+  })
 })
 
 // ── Picklist / label batch IPC handlers ──────────────────────────────────────

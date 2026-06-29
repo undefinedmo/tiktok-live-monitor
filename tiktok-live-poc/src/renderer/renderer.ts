@@ -111,6 +111,7 @@ let pinnedEndMs: number | undefined
 let serverTimeOffsetMs = 0 // from pin/get (resp_server_time − client clock); corrects the auction countdown
 let gmvFromWs = false
 let seedMaxCreatedAt: number | null = null
+let lastSalesSig = '' // signature of the last sales poll — skip heavy re-renders on quiet polls
 const rosterProducts = new Map<string, RosterProduct>()
 let lastByProduct: ProductRollup[] = []
 const stats = { sales: '0', gmv: '$0.00', pace: '—', buyers: '0', failed: '0', gpm: '—' }
@@ -1842,11 +1843,39 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       if (ev.current?.winUsername) renderAuction(ev.current)
       break
     case 'sales': {
+      // ── PRINT FIRST ──────────────────────────────────────────────────────
+      // Dispatch labels before any rendering/DB work so a label never waits on
+      // UI. printSale is async (IPC) — it fires immediately and the work happens
+      // in main; everything below is rendering that can follow.
+      // Skip the initial backfill (seed on first poll), then act on genuinely-new sales.
+      const maxCreated = ev.recentSales.reduce((m, s) => Math.max(m, s.createdAt), 0)
+      let recentForRecap: Sale | undefined
+      if (seedMaxCreatedAt === null) {
+        seedMaxCreatedAt = maxCreated
+      } else {
+        // Auto-print every genuinely-new sale (skip the connect-time backlog). Print
+        // regardless of payment — label at the win, even if payment later fails. The roster's
+        // pinned card does NOT advance per lot, so auction_result newSales is the reliable
+        // per-sale signal (verified live: it emits +1 per sale; the pinned stays put).
+        const freshSales = ev.newSales.filter((s) => s.createdAt > seedMaxCreatedAt!)
+        if (autoPrint && selectedPrinter) for (const s of freshSales) printSale(s)
+        recentForRecap = freshSales.find((s) => s.paymentStatus !== 'failed' && Date.now() - s.createdAt < 60000)
+        seedMaxCreatedAt = Math.max(seedMaxCreatedAt, maxCreated)
+      }
+
+      // ── THEN UI / persistence ────────────────────────────────────────────
+      // Re-render the heavy tables (ledger/picklist) and re-persist the show only
+      // when the sale set actually changed — a 3s poll that returns nothing new
+      // (or no status change) would otherwise re-render + DB-write for nothing.
+      const salesSig = `${ev.totalSales}|${ev.totalCents}|${ev.failedPayments.length}|${ev.newSales.length}`
+      const salesChanged = salesSig !== lastSalesSig
+      lastSalesSig = salesSig
+
       lastByProduct = ev.byProduct
       renderProductsTable()
       allSales = ev.recentSales
-      // persist this show's sales so it can be re-selected in the Ledger/Picklist filter later
-      if (currentShow) {
+      if (currentShow && salesChanged) {
+        // persist this show's sales so it can be re-selected in the Ledger/Picklist filter later
         showStore = upsertShow(showStore, currentShow, ev.recentSales, Date.now())
         void window.dbAPI?.setShows(showStore)
         refreshShowOptions()
@@ -1860,23 +1889,8 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       renderStats()
       $('feedCount').title = `${ev.totalSales} sales · $${(ev.totalCents / 100).toFixed(0)}`
       $('feedCount').textContent = 'v1.2.5'
-      // Skip the initial backfill (seed on first poll), then act on genuinely-new sales.
-      const maxCreated = ev.recentSales.reduce((m, s) => Math.max(m, s.createdAt), 0)
-      if (seedMaxCreatedAt === null) {
-        seedMaxCreatedAt = maxCreated
-      } else {
-        // Auto-print every genuinely-new sale (skip the connect-time backlog). Print
-        // regardless of payment — label at the win, even if payment later fails. The roster's
-        // pinned card does NOT advance per lot, so auction_result newSales is the reliable
-        // per-sale signal (verified live: it emits +1 per sale; the pinned stays put).
-        const freshSales = ev.newSales.filter((s) => s.createdAt > seedMaxCreatedAt!)
-        if (autoPrint && selectedPrinter) for (const s of freshSales) printSale(s)
-        const recent = freshSales.find((s) => s.paymentStatus !== 'failed' && Date.now() - s.createdAt < 60000)
-        if (recent) void transcribeSale(recent) // AI transcript for the latest fresh non-failed sale
-        seedMaxCreatedAt = Math.max(seedMaxCreatedAt, maxCreated)
-      }
-      renderLedger()
-      renderPicklist()
+      if (recentForRecap) void transcribeSale(recentForRecap) // AI transcript — after print + render
+      if (salesChanged) { renderLedger(); renderPicklist() }
       break
     }
     case 'stream':
