@@ -38,6 +38,9 @@ declare global {
       savePrinter: (name: string) => Promise<boolean>
       print: (labelData: LabelData, printerName: string, template: LabelTemplate) => Promise<{ success: boolean; error?: string }>
     }
+    updateAPI?: {
+      onReady: (cb: (info: { version: string }) => void) => void
+    }
     recapAPI?: {
       enabled: () => Promise<{ enabled: boolean; model: string }>
       transcribe: (payload: { audio: Uint8Array; productName?: string; structured?: boolean }) => Promise<{ text?: string; fields?: LedgerTranscript; error?: string }>
@@ -612,6 +615,15 @@ async function setupPrinting() {
   })
 }
 void setupPrinting()
+
+// Auto-update: main downloads at launch and installs on quit; just surface the
+// "Update ready" indicator (next to the version) once the download completes.
+window.updateAPI?.onReady((info) => {
+  const u = document.getElementById('updateReady')
+  if (!u) return
+  u.style.display = ''
+  u.title = `v${info.version} downloaded — installs when you close the app`
+})
 
 // ── label print preview ──────────────────────────────────────────────────────
 // Renders the REAL print HTML (labelHtml) for a representative sale, scaled up, so the
@@ -1847,7 +1859,7 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       if (!gmvFromWs) stats.gmv = `$${(ev.totalCents / 100).toFixed(2)}`
       renderStats()
       $('feedCount').title = `${ev.totalSales} sales · $${(ev.totalCents / 100).toFixed(0)}`
-      $('feedCount').textContent = 'v1.2.4'
+      $('feedCount').textContent = 'v1.2.5'
       // Skip the initial backfill (seed on first poll), then act on genuinely-new sales.
       const maxCreated = ev.recentSales.reduce((m, s) => Math.max(m, s.createdAt), 0)
       if (seedMaxCreatedAt === null) {

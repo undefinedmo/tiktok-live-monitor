@@ -1,13 +1,17 @@
 {
-  "name": "tiktok-live-poc",
-  "version": "0.0.0",
+  "name": "tiktok-live-monitor",
+  "version": "1.2.5",
   "private": true,
   "type": "module",
+  "description": "TikTok Shop live sales monitor",
+  "author": "LuxeSense",
   "main": "dist/main.cjs",
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
     "build": "node esbuild.mjs",
+    "build:win": "node esbuild.mjs && electron-builder --win",
+    "publish": "node esbuild.mjs && electron-builder --publish always",
     "dev": "electron-rebuild -w better-sqlite3 && node esbuild.mjs && electron .",
     "rebuild:node": "npm rebuild better-sqlite3"
   },
@@ -16,13 +20,44 @@
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.19.20",
     "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
     "esbuild": "^0.24.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.0",
+    "electron-updater": "^6.8.3",
     "flv.js": "^1.6.2",
     "pdf-lib": "^1.17.1"
+  },
+  "build": {
+    "appId": "com.sellerfolio.tiktokmonitor",
+    "productName": "TikTok Live Monitor",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "undefinedmo",
+      "repo": "tiktok-live-monitor"
+    }
   }
 }

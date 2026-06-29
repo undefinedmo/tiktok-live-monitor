@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, session, Menu, nativeTheme, net } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import { join } from 'node:path'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, rmSync, writeFileSync } from 'node:fs'
 import { gunzipSync } from 'node:zlib'
@@ -132,8 +133,16 @@ function labelsDir(): string {
 }
 const debug = (line: string) => { if (process.env.TT_DEBUG) console.log(line) }
 
+// Send to the dashboard ONLY when it's alive. `viewer?.` guards null but not a
+// destroyed window — sending to a closed webContents throws in main (uncaught →
+// the native crash dialog), which is what made the app unkillable on close.
+function viewerSend(channel: string, ...args: unknown[]) {
+  if (viewer && !viewer.isDestroyed() && !viewer.webContents.isDestroyed()) {
+    viewer.webContents.send(channel, ...args)
+  }
+}
 function send(ev: LiveEvent) {
-  viewer?.webContents.send('tt-live-event', ev)
+  viewerSend('tt-live-event', ev)
 }
 
 function createViewer() {
@@ -155,6 +164,10 @@ function createViewer() {
     })
   }
   void viewer.loadFile(join(__dirname, 'index.html'))
+  // The dashboard IS the app. When it closes: clear the ref (so late WS/poll
+  // events stop firing at a destroyed webContents) and quit so the hidden
+  // monitor/seller windows go too and the process actually exits.
+  viewer.on('closed', () => { viewer = null; app.quit() })
 }
 
 function createMonitor() {
@@ -244,7 +257,7 @@ ipcMain.on('tt-label-batch', async (_e, msg: { url?: string; reqBody?: string; r
     })
     insertLabelPages(db, batchId, ties)
     debug(`[tt] label batch ${batchId}: ${pageCount}p / ${cap.fulfillUnitIds.length}u status=${status}`)
-    viewer?.webContents.send('tt-label-batch-ready', { batchId, pageCount, unitCount: cap.fulfillUnitIds.length, status })
+    viewerSend('tt-label-batch-ready', { batchId, pageCount, unitCount: cap.fulfillUnitIds.length, status })
   } catch (e) {
     insertLabelBatch(db, {
       id: batchId, capturedAt: Date.now(), roomId: pollRoomId ?? null, docUrl: cap.docUrl, pdfPath: null,
@@ -252,7 +265,7 @@ ipcMain.on('tt-label-batch', async (_e, msg: { url?: string; reqBody?: string; r
       requestJson: JSON.stringify(cap.fulfillUnitIds), statsJson: JSON.stringify(cap.statsUnitIds),
     })
     debug(`[tt] label batch ${batchId} failed: ${(e as Error).message}`)
-    viewer?.webContents.send('tt-label-batch-ready', { batchId, status: 'error', error: (e as Error).message })
+    viewerSend('tt-label-batch-ready', { batchId, status: 'error', error: (e as Error).message })
   }
 })
 
@@ -276,7 +289,7 @@ ipcMain.on('tt-chat-sent', (_e, result: { id?: number; ok: boolean; error?: stri
     pendingChatSends.get(result.id)?.(result)
     pendingChatSends.delete(result.id)
   }
-  viewer?.webContents.send('tt-chat-sent', result)
+  viewerSend('tt-chat-sent', result)
 })
 
 // Source 1: frontier WebSocket → aggregate live stats.
@@ -598,7 +611,7 @@ ipcMain.handle('tt-transcribe-orders', async (_e, items: { orderId: string; prod
   const cookieHeader = await tiktokCookieHeader()
   const total = items.length
   const progress = (done: number, orderId: string, phase: 'start' | 'done', ok?: boolean) =>
-    viewer?.webContents.send('tt-transcribe-progress', { done, total, orderId, phase, ok })
+    viewerSend('tt-transcribe-progress', { done, total, orderId, phase, ok })
   const ids = items.map((i) => i.orderId)
   const details = await fetchOrderDetails(ids, cookieHeader)
   const results: { orderId: string; fields: TranscriptFields }[] = []
@@ -644,16 +657,37 @@ ipcMain.handle('tt-transcribe-orders', async (_e, items: { orderId: string; prod
   return { results, errors }
 })
 
-ipcMain.handle('print-label', async (_e, args: { labelData: LabelData; printerName: string; template?: LabelTemplate }) => {
-  let win: BrowserWindow | null = null
+// ── Label printing ───────────────────────────────────────────────────────────
+// Re-creating a hidden BrowserWindow per label + a fixed 350ms render sleep added
+// ~½–1s of latency to EVERY label (and auto-print fired several at once, spawning
+// N windows). Instead: keep ONE reusable hidden window, wait only on a real
+// readiness signal (DOM loaded via loadURL + fonts settled) rather than a blind
+// timer, and serialize jobs since one window can only render+print one at a time.
+let printWin: BrowserWindow | null = null
+let printChain: Promise<unknown> = Promise.resolve()
+
+function getPrintWindow(): BrowserWindow {
+  if (printWin && !printWin.isDestroyed()) return printWin
+  printWin = new BrowserWindow({ width: 240, height: 130, show: false, webPreferences: { contextIsolation: true, nodeIntegration: false } })
+  printWin.on('closed', () => { printWin = null })
+  return printWin
+}
+
+async function printLabelJob(args: { labelData: LabelData; printerName: string; template?: LabelTemplate }): Promise<{ success: boolean; error?: string }> {
   try {
     const template = args.template ?? DEFAULT_TEMPLATE
     const size = LABEL_SIZES[template.labelSize] ?? LABEL_SIZES['2x1']
-    win = new BrowserWindow({ width: 240, height: 130, show: false, webPreferences: { contextIsolation: true, nodeIntegration: false } })
-    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(labelHtml(args.labelData, template)))
-    await new Promise((r) => setTimeout(r, 350))
+    const wc = getPrintWindow().webContents
+    await wc.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(labelHtml(args.labelData, template)))
+    // Condition-based readiness, not a fixed sleep: loadURL already resolved after
+    // the DOM parsed; document.fonts.ready settles layout. For the label's system
+    // font this is ~instant — the 200ms race is only a guard against a stuck render.
+    await Promise.race([
+      wc.executeJavaScript('document.fonts.ready.then(() => true)').catch(() => true),
+      new Promise((r) => setTimeout(r, 200)),
+    ])
     await new Promise<void>((resolve, reject) => {
-      win!.webContents.print(
+      wc.print(
         {
           silent: true,
           printBackground: true,
@@ -667,9 +701,15 @@ ipcMain.handle('print-label', async (_e, args: { labelData: LabelData; printerNa
     return { success: true }
   } catch (e) {
     return { success: false, error: (e as Error).message }
-  } finally {
-    win?.close()
   }
+}
+
+ipcMain.handle('print-label', (_e, args: { labelData: LabelData; printerName: string; template?: LabelTemplate }) => {
+  // Serialize: the single hidden window renders+prints one label at a time, and
+  // auto-print can fire several fresh sales at once. Chain so they queue in order.
+  const run = printChain.then(() => printLabelJob(args))
+  printChain = run.catch(() => {})
+  return run
 })
 
 // ── Picklist / label batch IPC handlers ──────────────────────────────────────
@@ -743,6 +783,25 @@ ipcMain.handle('tt-label:clear', () => {
 
 ipcMain.handle('tt-label:setPacked', (_e, p: { orderId: string; packed: boolean }) => { if (db) setPacked(db, p.orderId, p.packed, Date.now()); return true })
 
+// ── Auto-update (launch-time, GitHub Releases) ───────────────────────────────
+// Packaged builds only: ONE check ~3s after launch (no recurring poll). Download
+// silently, install on the next quit, and tell the dashboard once an update is
+// staged so it can show the "Update ready" indicator. Every path is log-only — a
+// failed/blocked update must never disrupt a live show or pop a dialog.
+function initAutoUpdate() {
+  if (!app.isPackaged || process.env.TT_REPLAY) return
+  autoUpdater.autoDownload = true // pull the update in the background at launch
+  autoUpdater.autoInstallOnAppQuit = true // apply it on the next clean quit
+  autoUpdater.on('update-available', (info) => debug(`[update] available ${info.version}`))
+  autoUpdater.on('update-not-available', () => debug('[update] up to date'))
+  autoUpdater.on('error', (err) => console.error('[update] error:', err?.message ?? err))
+  autoUpdater.on('update-downloaded', (info) => {
+    debug(`[update] downloaded ${info.version} — installs on quit`)
+    viewerSend('tt-update-ready', { version: info.version })
+  })
+  setTimeout(() => { autoUpdater.checkForUpdates().catch((e) => debug(`[update] ${e}`)) }, 3000)
+}
+
 app.whenReady().then(() => {
   app.userAgentFallback = CHROME_UA
   Menu.setApplicationMenu(null) // remove the native File/Edit/View/Window/Help menu bar
@@ -754,5 +813,18 @@ app.whenReady().then(() => {
   } else {
     createMonitor()
   }
+  initAutoUpdate()
 })
 app.on('window-all-closed', () => app.quit())
+// On quit, force-close any window so a page-level beforeunload (TikTok registers
+// one) can't veto the exit and strand the process. destroy() skips beforeunload.
+app.on('before-quit', () => {
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { if (!w.isDestroyed()) w.destroy() } catch { /* ignore */ }
+  }
+})
+// Last-resort net: a stray async throw during teardown must never strand the app
+// behind the native "JavaScript error" dialog (which forces a Task Manager kill).
+// Log loudly so real bugs are still visible; the guards above are the actual fix.
+process.on('uncaughtException', (err) => { console.error('[main] uncaughtException:', err) })
+process.on('unhandledRejection', (err) => { console.error('[main] unhandledRejection:', err) })
