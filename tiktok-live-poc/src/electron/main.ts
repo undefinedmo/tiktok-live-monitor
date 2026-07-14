@@ -353,6 +353,18 @@ ipcMain.on('tt-im-frame', (_e, bytes: Uint8Array) => {
   }
 })
 
+// Source 2b: on-screen "won" feed (DOM observer in preload) → instant winner,
+// ~4s before auction_result/get. Drives the opt-in "Live feed" fast-print mode.
+// Δws-tick lets us compare its latency against the REST path in the timing log.
+ipcMain.on('tt-won-feed', (_e, win: { name?: string; auctionNo?: string; price?: string }) => {
+  const auctionNo = String(win?.auctionNo ?? '').trim()
+  const name = String(win?.name ?? '').trim()
+  if (!auctionNo || !name) return
+  const now = Date.now()
+  lat(`A2 won-feed #${auctionNo} ${name} (Δws-tick=${lastWsTickAt ? now - lastWsTickAt : '?'}ms)`)
+  send({ kind: 'won-feed', name, auctionNo, ...(win?.price ? { price: String(win.price) } : {}), ts: now })
+})
+
 // Sources 2 & 3: REST poll responses → roster + per-sale history.
 ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
   capture(CAP_REST, { endpoint: msg?.endpoint, body: msg?.body })

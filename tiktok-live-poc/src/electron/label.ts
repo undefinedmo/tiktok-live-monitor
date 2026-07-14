@@ -20,7 +20,7 @@ export interface LabelScale {
 }
 
 export interface LabelTemplate {
-  labelSize: '1x1' | '2x1' | '2.25x1.25'
+  labelSize: '1x1' | '1.5x1.5' | '2x1' | '2x2' | '2.25x1.25'
   itemNumber: boolean
   buyer: boolean
   productName: boolean
@@ -41,7 +41,9 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
 
 export const LABEL_SIZES = {
   '1x1': { widthIn: 1, heightIn: 1, widthMicrons: 25400, heightMicrons: 25400, num: 22 },
+  '1.5x1.5': { widthIn: 1.5, heightIn: 1.5, widthMicrons: 38100, heightMicrons: 38100, num: 32 },
   '2x1': { widthIn: 2, heightIn: 1, widthMicrons: 50800, heightMicrons: 25400, num: 32 },
+  '2x2': { widthIn: 2, heightIn: 2, widthMicrons: 50800, heightMicrons: 50800, num: 40 },
   '2.25x1.25': { widthIn: 2.25, heightIn: 1.25, widthMicrons: 57150, heightMicrons: 31750, num: 36 },
 } as const
 

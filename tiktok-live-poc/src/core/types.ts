@@ -48,6 +48,17 @@ export interface SaleEvent {
   ts: number
 }
 
+/** Source 2b: an auction winner read off the on-screen "won" feed (DOM), painted
+ *  sub-second — before the auction_result/get order row exists (~4s floor). Carries
+ *  exactly the packing-label fields; drives the fast-path (opt-in) label print. */
+export interface WonFeedEvent {
+  kind: 'won-feed'
+  name: string
+  auctionNo: string
+  price?: string
+  ts: number
+}
+
 /** Show-level counters from WS `live_core_stats`. */
 export interface CoreStatsEvent {
   kind: 'core_stats'
@@ -311,6 +322,7 @@ export interface OrdersEvent {
 export type LiveEvent =
   | ProductStatsSnapshot
   | SaleEvent
+  | WonFeedEvent
   | CoreStatsEvent
   | SessionEvent
   | RoomEvent

@@ -22,7 +22,7 @@ function urgencyBadge(u: Urgency): { cls: string; label: string } | null {
 interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string; title?: string }
 type LabelField = 'itemNumber' | 'custom' | 'buyer' | 'productName' | 'price'
 interface LabelTemplate {
-  labelSize: '1x1' | '2x1' | '2.25x1.25'
+  labelSize: '1x1' | '1.5x1.5' | '2x1' | '2x2' | '2.25x1.25'
   itemNumber: boolean
   buyer: boolean
   productName: boolean
@@ -530,6 +530,13 @@ void initRecap()
 // ── label printing ──────────────────────────────────────────────────────────
 let selectedPrinter = ''
 let autoPrint = false
+// Which signal drives auto-print: 'order' = auction_result/get newSales (~4s server
+// floor, authoritative) · 'feed' = the on-screen "won" feed (instant, DOM). A/B test.
+let printSource: 'order' | 'feed' = 'order'
+// Auction/item numbers already auto-printed. SHARED across both sources so flipping
+// the switch mid-show (or an observer re-fire) never prints the same win twice.
+const printedKeys = new Set<string>()
+let feedWinsSeen = 0 // "won" feed rows observed this session (lets you confirm the observer catches wins even before flipping to feed mode)
 let lastPrintedNumber: number | null = null
 const printQueue: { label: string; status: 'printing' | 'printed' | 'error' }[] = []
 
@@ -580,6 +587,32 @@ function printSale(s: Sale) {
   printLabel({ itemNumber: num, buyer: s.buyer.username || s.buyer.handle, productName: s.productName, price: s.price.formatted, title })
 }
 
+// Order-data (slow) path: auto-print a genuinely-new sale, de-duped by item number.
+function autoPrintSale(s: Sale) {
+  if (!autoPrint || !selectedPrinter) return
+  const key = (s.skuDesc ?? '').replace(/^#/, '') || s.orderId
+  if (printedKeys.has(key)) return
+  printedKeys.add(key)
+  printSale(s)
+}
+
+// Live-feed (fast) path: a winner painted on-screen the instant an auction closes.
+// Always counts the win (verification), but only prints when Live-feed mode is on.
+function onWonFeed(ev: Extract<LiveEvent, { kind: 'won-feed' }>) {
+  feedWinsSeen++
+  updateFeedWinsSeen()
+  if (printSource !== 'feed' || !autoPrint || !selectedPrinter) return
+  const key = ev.auctionNo
+  if (printedKeys.has(key)) return
+  printedKeys.add(key)
+  void printLabel({ itemNumber: ev.auctionNo, buyer: ev.name, price: ev.price, title: `#${ev.auctionNo}` })
+}
+
+function updateFeedWinsSeen() {
+  const el = document.getElementById('feedWinsSeen')
+  if (el) el.textContent = feedWinsSeen ? `${feedWinsSeen} live-feed win${feedWinsSeen === 1 ? '' : 's'} seen` : ''
+}
+
 function updatePrintNext() {
   const btn = $('printNext') as HTMLButtonElement
   btn.textContent = lastPrintedNumber !== null ? `Next #${lastPrintedNumber + 1}` : 'Next'
@@ -602,6 +635,16 @@ async function setupPrinting() {
   updateSampleBtn()
   autoPrint = localStorage.getItem('tt-autoprint') === '1'
   ;($('autoPrint') as HTMLInputElement).checked = autoPrint
+  printSource = localStorage.getItem('tt-print-source') === 'feed' ? 'feed' : 'order'
+  document.querySelectorAll<HTMLInputElement>('input[name="printSource"]').forEach((r) => {
+    r.checked = r.value === printSource
+    r.addEventListener('change', () => {
+      if (!r.checked) return
+      printSource = r.value === 'feed' ? 'feed' : 'order'
+      localStorage.setItem('tt-print-source', printSource)
+    })
+  })
+  updateFeedWinsSeen()
   updatePrintNext()
   renderQueue()
   sel.addEventListener('change', () => { selectedPrinter = sel.value; void window.labelAPI.savePrinter(selectedPrinter); updatePrintNext(); renderQueue(); printerHint(); updateSampleBtn() })
@@ -1858,7 +1901,9 @@ window.ttLive.onEvent((ev: LiveEvent) => {
         // pinned card does NOT advance per lot, so auction_result newSales is the reliable
         // per-sale signal (verified live: it emits +1 per sale; the pinned stays put).
         const freshSales = ev.newSales.filter((s) => s.createdAt > seedMaxCreatedAt!)
-        if (autoPrint && selectedPrinter) for (const s of freshSales) printSale(s)
+        // Order-data mode drives auto-print here; Live-feed mode prints from the
+        // 'won-feed' event instead (see below). Either way de-dup is shared.
+        if (printSource === 'order') for (const s of freshSales) autoPrintSale(s)
         recentForRecap = freshSales.find((s) => s.paymentStatus !== 'failed' && Date.now() - s.createdAt < 60000)
         seedMaxCreatedAt = Math.max(seedMaxCreatedAt, maxCreated)
       }
@@ -1888,7 +1933,7 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       if (!gmvFromWs) stats.gmv = `$${(ev.totalCents / 100).toFixed(2)}`
       renderStats()
       $('feedCount').title = `${ev.totalSales} sales · $${(ev.totalCents / 100).toFixed(0)}`
-      $('feedCount').textContent = 'v1.2.5'
+      $('feedCount').textContent = 'v1.2.6'
       if (recentForRecap) void transcribeSale(recentForRecap) // AI transcript — after print + render
       if (salesChanged) { renderLedger(); renderPicklist() }
       break
@@ -1896,6 +1941,9 @@ window.ttLive.onEvent((ev: LiveEvent) => {
     case 'stream':
       if (!flvPlayer) loadStream(ev.url)
       else lastStreamUrl = ev.url
+      break
+    case 'won-feed':
+      onWonFeed(ev)
       break
     case 'chat':
       appendChat(ev.items)

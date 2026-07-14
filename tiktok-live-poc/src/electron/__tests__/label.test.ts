@@ -46,4 +46,16 @@ describe('labelHtml', () => {
     )
     expect(html).toContain('Bin A')
   })
+  it('renders the 1.5 × 1.5 square at its own page + body dimensions', () => {
+    const html = labelHtml({ itemNumber: '#196' }, { ...DEFAULT_TEMPLATE, labelSize: '1.5x1.5' })
+    expect(html).toContain('size: 1.5in 1.5in')
+    expect(html).toContain('width:1.5in')
+    expect(html).toContain('height:1.5in')
+  })
+  it('renders the 2 × 2 square at its own page + body dimensions', () => {
+    const html = labelHtml({ itemNumber: '#196' }, { ...DEFAULT_TEMPLATE, labelSize: '2x2' })
+    expect(html).toContain('size: 2in 2in')
+    expect(html).toContain('width:2in')
+    expect(html).toContain('height:2in')
+  })
 })

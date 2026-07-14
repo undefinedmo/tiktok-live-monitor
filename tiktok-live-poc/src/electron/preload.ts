@@ -1,5 +1,6 @@
 import { ipcRenderer } from 'electron'
 import { webcastState, ecStreamerKey } from '../core/chat'
+import { parseWonFeedRow } from '../core/wonFeed'
 
 // Runs in the monitor window (contextIsolation:false, so this shares the page's
 // main world and can wrap the page's own WebSocket + XHR/fetch). Forwards three
@@ -78,6 +79,47 @@ XMLHttpRequest.prototype.open = function (this: XMLHttpRequest, method: string, 
   }
   return (OrigOpen as (...a: unknown[]) => void).call(this, method, url, ...rest)
 }
+
+// ── 2b. On-screen "won" feed (DOM MutationObserver) ─────────────────────────
+// The dashboard paints "<name> won auction item <n> …" the instant an auction
+// closes — ~4s before that winner appears in auction_result/get (server-side
+// floor). We watch those rows and forward each NEW winner to main; the renderer
+// can print off this (opt-in "Live feed" mode) for near-zero label latency.
+// Selector/wording per the Winner Capture README — update WON_FEED_SELECTOR here
+// if TikTok renames the markup. De-duped by auction#+name so re-renders don't spam.
+const WON_FEED_SELECTOR = '[data-tid="m4b_overflow_text_signle"]'
+const wonSeen = new Set<string>()
+function reportWin(text: string): void {
+  const win = parseWonFeedRow(text)
+  if (!win) return
+  const key = `${win.auctionNo}|${win.name}`
+  if (wonSeen.has(key)) return
+  wonSeen.add(key)
+  if (wonSeen.size > 1000) wonSeen.delete(wonSeen.values().next().value as string)
+  ipcRenderer.send('tt-won-feed', win)
+}
+function scanWonNodes(root: Element): void {
+  if (root.matches?.(WON_FEED_SELECTOR)) reportWin(root.textContent ?? '')
+  const found = root.querySelectorAll?.(WON_FEED_SELECTOR)
+  if (found) found.forEach((n) => reportWin(n.textContent ?? ''))
+}
+const wonObserver = new MutationObserver((records) => {
+  for (const rec of records) {
+    rec.addedNodes.forEach((node) => {
+      if (node.nodeType === 1) scanWonNodes(node as Element)
+    })
+  }
+})
+let wonStarted = false
+function startWonObserver(): void {
+  if (wonStarted) return
+  const target = document.documentElement || document.body
+  if (!target) return
+  wonStarted = true
+  wonObserver.observe(target, { childList: true, subtree: true })
+}
+startWonObserver()
+if (!wonStarted) document.addEventListener('DOMContentLoaded', startWonObserver, { once: true })
 
 // ── Active polling (production approach) ────────────────────────────────────
 // Once main has room_id + session_id (from the WS stream), poll the roster +

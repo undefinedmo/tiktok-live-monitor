@@ -488,12 +488,20 @@
             </label>
             <div class="preview" style="margin-top:2px;">Default printer is preselected; your choice is saved. <span id="printerSaved" style="color:#7fd6a6;"></span></div>
             <label style="display:flex;gap:8px;align-items:center;margin-top:10px;"><input type="checkbox" id="autoPrint" /> Auto-print a label when an item sells</label>
+            <div style="margin-top:12px;">
+              <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Print source <span style="font-weight:400;color:#7a8296;">(auto-print signal)</span></div>
+              <label style="display:flex;gap:8px;align-items:center;"><input type="radio" name="printSource" value="order" checked /> Order data <span style="color:#7a8296;">— authoritative, ~4s after the auction ends</span></label>
+              <label style="display:flex;gap:8px;align-items:center;margin-top:5px;"><input type="radio" name="printSource" value="feed" /> Live feed <span style="color:#7a8296;">— instant, reads the on-screen &ldquo;won&rdquo; feed</span></label>
+              <div id="feedWinsSeen" style="margin-top:7px;font-size:11px;color:#7fd6a6;"></div>
+            </div>
           </div>
           <div class="modal-box" style="max-width:620px;margin:0 0 12px;box-shadow:none;">
             <label>Label size
               <select id="setSize">
                 <option value="1x1">1 × 1 in</option>
+                <option value="1.5x1.5">1.5 × 1.5 in</option>
                 <option value="2x1">2 × 1 in</option>
+                <option value="2x2">2 × 2 in</option>
                 <option value="2.25x1.25">2.25 × 1.25 in</option>
               </select>
             </label>
