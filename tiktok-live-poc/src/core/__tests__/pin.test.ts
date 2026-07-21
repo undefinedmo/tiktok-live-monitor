@@ -62,6 +62,19 @@ describe('parsePin', () => {
     expect(state.current?.auctionBidTimestampMs).toBe(1781991032590)
   })
 
+  it('extracts variantDesc (the lot number) from auction_config', () => {
+    // fixture: auction_config.variant_desc = "#35" — the number printed on the label.
+    const state = parsePin(rest.pin, TS)
+    expect(state.current?.variantDesc).toBe('#35')
+  })
+
+  it('extracts auctionConfigId as a string, whatever its JSON type', () => {
+    // The fixture carries it as a NUMBER (1047740030982); live pin/get sends a
+    // STRING ("1158840125190"). Both must normalize to string so it can key a Set.
+    const state = parsePin(rest.pin, TS)
+    expect(state.current?.auctionConfigId).toBe('1047740030982')
+  })
+
   it('returns a safe empty state for missing/garbage payload', () => {
     const state = parsePin({}, 1000)
     expect(state.kind).toBe('pin')

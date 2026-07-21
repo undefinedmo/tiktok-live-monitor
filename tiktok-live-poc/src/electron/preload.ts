@@ -89,8 +89,14 @@ XMLHttpRequest.prototype.open = function (this: XMLHttpRequest, method: string, 
 // if TikTok renames the markup. De-duped by auction#+name so re-renders don't spam.
 const WON_FEED_SELECTOR = '[data-tid="m4b_overflow_text_signle"]'
 const wonSeen = new Set<string>()
+// DEBUG: emit diagnostics so we can see WHERE the feed lives when the observer catches
+// nothing (iframe / shadow DOM / wrong selector / wrong view). Was forced ON for the
+// 1.2.7-debug prerelease; reverted, since every hit cost a synchronous appendFileSync
+// on the main process — the same thread that dispatches labels.
+const WON_DEBUG = !!process.env.TT_DEBUG
 function reportWin(text: string): void {
   const win = parseWonFeedRow(text)
+  if (WON_DEBUG) ipcRenderer.send('tt-won-debug', { kind: 'hit', text: text.slice(0, 100), parsed: win })
   if (!win) return
   const key = `${win.auctionNo}|${win.name}`
   if (wonSeen.has(key)) return
@@ -121,6 +127,52 @@ function startWonObserver(): void {
 startWonObserver()
 if (!wonStarted) document.addEventListener('DOMContentLoaded', startWonObserver, { once: true })
 
+// DEBUG probe (TT_DEBUG=1): every 5s, report where "won auction item" text lives so we
+// can localize the miss — my selector's match count, related data-tids, whether the text
+// is in the top light DOM at all, shadow-root hosts, and iframes (same/cross-origin).
+if (WON_DEBUG) {
+  const wonDiag = (): Record<string, unknown> => {
+    const out: Record<string, unknown> = { kind: 'probe', url: location.href, observerStarted: wonStarted }
+    try { out.selectorMatches = document.querySelectorAll(WON_FEED_SELECTOR).length } catch { out.selectorMatches = 'err' }
+    try { out.lightWonText = /won auction item/i.test(document.body?.innerText || '') } catch { out.lightWonText = 'err' }
+    const tids = new Set<string>()
+    const samples: unknown[] = []
+    let shadowHosts = 0, shadowWon = 0
+    try {
+      const all = document.querySelectorAll('*')
+      for (let i = 0; i < all.length; i++) {
+        const el = all[i] as HTMLElement
+        const tid = el.getAttribute?.('data-tid')
+        if (tid && /overflow|m4b|auction|win|bid/i.test(tid)) tids.add(tid)
+        const sr = el.shadowRoot
+        if (sr) { shadowHosts++; try { if (/won auction item/i.test(sr.textContent || '')) shadowWon++ } catch { /* ignore */ } }
+        if (samples.length < 4) {
+          const txt = (el.textContent || '').trim()
+          if (txt.length > 0 && txt.length < 120 && /won auction item/i.test(txt) && el.children.length <= 2) {
+            samples.push({ tag: el.tagName, tid: tid || null, cls: String(el.className || '').slice(0, 70), text: txt.slice(0, 90) })
+          }
+        }
+      }
+    } catch (e) { out.scanErr = String(e) }
+    out.relatedTids = [...tids].slice(0, 30)
+    out.samples = samples
+    out.shadowHosts = shadowHosts
+    out.shadowWon = shadowWon
+    const iframes = Array.from(document.querySelectorAll('iframe'))
+    out.iframeCount = iframes.length
+    out.iframes = iframes.slice(0, 10).map((f) => {
+      try {
+        const d = f.contentDocument
+        if (!d) return { crossOrigin: true }
+        return { sameOrigin: true, won: /won auction item/i.test(d.body?.innerText || ''), sel: d.querySelectorAll(WON_FEED_SELECTOR).length }
+      } catch { return { crossOrigin: true } }
+    })
+    return out
+  }
+  setTimeout(() => ipcRenderer.send('tt-won-debug', wonDiag()), 3000)
+  setInterval(() => ipcRenderer.send('tt-won-debug', wonDiag()), 5000)
+}
+
 // ── Active polling (production approach) ────────────────────────────────────
 // Once main has room_id + session_id (from the WS stream), poll the roster +
 // sale-history endpoints ourselves via the page's own fetch — TikTok's SDK wraps
@@ -141,23 +193,29 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
     headers: { 'content-type': 'application/json', 'x-tt-store-region': 'us' },
     body: JSON.stringify(body),
   })
-  // auction_result/get is paginated (count:100); page through `has_more` so the
-  // per-product / per-buyer / failed-payment rollups are complete on long shows.
-  // Each page's response is forwarded to main by the fetch hook above; the core
-  // dedupes by order_id, so re-fetched pages are harmless.
+  // auction_result/get is paginated (count:100). New sales land on PAGE 0 (rows are
+  // newest-first), so the 3s hot path fetches page 0 only — paging the ENTIRE show
+  // history every cycle re-downloaded 131KB×N per 3s tick (measured live: 128 rows
+  // across multiple pages at startup alone) and put the big parse on the critical
+  // path. A deep sweep runs on the first cycle (seeds the backlog) and then every
+  // 10th cycle (~30s) to reconcile payment-status flips on older rows. Each page's
+  // response is forwarded to main by the fetch hook above; the core dedupes by
+  // order_id, so re-fetched pages are harmless.
   // insights/room/status is a DIFFERENT app than the streamer_desktop endpoints
   // (aid=4068 i18n_ecom_shop, vertical=3) — using the alliance aid errors 98001xxx.
   const qStatus = `?user_language=en&locale=en&aid=4068&app_name=i18n_ecom_shop&device_platform=web&cookie_enabled=true&timezone_name=America/Chicago&vertical=3&carrier_region=us`
   const statusUrl = `https://shop.tiktok.com/api/v1/insights/workbench/live/detail/room/status${qStatus}`
   let statusTick = 0
+  let resultSweep = 0
   const cycle = async () => {
     void window.fetch(`${base}/added_auction_product/list${q}`, post({ room_id: cfg.roomId, session_id: cfg.sessionId, page_scene: 1, offset: 0, count: 100, auction_page_type: 0 })).catch(() => {})
     // refresh the live video URL every ~5 cycles (~15s) — it is signed/expiring.
     if (statusTick++ % 5 === 0) {
       void window.fetch(statusUrl, post({ request: { room_filter: { room_id: cfg.roomId } } })).catch(() => {})
     }
+    const deep = resultSweep++ % 10 === 0 // page 0 every cycle; full history every ~10th
     let offset = 0
-    for (let guard = 0; guard < 30; guard++) {
+    for (let guard = 0; guard < (deep ? 30 : 1); guard++) {
       let res: Response
       try {
         res = await window.fetch(`${base}/auction_result/get${q}`, post({ room_id: cfg.roomId, session_id: cfg.sessionId, auction_page_type: 0, offset, count: 100 }))
@@ -173,6 +231,45 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
   runCycle = cycle
   void cycle()
   setInterval(() => void cycle(), 3000)
+
+  // ── Pin poll (the low-latency close signal) ────────────────────────────────
+  // pin/get flips latest_auction_item.status 1→3 within ~0.5s of the gavel, which
+  // a HAR capture measured at 6.0s and 7.3s AHEAD of the same sale appearing in
+  // auction_result/get. We used to see pin only when the dashboard happened to ask
+  // (gaps of 1-13s), so the lot overlay went stale and labels waited on the slow
+  // path. Poll it ourselves: it's a GET, ~1.6KB, and page-context fetch gets it
+  // signed by TikTok's SDK like every other call here. The fetch hook forwards the
+  // response to main, where AuctionWatch turns the 1→3 edge into an auction-closed.
+  const PIN_MS = 700 // worst-case detection lag; ~1.6KB/req is cheap next to the 131KB result pages
+  const pinUrl =
+    `https://shop.tiktok.com/api/v1/streamer_desktop/pin/get` +
+    `?room_id=${cfg.roomId}&aid=253642&app_name=i18n_ecom_alliance&device_platform=web` +
+    `&user_language=en&locale=en&page_scene=0&carrier_region=us&cookie_enabled=true`
+  let pinInFlight = false
+  let pinOk = 0
+  let pinErr = 0
+  const pinCycle = async () => {
+    if (pinInFlight) return // a slow response must not stack up requests behind it
+    pinInFlight = true
+    try {
+      const r = await window.fetch(pinUrl)
+      // A non-2xx or a TikTok-level error code means our self-issued call is being
+      // rejected (signing / params) — report it instead of silently degrading to
+      // whatever pin responses the dashboard happens to make on its own.
+      if (!r.ok) { pinErr++; ipcRenderer.send('tt-pin-diag', { kind: 'http', status: r.status, n: pinErr }) }
+      else {
+        const body = await r.clone().text()
+        const code = Number(JSON.parse(body)?.code ?? 0)
+        if (code !== 0) { pinErr++; ipcRenderer.send('tt-pin-diag', { kind: 'code', code, body: body.slice(0, 300), n: pinErr }) }
+        else if (++pinOk % 20 === 1) ipcRenderer.send('tt-pin-diag', { kind: 'ok', n: pinOk })
+      }
+    } catch (e) {
+      pinErr++
+      ipcRenderer.send('tt-pin-diag', { kind: 'throw', error: String((e as Error)?.message ?? e), n: pinErr })
+    } finally { pinInFlight = false }
+  }
+  void pinCycle()
+  setInterval(() => void pinCycle(), PIN_MS)
 
   // ── Chat poll ──────────────────────────────────────────────────────────────
   // webcast/im/fetch is params-only (no cookies/signing — verified), so we poll it

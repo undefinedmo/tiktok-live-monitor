@@ -59,6 +59,32 @@ export interface WonFeedEvent {
   ts: number
 }
 
+/**
+ * An auction observed closing — the low-latency close signal, ~6-7s ahead of the same
+ * sale appearing in auction_result/get. Drives the lot overlay and auto-print;
+ * auction_result/get later backfills order id + payment.
+ *
+ * Sources:
+ *   'pin'       — pin/get status 1→3 edge (AuctionWatch). Only fires for PINNED lots.
+ *   'im'        — auction.end decoded from the webcast/im/fetch stream. Fires for EVERY
+ *                 auction ~0.3-1.2s after the gavel, but carries no lot number; main
+ *                 fills lotNumber from the current pin state when the winner matches.
+ *   'im-result' — the auction.result_update companion (Manager message) ~6s later;
+ *                 carries the lot number + product + username, so it prints the lots
+ *                 the fast paths couldn't attribute.
+ */
+export interface AuctionClosedEvent {
+  kind: 'auction-closed'
+  auctionConfigId: string
+  lotNumber?: string // variant_desc ("#17") from pin; bare ("17") from im-result
+  productName?: string
+  winner: string
+  price?: string
+  username?: string // im-result only: the winner's @handle
+  source?: 'pin' | 'im' | 'im-result'
+  ts: number
+}
+
 /** Show-level counters from WS `live_core_stats`. */
 export interface CoreStatsEvent {
   kind: 'core_stats'
@@ -323,6 +349,7 @@ export type LiveEvent =
   | ProductStatsSnapshot
   | SaleEvent
   | WonFeedEvent
+  | AuctionClosedEvent
   | CoreStatsEvent
   | SessionEvent
   | RoomEvent

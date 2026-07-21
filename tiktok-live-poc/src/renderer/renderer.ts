@@ -108,6 +108,7 @@ const saveTemplate = () => localStorage.setItem('tt-label-template', JSON.string
 let sessionStart: number | undefined // current_session.start_time (scheduled)
 let liveStartedAt: number | undefined // room create_timestamp (actual go-live) — drives the elapsed timer
 let pinnedEndMs: number | undefined
+let lotSoldAt = 0 // last auction-closed paint — tickCountdown holds SOLD for 10s
 let serverTimeOffsetMs = 0 // from pin/get (resp_server_time − client clock); corrects the auction countdown
 let gmvFromWs = false
 let seedMaxCreatedAt: number | null = null
@@ -329,6 +330,13 @@ function renderProductsTable() {
 }
 
 // ── current auction ─────────────────────────────────────────────────────────
+// Two sources feed the lot overlay at different speeds: pin/get (700ms) and the
+// roster snapshot (3s). Without a guard the slower one lands last and overwrites
+// fresh bid state with stale — which is what left the overlay showing an ended lot.
+let lastPinRenderAt = 0
+const PIN_FRESH_MS = 3000
+
+// ── current auction ─────────────────────────────────────────────────────────
 function renderAuction(p?: PinnedAuction) {
   if (!p || !p.winUsername) {
     pinnedEndMs = undefined
@@ -358,6 +366,13 @@ function tickCountdown() {
   const ends = document.getElementById('lotEnds')
   if (!ends) return
   const panelEnds = document.getElementById('auctionPanelEnds')
+  // A close was just painted by onAuctionClosed — hold SOLD against this 250ms tick
+  // (and the slower roster/pin repaints) until the next lot's state has had time to land.
+  if (Date.now() - lotSoldAt < 10000) {
+    ends.textContent = 'SOLD'
+    if (panelEnds) panelEnds.textContent = 'SOLD'
+    return
+  }
   if (!pinnedEndMs) { ends.textContent = '--'; if (panelEnds) panelEnds.textContent = '--'; return }
   // expectedEndMs is in server time; correct the client clock by the pin/get offset.
   const left = Math.max(0, Math.round((pinnedEndMs - (Date.now() + serverTimeOffsetMs)) / 1000))
@@ -530,9 +545,13 @@ void initRecap()
 // ── label printing ──────────────────────────────────────────────────────────
 let selectedPrinter = ''
 let autoPrint = false
-// Which signal drives auto-print: 'order' = auction_result/get newSales (~4s server
-// floor, authoritative) · 'feed' = the on-screen "won" feed (instant, DOM). A/B test.
-let printSource: 'order' | 'feed' = 'order'
+// Which signal drives auto-print:
+//   'pin'   = pin/get status 1→3 (DEFAULT). Structured server field, measured 6.0-7.3s
+//             ahead of auction_result/get, polled at 700ms.
+//   'order' = auction_result/get newSales — authoritative but 6-7s late; kept as fallback.
+//   'feed'  = the on-screen "won" feed (DOM scrape). Caught nothing in a TT_LAT run —
+//             the selector has drifted; retained only for A/B while pin is proven.
+let printSource: 'pin' | 'order' | 'feed' = 'pin'
 // Auction/item numbers already auto-printed. SHARED across both sources so flipping
 // the switch mid-show (or an observer re-fire) never prints the same win twice.
 const printedKeys = new Set<string>()
@@ -608,6 +627,30 @@ function onWonFeed(ev: Extract<LiveEvent, { kind: 'won-feed' }>) {
   void printLabel({ itemNumber: ev.auctionNo, buyer: ev.name, price: ev.price, title: `#${ev.auctionNo}` })
 }
 
+// Fast-close path: an auction closed, reported by pin/get (status 1→3, pinned lots
+// only) or by the im stream (auction.end for EVERY lot; im-result ~6s later with the
+// lot number). De-dup is shared with the other sources via printedKeys, so the slow
+// path re-reporting the same sale later never double-prints.
+function onAuctionClosed(ev: Extract<LiveEvent, { kind: 'auction-closed' }>) {
+  const lot = (ev.lotNumber ?? '').replace(/^#/, '')
+  // Instant UI: paint the close on the lot overlay even when the lot number isn't
+  // known yet (unpinned lots) — the sale is real, only its attribution is pending.
+  $('lotBuyer').textContent = '@' + ev.winner
+  if (ev.price) $('lotBid').textContent = ev.price
+  if (ev.productName) $('lotName').textContent = ev.productName
+  lotSoldAt = Date.now() // tickCountdown paints SOLD and holds it against repaints
+  lastPinRenderAt = Date.now() // hold this against the slower roster paint (PIN_FRESH_MS)
+  if (lot) lastPrintedNumber = Number(lot) || lastPrintedNumber
+  if (printSource !== 'pin' || !autoPrint || !selectedPrinter) return
+  // No lot number yet (unattributed im auction.end): don't print a numberless label —
+  // the im-result event carries the lot ~6s later and prints it then.
+  if (!lot) return
+  const key = lot
+  if (printedKeys.has(key)) return
+  printedKeys.add(key)
+  void printLabel({ itemNumber: lot, buyer: ev.winner, price: ev.price, title: `#${lot}` })
+}
+
 function updateFeedWinsSeen() {
   const el = document.getElementById('feedWinsSeen')
   if (el) el.textContent = feedWinsSeen ? `${feedWinsSeen} live-feed win${feedWinsSeen === 1 ? '' : 's'} seen` : ''
@@ -635,12 +678,15 @@ async function setupPrinting() {
   updateSampleBtn()
   autoPrint = localStorage.getItem('tt-autoprint') === '1'
   ;($('autoPrint') as HTMLInputElement).checked = autoPrint
-  printSource = localStorage.getItem('tt-print-source') === 'feed' ? 'feed' : 'order'
+  // 'pin' is the fast live-signal mode (im auction.end / pin close) and the default.
+  // A stored 'feed' is the retired DOM-observer option — migrate it to 'pin', which
+  // superseded it. Only an explicit 'order' opts into the slow authoritative path.
+  printSource = localStorage.getItem('tt-print-source') === 'order' ? 'order' : 'pin'
   document.querySelectorAll<HTMLInputElement>('input[name="printSource"]').forEach((r) => {
     r.checked = r.value === printSource
     r.addEventListener('change', () => {
       if (!r.checked) return
-      printSource = r.value === 'feed' ? 'feed' : 'order'
+      printSource = r.value === 'order' ? 'order' : 'pin'
       localStorage.setItem('tt-print-source', printSource)
     })
   })
@@ -1875,7 +1921,9 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       rosterProducts.clear()
       for (const p of ev.products) rosterProducts.set(p.productId, p)
       renderProductsTable()
-      renderAuction(ev.pinned)
+      // Only let the 3s roster paint the lot when pin/get has gone quiet — otherwise
+      // it clobbers the 700ms source with a snapshot that is up to 3s older.
+      if (Date.now() - lastPinRenderAt > PIN_FRESH_MS) renderAuction(ev.pinned)
       stats.sales = String(ev.totalSold)
       renderStats()
       break
@@ -1883,7 +1931,7 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       // pin/get is the lower-latency current-auction source; capture its server-time anchor
       // for an accurate countdown, and refresh the lot's bid state when it carries a winner.
       if (typeof ev.serverTimeOffsetMs === 'number') serverTimeOffsetMs = ev.serverTimeOffsetMs
-      if (ev.current?.winUsername) renderAuction(ev.current)
+      if (ev.current?.winUsername) { renderAuction(ev.current); lastPinRenderAt = Date.now() }
       break
     case 'sales': {
       // ── PRINT FIRST ──────────────────────────────────────────────────────
@@ -1933,7 +1981,7 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       if (!gmvFromWs) stats.gmv = `$${(ev.totalCents / 100).toFixed(2)}`
       renderStats()
       $('feedCount').title = `${ev.totalSales} sales · $${(ev.totalCents / 100).toFixed(0)}`
-      $('feedCount').textContent = 'v1.2.6'
+      $('feedCount').textContent = 'v1.2.7-debug'
       if (recentForRecap) void transcribeSale(recentForRecap) // AI transcript — after print + render
       if (salesChanged) { renderLedger(); renderPicklist() }
       break
@@ -1944,6 +1992,9 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       break
     case 'won-feed':
       onWonFeed(ev)
+      break
+    case 'auction-closed':
+      onAuctionClosed(ev)
       break
     case 'chat':
       appendChat(ev.items)

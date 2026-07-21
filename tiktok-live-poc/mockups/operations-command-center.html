@@ -1,0 +1,1062 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SellerFolio Operations Command Center Mock</title>
+  <style>
+    :root {
+      --bg: #090b0c;
+      --panel: #0e1213;
+      --panel-2: #121719;
+      --panel-3: #171d20;
+      --line: #263034;
+      --line-bright: #3f4d52;
+      --text: #eef6f2;
+      --muted: #8f9d9d;
+      --dim: #5e6b6e;
+      --green: #37f29a;
+      --green-soft: rgba(55, 242, 154, .12);
+      --cyan: #47dff1;
+      --cyan-soft: rgba(71, 223, 241, .12);
+      --amber: #f3c04f;
+      --amber-soft: rgba(243, 192, 79, .14);
+      --red: #ff5e6c;
+      --red-soft: rgba(255, 94, 108, .14);
+      --violet: #b7a3ff;
+      --violet-soft: rgba(183, 163, 255, .12);
+      --radius: 8px;
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
+    body {
+      overflow: hidden;
+      background:
+        linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px) 0 0 / 72px 72px,
+        linear-gradient(0deg, rgba(255,255,255,.03) 1px, transparent 1px) 0 0 / 72px 72px,
+        var(--bg);
+    }
+
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+
+    .shell {
+      height: 100vh;
+      display: grid;
+      grid-template-rows: 58px 1fr 34px;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 258px 1fr auto;
+      align-items: center;
+      border-bottom: 1px solid var(--line);
+      background: rgba(9, 11, 12, .94);
+      padding: 0 18px;
+      gap: 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 32px;
+      height: 32px;
+      border: 1px solid var(--line-bright);
+      border-radius: 7px;
+      display: grid;
+      place-items: center;
+      color: var(--green);
+      background: var(--panel);
+      font-weight: 800;
+      font-size: 13px;
+    }
+
+    .brand-text strong {
+      display: block;
+      font-size: 13px;
+      letter-spacing: 0;
+      line-height: 1.1;
+    }
+
+    .brand-text span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 3px;
+    }
+
+    .status-strip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .chip {
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 0 10px;
+      color: var(--muted);
+      background: rgba(18, 23, 25, .9);
+      white-space: nowrap;
+      font-size: 12px;
+    }
+
+    .chip strong { color: var(--text); font-weight: 700; }
+    .chip.live { border-color: rgba(55, 242, 154, .38); color: var(--green); background: var(--green-soft); }
+    .chip.warn { border-color: rgba(243, 192, 79, .35); color: var(--amber); background: var(--amber-soft); }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .icon-btn, .text-btn {
+      height: 32px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+      border-radius: 7px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .icon-btn { width: 34px; font-size: 15px; }
+    .text-btn { padding: 0 12px; gap: 8px; font-size: 12px; font-weight: 700; }
+    .text-btn.primary { border-color: rgba(55,242,154,.5); background: var(--green-soft); color: var(--green); }
+
+    .main {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 64px minmax(680px, 1fr) 360px;
+    }
+
+    .rail {
+      border-right: 1px solid var(--line);
+      background: rgba(11, 14, 15, .96);
+      padding: 12px 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .rail button {
+      width: 42px;
+      height: 42px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      display: grid;
+      place-items: center;
+      font-size: 16px;
+      position: relative;
+    }
+
+    .rail button.active {
+      color: var(--green);
+      border-color: rgba(55,242,154,.36);
+      background: var(--green-soft);
+    }
+
+    .rail button.alert::after {
+      content: "";
+      position: absolute;
+      top: 7px;
+      right: 7px;
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--red);
+      box-shadow: 0 0 12px rgba(255,94,108,.65);
+    }
+
+    .work {
+      min-width: 0;
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      background: rgba(9, 11, 12, .74);
+    }
+
+    .hero {
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: end;
+      gap: 18px;
+    }
+
+    .hero h1 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.05;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .hero p {
+      margin: 7px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      max-width: 760px;
+    }
+
+    .searchbar {
+      display: grid;
+      grid-template-columns: 210px 146px 130px;
+      gap: 8px;
+    }
+
+    .field {
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel-2);
+      color: var(--text);
+      padding: 0 10px;
+      min-width: 0;
+    }
+
+    .command-cards {
+      padding: 14px 20px;
+      display: grid;
+      grid-template-columns: repeat(6, minmax(118px, 1fr));
+      gap: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .metric {
+      min-height: 96px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: var(--radius);
+      padding: 11px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 8px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .metric::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 3px;
+      background: var(--line-bright);
+    }
+
+    .metric.good::before { background: var(--green); }
+    .metric.info::before { background: var(--cyan); }
+    .metric.warn::before { background: var(--amber); }
+    .metric.danger::before { background: var(--red); }
+    .metric.violet::before { background: var(--violet); }
+    .metric.active { border-color: rgba(55,242,154,.55); box-shadow: inset 0 0 0 1px rgba(55,242,154,.08); }
+
+    .metric .label {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .metric .value {
+      font-size: 30px;
+      line-height: 1;
+      font-weight: 850;
+      align-self: center;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .metric .meta {
+      color: var(--dim);
+      font-size: 11px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .content {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(390px, 1.08fr) minmax(320px, .92fr);
+      gap: 12px;
+      padding: 14px 20px 18px;
+      overflow: hidden;
+    }
+
+    .section {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      border: 1px solid var(--line);
+      background: rgba(14,18,19,.86);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .section-head {
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .section-head h2 {
+      margin: 0;
+      font-size: 12px;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .segmented {
+      height: 28px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      display: inline-flex;
+      padding: 2px;
+      background: var(--panel-2);
+    }
+
+    .segmented button {
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 11px;
+      padding: 0 9px;
+    }
+
+    .segmented button.active {
+      background: var(--green-soft);
+      color: var(--green);
+    }
+
+    .table-wrap {
+      min-height: 0;
+      overflow: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    th, td {
+      border-bottom: 1px solid rgba(38,48,52,.82);
+      padding: 10px 10px;
+      text-align: left;
+      vertical-align: middle;
+      font-size: 12px;
+    }
+
+    th {
+      color: var(--dim);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      background: rgba(18, 23, 25, .78);
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+
+    tr { transition: background .16s ease; }
+    tbody tr:hover, tbody tr.selected { background: rgba(71, 223, 241, .06); }
+    tbody tr.selected { box-shadow: inset 3px 0 0 var(--cyan); }
+
+    .order-cell {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .thumb {
+      width: 38px;
+      height: 38px;
+      border-radius: 7px;
+      border: 1px solid var(--line-bright);
+      background:
+        linear-gradient(135deg, rgba(71,223,241,.32), rgba(55,242,154,.08)),
+        repeating-linear-gradient(45deg, rgba(255,255,255,.08) 0 4px, transparent 4px 8px);
+      flex: 0 0 auto;
+    }
+
+    .maintext {
+      min-width: 0;
+      display: block;
+      font-weight: 750;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .subtext {
+      margin-top: 3px;
+      display: block;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 11px;
+    }
+
+    .pill {
+      height: 22px;
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 0 8px;
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      white-space: nowrap;
+    }
+
+    .pill.good { color: var(--green); border-color: rgba(55,242,154,.42); background: var(--green-soft); }
+    .pill.info { color: var(--cyan); border-color: rgba(71,223,241,.42); background: var(--cyan-soft); }
+    .pill.warn { color: var(--amber); border-color: rgba(243,192,79,.42); background: var(--amber-soft); }
+    .pill.danger { color: var(--red); border-color: rgba(255,94,108,.42); background: var(--red-soft); }
+    .pill.violet { color: var(--violet); border-color: rgba(183,163,255,.42); background: var(--violet-soft); }
+
+    .queue {
+      min-height: 0;
+      overflow: auto;
+      padding: 10px;
+      display: grid;
+      gap: 9px;
+      align-content: start;
+    }
+
+    .alert-row {
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      border-radius: var(--radius);
+      padding: 10px;
+      display: grid;
+      grid-template-columns: 28px minmax(0,1fr) auto;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .alert-rail {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      display: grid;
+      place-items: center;
+      color: var(--green);
+      background: var(--green-soft);
+      border: 1px solid rgba(55,242,154,.34);
+      font-weight: 900;
+      font-size: 12px;
+    }
+
+    .alert-row.warn .alert-rail { color: var(--amber); background: var(--amber-soft); border-color: rgba(243,192,79,.4); }
+    .alert-row.danger .alert-rail { color: var(--red); background: var(--red-soft); border-color: rgba(255,94,108,.42); }
+    .alert-row.info .alert-rail { color: var(--cyan); background: var(--cyan-soft); border-color: rgba(71,223,241,.4); }
+
+    .alert-title {
+      display: block;
+      font-weight: 800;
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .alert-meta {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .inspector {
+      min-width: 0;
+      min-height: 0;
+      border-left: 1px solid var(--line);
+      background: rgba(12, 15, 16, .94);
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .inspector-head {
+      padding: 18px;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      gap: 12px;
+    }
+
+    .inspector-id {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .inspector h2 {
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.15;
+    }
+
+    .inspector .handle {
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .buyer-visual {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .avatar {
+      width: 42px;
+      height: 42px;
+      border-radius: 999px;
+      border: 1px solid var(--line-bright);
+      background:
+        radial-gradient(circle at 32% 28%, rgba(255,255,255,.9) 0 2px, transparent 3px),
+        linear-gradient(135deg, rgba(55,242,154,.35), rgba(71,223,241,.18)),
+        #151b1d;
+    }
+
+    .inspector-body {
+      min-height: 0;
+      overflow: auto;
+      padding: 14px 18px 18px;
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .detail-block {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .detail-block h3 {
+      margin: 0;
+      padding: 10px 11px;
+      border-bottom: 1px solid var(--line);
+      font-size: 11px;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: minmax(104px, .8fr) minmax(0, 1.2fr);
+      gap: 8px;
+      padding: 8px 11px;
+      border-bottom: 1px solid rgba(38,48,52,.72);
+      font-size: 12px;
+    }
+
+    .kv:last-child { border-bottom: 0; }
+    .kv span:first-child { color: var(--dim); }
+    .kv span:last-child {
+      color: var(--text);
+      text-align: right;
+      overflow-wrap: anywhere;
+    }
+
+    .timeline {
+      padding: 10px 11px 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .event {
+      display: grid;
+      grid-template-columns: 9px minmax(0, 1fr);
+      gap: 9px;
+      align-items: start;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      margin-top: 4px;
+      border-radius: 999px;
+      background: var(--green);
+    }
+
+    .event.warn .dot { background: var(--amber); }
+    .event.danger .dot { background: var(--red); }
+    .event strong { display: block; font-size: 12px; }
+    .event span { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+
+    .footer {
+      border-top: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      color: var(--dim);
+      font-size: 11px;
+      background: #080a0b;
+      font-variant-numeric: tabular-nums;
+    }
+
+    @media (max-width: 1180px) {
+      body { overflow: auto; }
+      .shell { min-height: 100vh; height: auto; }
+      .main { grid-template-columns: 54px minmax(0, 1fr); }
+      .inspector { grid-column: 2; border-left: 0; border-top: 1px solid var(--line); min-height: 560px; }
+      .command-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .content { grid-template-columns: 1fr; overflow: visible; }
+      .work { min-height: auto; }
+      .topbar { grid-template-columns: 1fr auto; }
+      .status-strip { display: none; }
+    }
+
+    @media (max-width: 760px) {
+      .topbar { padding: 0 10px; }
+      .actions .text-btn:not(.primary) { display: none; }
+      .main { grid-template-columns: 1fr; }
+      .rail { display: none; }
+      .hero { grid-template-columns: 1fr; padding: 16px 12px 12px; }
+      .hero h1 { font-size: 21px; }
+      .searchbar { grid-template-columns: 1fr; }
+      .command-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 12px; }
+      .content { padding: 12px; }
+      .inspector { grid-column: 1; }
+      th:nth-child(3), td:nth-child(3),
+      th:nth-child(5), td:nth-child(5) { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">SF</div>
+        <div class="brand-text">
+          <strong>SellerFolio Ops</strong>
+          <span>TikTok Seller Center mock</span>
+        </div>
+      </div>
+      <div class="status-strip" aria-label="system status">
+        <span class="chip live"><strong>LIVE</strong> room 7524</span>
+        <span class="chip"><strong>200</strong> to ship</span>
+        <span class="chip warn"><strong>3</strong> overdue</span>
+        <span class="chip">Synced 18 sec ago</span>
+      </div>
+      <div class="actions">
+        <button class="icon-btn" title="Refresh">R</button>
+        <button class="icon-btn" title="Export">E</button>
+        <button class="text-btn">Print Queue</button>
+        <button class="text-btn primary">Sync Now</button>
+      </div>
+    </header>
+
+    <main class="main">
+      <nav class="rail" aria-label="primary navigation">
+        <button title="Command Center" class="active">C</button>
+        <button title="Live Monitor">L</button>
+        <button title="Sold Items">S</button>
+        <button title="Pack Queue" class="alert">P</button>
+        <button title="Ledger">G</button>
+        <button title="Settings">T</button>
+      </nav>
+
+      <section class="work">
+        <div class="hero">
+          <div>
+            <h1>Operations Command Center</h1>
+            <p>Mocked dashboard using TikTok order counts, fulfillment deadlines, package state, and exception queues.</p>
+          </div>
+          <div class="searchbar">
+            <input class="field" id="query" placeholder="Search order, buyer, SKU" />
+            <select class="field" id="viewSelect">
+              <option>To Ship</option>
+              <option>All Orders</option>
+              <option>Shipping Overdue</option>
+              <option>Exceptions</option>
+            </select>
+            <select class="field" id="sortSelect">
+              <option>Urgency</option>
+              <option>Newest</option>
+              <option>Package</option>
+              <option>Value</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="command-cards" id="metricGrid"></div>
+
+        <div class="content">
+          <section class="section">
+            <div class="section-head">
+              <h2>Action Queue</h2>
+              <div class="segmented" role="tablist" aria-label="queue view">
+                <button class="active" data-filter="all">All</button>
+                <button data-filter="overdue">Overdue</button>
+                <button data-filter="soon">Soon</button>
+                <button data-filter="flags">Flags</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width: 42%">Order</th>
+                    <th style="width: 14%">Status</th>
+                    <th style="width: 16%">Package</th>
+                    <th style="width: 15%">Ship By</th>
+                    <th style="width: 13%">Value</th>
+                  </tr>
+                </thead>
+                <tbody id="orderRows"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="section">
+            <div class="section-head">
+              <h2>Exception Feed</h2>
+              <span class="pill danger">6 active</span>
+            </div>
+            <div class="queue" id="alertRows"></div>
+          </section>
+        </div>
+      </section>
+
+      <aside class="inspector" id="inspector">
+        <div class="inspector-head">
+          <div class="inspector-id">
+            <div class="buyer-visual">
+              <div class="avatar" aria-hidden="true"></div>
+              <div>
+                <h2 id="inspectorTitle">Select an order</h2>
+                <div class="handle" id="inspectorSub">Order details will appear here.</div>
+              </div>
+            </div>
+            <span class="pill info" id="inspectorPill">Ready</span>
+          </div>
+          <div class="actions">
+            <button class="text-btn">Contact</button>
+            <button class="text-btn primary">Print Item</button>
+          </div>
+        </div>
+        <div class="inspector-body" id="inspectorBody"></div>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <span>Mock data: dashboard/get, search_count, order/list, package/list, logistic_detail/list</span>
+      <span id="clock">--:--:--</span>
+    </footer>
+  </div>
+
+  <script>
+    const metrics = [
+      { key: 'toShip', label: 'To Ship', value: 200, meta: 'search_tab 101', tone: 'good' },
+      { key: 'shipped', label: 'Shipped', value: 402, meta: 'search_tab 102', tone: 'info' },
+      { key: 'overdue', label: 'Shipping Overdue', value: 3, meta: 'dashboard 100300', tone: 'danger' },
+      { key: 'autoCancel', label: 'Auto-Cancel Risk', value: 0, meta: 'next 24 hours', tone: 'warn' },
+      { key: 'cancel', label: 'Cancellation Requests', value: 0, meta: '24h response SLA', tone: 'violet' },
+      { key: 'returns', label: 'Return/Refund', value: 0, meta: '48h response SLA', tone: 'info' }
+    ];
+
+    const orders = [
+      {
+        id: '577425045297664244',
+        buyer: 'camila.stone',
+        handle: '@camila.stone',
+        product: '#69 Bin B - Alo Yoga and More',
+        sku: 'SKU 1732451632603436003 / item #69',
+        status: 'Overdue',
+        tone: 'danger',
+        packageId: 'PKG-664244',
+        tracking: '9400 **** 2381',
+        shipBy: '2h overdue',
+        value: '$82.00',
+        warehouse: 'Default Warehouse',
+        flags: ['Live auction', 'Combined package', 'Shipping overdue'],
+        timeline: [
+          ['Paid', 'Payment received during live auction', 'good'],
+          ['Label ready', 'TikTok shipping label purchased', 'good'],
+          ['Overdue', 'Carrier handoff missed SLA', 'danger']
+        ]
+      },
+      {
+        id: '577425045279576308',
+        buyer: 'mara.collects',
+        handle: '@mara.collects',
+        product: '#55 Bin A - Alo Yoga and More',
+        sku: 'SKU 1732451632602715107 / item #55',
+        status: 'Ship Soon',
+        tone: 'warn',
+        packageId: 'PKG-576308',
+        tracking: '9400 **** 8304',
+        shipBy: '4h 18m',
+        value: '$48.00',
+        warehouse: 'Default Warehouse',
+        flags: ['Buyer note', 'Live auction'],
+        timeline: [
+          ['Paid', 'Payment captured', 'good'],
+          ['Buyer note', 'Message attached to order', 'warn'],
+          ['Ship soon', 'Handoff deadline approaching', 'warn']
+        ]
+      },
+      {
+        id: '577425049196138740',
+        buyer: 'june.market',
+        handle: '@june.market',
+        product: '#72 Bin B - Alo Yoga and More',
+        sku: 'SKU 1732451632603436003 / item #72',
+        status: 'Ready',
+        tone: 'good',
+        packageId: 'PKG-138740',
+        tracking: '9400 **** 5192',
+        shipBy: '18h 02m',
+        value: '$95.00',
+        warehouse: 'Default Warehouse',
+        flags: ['Combined package'],
+        timeline: [
+          ['Paid', 'Payment captured', 'good'],
+          ['Packed', 'Package is ready for carrier handoff', 'good']
+        ]
+      },
+      {
+        id: '577425049107337004',
+        buyer: 'northfinds',
+        handle: '@northfinds',
+        product: '#61 Bin A - Alo Yoga and More',
+        sku: 'SKU 1732451632602715107 / item #61',
+        status: 'Exception',
+        tone: 'violet',
+        packageId: 'PKG-337004',
+        tracking: 'Pending',
+        shipBy: '12h 47m',
+        value: '$36.00',
+        warehouse: 'Default Warehouse',
+        flags: ['Seller flag', 'Needs review'],
+        timeline: [
+          ['Paid', 'Payment captured', 'good'],
+          ['Seller flag', 'Review before packing', 'warn']
+        ]
+      },
+      {
+        id: '577425049188993410',
+        buyer: 'ivy.thread',
+        handle: '@ivy.thread',
+        product: '#80 Bin C - Boutique Mixed Lot',
+        sku: 'SKU 1732451632609971008 / item #80',
+        status: 'Ready',
+        tone: 'good',
+        packageId: 'PKG-993410',
+        tracking: '9400 **** 7715',
+        shipBy: '21h 34m',
+        value: '$64.00',
+        warehouse: 'Default Warehouse',
+        flags: ['Live auction'],
+        timeline: [
+          ['Paid', 'Payment captured', 'good'],
+          ['Label ready', 'Ready to print', 'good']
+        ]
+      }
+    ];
+
+    const alerts = [
+      { tone: 'danger', code: 'OD', title: '3 orders are shipping overdue', meta: 'Use dashboard column 100300 as source of truth' },
+      { tone: 'warn', code: 'SLA', title: '2 packages ship within 6 hours', meta: 'Derived from latest_rts_time and processing_time_info' },
+      { tone: 'info', code: 'PK', title: '16 packages across 20 sold rows', meta: 'Use package_id grouping before printing labels' },
+      { tone: 'warn', code: 'NT', title: 'Buyer notes need review before pack', meta: 'note_module.has_buyer_note is present on order rows' },
+      { tone: 'info', code: 'SKU', title: '20 unique SKU IDs detected', meta: 'Use sku_id for variant-level cost templates' },
+      { tone: 'danger', code: 'ID', title: 'Product name fallback is unsafe', meta: 'Use sku_module.product_id instead of productName for productId' }
+    ];
+
+    let selectedOrder = orders[0];
+    let activeFilter = 'all';
+
+    function cls(tone) {
+      if (tone === 'danger') return 'danger';
+      if (tone === 'warn') return 'warn';
+      if (tone === 'violet') return 'violet';
+      if (tone === 'info') return 'info';
+      return 'good';
+    }
+
+    function renderMetrics() {
+      const grid = document.getElementById('metricGrid');
+      grid.innerHTML = metrics.map((m, index) => `
+        <button class="metric ${m.tone} ${index === 0 ? 'active' : ''}" data-key="${m.key}">
+          <span class="label">${m.label}</span>
+          <span class="value">${m.value}</span>
+          <span class="meta"><span>${m.meta}</span><span>${index === 0 ? 'open' : 'view'}</span></span>
+        </button>
+      `).join('');
+    }
+
+    function filteredOrders() {
+      const q = document.getElementById('query').value.trim().toLowerCase();
+      return orders.filter((o) => {
+        const matchesQuery = !q || [o.id, o.buyer, o.handle, o.product, o.sku, o.packageId].some((v) => v.toLowerCase().includes(q));
+        const matchesFilter =
+          activeFilter === 'all' ||
+          (activeFilter === 'overdue' && o.tone === 'danger') ||
+          (activeFilter === 'soon' && o.tone === 'warn') ||
+          (activeFilter === 'flags' && o.flags.length > 1);
+        return matchesQuery && matchesFilter;
+      });
+    }
+
+    function renderOrders() {
+      const tbody = document.getElementById('orderRows');
+      tbody.innerHTML = filteredOrders().map((o) => `
+        <tr data-id="${o.id}" class="${selectedOrder && selectedOrder.id === o.id ? 'selected' : ''}">
+          <td>
+            <div class="order-cell">
+              <div class="thumb" aria-hidden="true"></div>
+              <div style="min-width:0">
+                <span class="maintext">${o.product}</span>
+                <span class="subtext">${o.buyer} | ${o.sku}</span>
+              </div>
+            </div>
+          </td>
+          <td><span class="pill ${cls(o.tone)}">${o.status}</span></td>
+          <td><span class="maintext">${o.packageId}</span><span class="subtext">${o.tracking}</span></td>
+          <td><span class="maintext">${o.shipBy}</span><span class="subtext">${o.warehouse}</span></td>
+          <td><strong>${o.value}</strong></td>
+        </tr>
+      `).join('');
+
+      tbody.querySelectorAll('tr').forEach((row) => {
+        row.addEventListener('click', () => {
+          selectedOrder = orders.find((o) => o.id === row.dataset.id);
+          renderOrders();
+          renderInspector();
+        });
+      });
+    }
+
+    function renderAlerts() {
+      const root = document.getElementById('alertRows');
+      root.innerHTML = alerts.map((a) => `
+        <div class="alert-row ${cls(a.tone)}">
+          <div class="alert-rail">${a.code}</div>
+          <div style="min-width:0">
+            <span class="alert-title">${a.title}</span>
+            <span class="alert-meta">${a.meta}</span>
+          </div>
+          <button class="icon-btn" title="Open">O</button>
+        </div>
+      `).join('');
+    }
+
+    function renderInspector() {
+      const o = selectedOrder;
+      document.getElementById('inspectorTitle').textContent = o ? o.buyer : 'Select an order';
+      document.getElementById('inspectorSub').textContent = o ? `${o.handle} | ${o.id}` : 'Order details will appear here.';
+      const pill = document.getElementById('inspectorPill');
+      pill.textContent = o ? o.status : 'Ready';
+      pill.className = `pill ${o ? cls(o.tone) : 'info'}`;
+
+      const body = document.getElementById('inspectorBody');
+      if (!o) {
+        body.innerHTML = '';
+        return;
+      }
+
+      body.innerHTML = `
+        <div class="detail-block">
+          <h3>Order</h3>
+          <div class="kv"><span>Product</span><span>${o.product}</span></div>
+          <div class="kv"><span>SKU</span><span>${o.sku}</span></div>
+          <div class="kv"><span>Value</span><span>${o.value}</span></div>
+          <div class="kv"><span>Status</span><span>${o.status}</span></div>
+        </div>
+        <div class="detail-block">
+          <h3>Fulfillment</h3>
+          <div class="kv"><span>Package</span><span>${o.packageId}</span></div>
+          <div class="kv"><span>Tracking</span><span>${o.tracking}</span></div>
+          <div class="kv"><span>Warehouse</span><span>${o.warehouse}</span></div>
+          <div class="kv"><span>Ship By</span><span>${o.shipBy}</span></div>
+        </div>
+        <div class="detail-block">
+          <h3>Flags</h3>
+          ${o.flags.map((f) => `<div class="kv"><span>Signal</span><span>${f}</span></div>`).join('')}
+        </div>
+        <div class="detail-block">
+          <h3>Timeline</h3>
+          <div class="timeline">
+            ${o.timeline.map((e) => `
+              <div class="event ${cls(e[2])}">
+                <span class="dot"></span>
+                <span><strong>${e[0]}</strong><span>${e[1]}</span></span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    function bindControls() {
+      document.querySelectorAll('.segmented button').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.segmented button').forEach((b) => b.classList.remove('active'));
+          btn.classList.add('active');
+          activeFilter = btn.dataset.filter;
+          renderOrders();
+        });
+      });
+      document.getElementById('query').addEventListener('input', renderOrders);
+      document.getElementById('viewSelect').addEventListener('change', renderOrders);
+      document.getElementById('sortSelect').addEventListener('change', renderOrders);
+    }
+
+    function tickClock() {
+      const now = new Date();
+      document.getElementById('clock').textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    renderMetrics();
+    renderOrders();
+    renderAlerts();
+    renderInspector();
+    bindControls();
+    tickClock();
+    setInterval(tickClock, 1000);
+  </script>
+</body>
+</html>

@@ -10,11 +10,18 @@ const obj = (v: unknown): Json | undefined =>
 const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined)
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
 
+// auction_config_id arrives as a STRING live but a NUMBER in some payloads; normalize
+// so it can key a Set of already-handled lots.
+const idStr = (v: unknown): string | undefined =>
+  typeof v === 'string' ? v : typeof v === 'number' ? String(v) : undefined
+
 function toCurrent(c: Json): PinnedAuction {
   return {
     productId: str(c['product_id']) ?? '',
     productName: str(c['product_name']) ?? '',
     skuId: str(c['sku_id']),
+    auctionConfigId: idStr(c['auction_config_id']),
+    variantDesc: str(c['variant_desc']),
     ...parseLatestAuctionItem(c),
   }
 }

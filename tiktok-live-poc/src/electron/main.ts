@@ -8,7 +8,9 @@ import { LiveFeed } from '../core/liveFeed'
 import { parseRoster } from '../core/roster'
 import { parsePin } from '../core/pin'
 import { AuctionResults } from '../core/auctionResults'
+import { AuctionWatch } from '../core/auctionWatch'
 import { decodeChat } from '../core/chat'
+import { decodeAuctionIm } from '../core/auctionIm'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
 import { pullTiktokOrders, fetchOrderDetails, pullTiktokOrdersSince, applyOrderDetails, filterOrdersForShow, SHOW_SYNC_BUFFER_MS } from './tiktok-orders'
 import { openDb, upsertOrders, getSnapshot, setCost, setTranscript, setPicked, getShows, setShows, importLegacy, rekeyProductTemplates, setShowNames, getOrdersByFulfillUnit, insertLabelBatch, insertLabelPages, getOrdersForRestack, listLabelBatches, getLabelBatch, getLabelPages, clearLabels, setPacked, setBatchStatus, type LegacyBlob } from './db'
@@ -19,7 +21,7 @@ import { binOf } from '../core/restack/bins'
 import { pdfPageCount, reorderLabels, extractPage, buildPackingSheet, type SheetRow } from './label-pdf'
 import { parseShowList, roomNameMap, type ShowListing } from '../core/showList'
 import { buildClipMedia } from './clip'
-import type { LiveEvent, StatusEvent } from '../core/types'
+import type { LiveEvent, StatusEvent, PinState } from '../core/types'
 
 const DASHBOARD = 'https://shop.tiktok.com/streamer/live/event/dashboard'
 // Set TT_START_URL to log in via Seller Center (https://seller-us.tiktok.com/) —
@@ -35,6 +37,12 @@ let monitor: BrowserWindow | null = null
 let seller: BrowserWindow | null = null // Seller-Center login window for order Sync (independent of the Live Monitor)
 const feed = new LiveFeed()
 const auctionResults = new AuctionResults()
+const auctionWatch = new AuctionWatch()
+let lastPin: PinState | null = null // latest pin/get — attributes im auction.end closes to a lot number
+const imSeen = new Set<string>() // dedupe im auction events across cursor replays/reconnects
+// The lot currently being bid, from im Manager bid messages (leader + lot# per bid).
+// auction.end carries no lot number — this attributes it without depending on pin/get.
+let imCurrent: { lotNumber?: string; productName?: string; leader: string; ts: number } | null = null
 let connected = false
 
 // The monitor window uses a persisted session (persist:tiktok), so TikTok's auth
@@ -141,6 +149,8 @@ const debug = (line: string) => { if (process.env.TT_DEBUG) console.log(line) }
 const TIMING = !!(process.env.TT_LAT || process.env.TT_DEBUG)
 const lat = (line: string) => { if (TIMING) console.log(`[lat ${Date.now()}] ${line}`) }
 let lastWsTickAt = 0 // ms of the most recent WS sold-count tick
+let pinSamples = 0 // pin/get responses seen — proves the 700ms poll is actually feeding us
+let lastPinSig = '' // last auctionConfigId|status, so we log edges not every sample
 const saleSeenAt = new Map<string, number>() // item# → ms when main first produced the sale row
 
 // Send to the dashboard ONLY when it's alive. `viewer?.` guards null but not a
@@ -343,13 +353,75 @@ ipcMain.on('tt-ws-frame', (_e, msg: { url?: string; data?: Uint8Array }) => {
   }
 })
 
-// Source 4: webcast/im/fetch protobuf → viewer comments.
+// Source 4: webcast/im/fetch protobuf → viewer comments + auction lifecycle events.
+// The im stream carries auction.end ~0.3-1.2s after the gavel — 6-7s before the sale
+// exists in auction_result/get — for EVERY auction (pinned or not), making it the
+// universal fast close signal the dead WS sold-tick and the drifted DOM feed never were.
 ipcMain.on('tt-im-frame', (_e, bytes: Uint8Array) => {
   const raw = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  const now = Date.now()
   const items = decodeChat(raw)
   if (items.length) {
     debug(`[tt] chat +${items.length}`)
-    send({ kind: 'chat', items, ts: Date.now() })
+    send({ kind: 'chat', items, ts: now })
+  }
+  for (const ev of decodeAuctionIm(raw)) {
+    if (ev.type === 'end') {
+      const key = `end|${ev.auctionId}|${ev.endMs ?? ''}`
+      if (imSeen.has(key)) continue
+      imSeen.add(key)
+      // auction.end has winner+price but NO lot number. Attribute it from the lot
+      // currently being bid (im Manager bid messages — universal, works unpinned);
+      // fall back to the pin state when it tracks the same winner (pinned lots).
+      // Anything still unattributed gets its lot from the im-result companion ~6s on.
+      const cur = imCurrent && now - imCurrent.ts < 60000 && imCurrent.leader === ev.winner ? imCurrent : null
+      const c = lastPin?.current
+      const pinMatch =
+        !cur && !!lastPin && now - lastPin.ts < 15000 && !!c?.winUsername && c.winUsername === ev.winner &&
+        (c.status === 1 || c.status === 3)
+      const lotNumber = cur?.lotNumber ?? (pinMatch ? c?.variantDesc : undefined)
+      const productName = cur?.productName ?? (pinMatch ? c?.productName : undefined)
+      lat(`A4 im-end ${lotNumber ? `#${lotNumber} ` : ''}${ev.winner} ${ev.price ?? ''}${lotNumber ? '' : ' (lot unattributed)'}`)
+      send({
+        kind: 'auction-closed',
+        auctionConfigId: ev.auctionId || `im-${ev.endMs ?? now}`,
+        lotNumber,
+        productName,
+        winner: ev.winner,
+        price: ev.price,
+        source: 'im',
+        ts: now,
+      })
+    } else {
+      // Manager messages fire on EVERY BID (leader + price + lot number), not just at
+      // result_update. Only the confirmed result carries orderCreateMs — printing off
+      // anything else would label every bid. Bid updates DO give us the lot currently
+      // being auctioned, which is how auction.end (no lot number) gets attributed
+      // without depending on pin/get.
+      if (ev.orderCreateMs == null) {
+        imCurrent = { lotNumber: ev.lotNumber, productName: ev.productName, leader: ev.winner, ts: now }
+        continue
+      }
+      const key = `result|${ev.lotNumber ?? ''}|${ev.winner}|${ev.orderCreateMs}`
+      if (imSeen.has(key)) continue
+      imSeen.add(key)
+      lat(`A4 im-result #${ev.lotNumber ?? '?'} ${ev.winner} ${ev.price ?? ''}`)
+      send({
+        kind: 'auction-closed',
+        auctionConfigId: ev.skuId || `imr-${ev.orderCreateMs ?? now}`,
+        lotNumber: ev.lotNumber,
+        productName: ev.productName,
+        winner: ev.winner,
+        price: ev.price,
+        username: ev.username,
+        source: 'im-result',
+        ts: now,
+      })
+      // The order row exists NOW — the dashboard itself fetches auction_result/get
+      // ~250ms after this push. Don't wait for the 3s poll cycle to backfill.
+      monitor?.webContents.send('tt-poll-now')
+    }
+    if (imSeen.size > 500) imSeen.delete(imSeen.keys().next().value!) // bound the set
   }
 })
 
@@ -363,6 +435,22 @@ ipcMain.on('tt-won-feed', (_e, win: { name?: string; auctionNo?: string; price?:
   const now = Date.now()
   lat(`A2 won-feed #${auctionNo} ${name} (Δws-tick=${lastWsTickAt ? now - lastWsTickAt : '?'}ms)`)
   send({ kind: 'won-feed', name, auctionNo, ...(win?.price ? { price: String(win.price) } : {}), ts: now })
+})
+
+// DEBUG (TT_DEBUG=1): won-feed observer diagnostics from the monitor window → terminal
+// + a retrievable log file, so we can localize why the feed observer sees nothing.
+// Diagnostic for the self-issued pin/get poll: is it succeeding, or being rejected?
+ipcMain.on('tt-pin-diag', (_e, d: unknown) => {
+  lat(`A3.diag ${JSON.stringify(d)}`)
+})
+
+ipcMain.on('tt-won-debug', (_e, d: unknown) => {
+  // Diagnostics only. appendFileSync BLOCKS the main process, which is also what
+  // dispatches print jobs — so this must never run in a normal session.
+  if (!process.env.TT_DEBUG) return
+  const line = `[wonfeed-debug ${new Date().toISOString()}] ${JSON.stringify(d)}`
+  console.log(line)
+  try { appendFileSync(join(app.getPath('userData'), 'wonfeed-debug.log'), line + '\n') } catch { /* ignore */ }
 })
 
 // Sources 2 & 3: REST poll responses → roster + per-sale history.
@@ -398,7 +486,30 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
       send({ kind: 'stream', url, ts: now })
     }
   } else if (msg?.endpoint === 'pin') {
-    send(parsePin(json, now))
+    const pin = parsePin(json, now)
+    lastPin = pin
+    // Liveness/edge trace: AuctionWatch can only fire on a 1→3 TRANSITION, so if pin
+    // samples are sparse we silently miss closes. Log every status/lot change plus a
+    // periodic heartbeat to show the poll is actually feeding us.
+    if (TIMING) {
+      const c = pin.current
+      const sig = `${c?.auctionConfigId ?? '-'}|${c?.status ?? '-'}`
+      pinSamples++
+      if (sig !== lastPinSig) {
+        lastPinSig = sig
+        lat(`A3.sample lot=${c?.variantDesc ?? '?'} status=${c?.status ?? '?'} winner=${c?.winUsername ?? '-'} (sample #${pinSamples})`)
+      } else if (pinSamples % 30 === 0) {
+        lat(`A3.heartbeat ${pinSamples} pin samples, current lot=${c?.variantDesc ?? '?'} status=${c?.status ?? '?'}`)
+      }
+    }
+    send(pin)
+    // pin/get flips status 1→3 within ~0.5s of the gavel — measured 6.0s and 7.3s
+    // AHEAD of the same sale landing in auction_result/get. This is what drives the
+    // label now; auction_result stays authoritative and backfills order/payment.
+    for (const closed of auctionWatch.ingest(pin)) {
+      lat(`A3 pin-close ${closed.lotNumber ?? '?'} ${closed.winner} ${closed.price ?? ''}`)
+      send(closed)
+    }
   }
 })
 

@@ -1,0 +1,1102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SellerFolio Product SKU Intelligence Mock</title>
+  <style>
+    :root {
+      --bg: #090b0c;
+      --panel: #0e1213;
+      --panel-2: #131819;
+      --panel-3: #182021;
+      --line: #263034;
+      --line-bright: #405054;
+      --text: #eef6f2;
+      --muted: #91a09f;
+      --dim: #627073;
+      --green: #37f29a;
+      --cyan: #47dff1;
+      --amber: #f3c04f;
+      --red: #ff5e6c;
+      --violet: #b7a3ff;
+      --green-soft: rgba(55, 242, 154, .12);
+      --cyan-soft: rgba(71, 223, 241, .12);
+      --amber-soft: rgba(243, 192, 79, .14);
+      --red-soft: rgba(255, 94, 108, .14);
+      --violet-soft: rgba(183, 163, 255, .12);
+      --radius: 8px;
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
+    body {
+      overflow: hidden;
+      background:
+        linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px) 0 0 / 72px 72px,
+        linear-gradient(0deg, rgba(255,255,255,.03) 1px, transparent 1px) 0 0 / 72px 72px,
+        var(--bg);
+    }
+
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+
+    .shell {
+      height: 100vh;
+      display: grid;
+      grid-template-rows: 58px 1fr 34px;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 278px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 16px;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(9, 11, 12, .95);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 32px;
+      height: 32px;
+      border: 1px solid var(--line-bright);
+      border-radius: 7px;
+      display: grid;
+      place-items: center;
+      color: var(--green);
+      background: var(--panel);
+      font-size: 13px;
+      font-weight: 850;
+    }
+
+    .brand strong { display: block; font-size: 13px; line-height: 1.1; }
+    .brand span { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+
+    .status-strip {
+      display: flex;
+      gap: 8px;
+      overflow: hidden;
+    }
+
+    .chip {
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(18,23,25,.9);
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .chip strong { color: var(--text); font-weight: 800; }
+    .chip.good { color: var(--green); border-color: rgba(55,242,154,.42); background: var(--green-soft); }
+    .chip.warn { color: var(--amber); border-color: rgba(243,192,79,.42); background: var(--amber-soft); }
+    .chip.danger { color: var(--red); border-color: rgba(255,94,108,.42); background: var(--red-soft); }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .icon-btn, .text-btn {
+      height: 32px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel-2);
+      color: var(--text);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      white-space: nowrap;
+    }
+
+    .icon-btn { width: 34px; font-size: 14px; }
+    .text-btn { padding: 0 12px; gap: 8px; font-size: 12px; font-weight: 750; }
+    .text-btn.primary { color: var(--green); border-color: rgba(55,242,154,.5); background: var(--green-soft); }
+    .text-btn.warn { color: var(--amber); border-color: rgba(243,192,79,.44); background: var(--amber-soft); }
+
+    .main {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 64px minmax(780px, 1fr) 380px;
+    }
+
+    .rail {
+      border-right: 1px solid var(--line);
+      background: rgba(11,14,15,.96);
+      padding: 12px 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .rail button {
+      width: 42px;
+      height: 42px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      display: grid;
+      place-items: center;
+      font-size: 16px;
+      position: relative;
+    }
+
+    .rail button.active {
+      color: var(--green);
+      border-color: rgba(55,242,154,.36);
+      background: var(--green-soft);
+    }
+
+    .rail button.alert::after {
+      content: "";
+      position: absolute;
+      top: 7px;
+      right: 7px;
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--amber);
+      box-shadow: 0 0 12px rgba(243,192,79,.7);
+    }
+
+    .work {
+      min-width: 0;
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      background: rgba(9,11,12,.72);
+    }
+
+    .hero {
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: end;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.05;
+      letter-spacing: 0;
+    }
+
+    .hero p {
+      margin: 7px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      max-width: 830px;
+    }
+
+    .filters {
+      display: grid;
+      grid-template-columns: 220px 150px 150px;
+      gap: 8px;
+    }
+
+    .field {
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel-2);
+      color: var(--text);
+      padding: 0 10px;
+      min-width: 0;
+    }
+
+    .metrics {
+      padding: 14px 20px;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(126px, 1fr));
+      gap: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      min-height: 86px;
+      padding: 11px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 7px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .metric::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 3px;
+      background: var(--line-bright);
+    }
+
+    .metric.good::before { background: var(--green); }
+    .metric.info::before { background: var(--cyan); }
+    .metric.warn::before { background: var(--amber); }
+    .metric.danger::before { background: var(--red); }
+    .metric.violet::before { background: var(--violet); }
+
+    .metric .label {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .metric .value {
+      align-self: center;
+      font-size: 28px;
+      line-height: 1;
+      font-weight: 850;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .metric .meta {
+      color: var(--dim);
+      font-size: 11px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .content {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(290px, .42fr) minmax(520px, .58fr);
+      gap: 12px;
+      padding: 14px 20px 18px;
+      overflow: hidden;
+    }
+
+    .section {
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(14,18,19,.88);
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
+    }
+
+    .section-head {
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .section-head h2 {
+      margin: 0;
+      font-size: 12px;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+
+    .segmented {
+      height: 28px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel-2);
+      display: inline-flex;
+      padding: 2px;
+    }
+
+    .segmented button {
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 11px;
+      padding: 0 9px;
+    }
+
+    .segmented button.active {
+      background: var(--green-soft);
+      color: var(--green);
+    }
+
+    .product-list {
+      min-height: 0;
+      overflow: auto;
+      padding: 10px;
+      display: grid;
+      gap: 9px;
+      align-content: start;
+    }
+
+    .product-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-2);
+      padding: 10px;
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      transition: background .16s ease, border-color .16s ease;
+    }
+
+    .product-card:hover, .product-card.selected {
+      border-color: rgba(71,223,241,.48);
+      background: rgba(71,223,241,.055);
+    }
+
+    .product-card.selected { box-shadow: inset 3px 0 0 var(--cyan); }
+
+    .thumb {
+      width: 44px;
+      height: 44px;
+      border-radius: 7px;
+      border: 1px solid var(--line-bright);
+      background:
+        linear-gradient(135deg, rgba(71,223,241,.3), rgba(55,242,154,.08)),
+        repeating-linear-gradient(45deg, rgba(255,255,255,.08) 0 4px, transparent 4px 8px);
+    }
+
+    .thumb.alt {
+      background:
+        linear-gradient(135deg, rgba(183,163,255,.28), rgba(243,192,79,.11)),
+        repeating-linear-gradient(45deg, rgba(255,255,255,.08) 0 4px, transparent 4px 8px);
+    }
+
+    .thumb.warn {
+      background:
+        linear-gradient(135deg, rgba(255,94,108,.25), rgba(243,192,79,.16)),
+        repeating-linear-gradient(45deg, rgba(255,255,255,.08) 0 4px, transparent 4px 8px);
+    }
+
+    .maintext {
+      display: block;
+      font-weight: 800;
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .subtext {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .pill {
+      height: 22px;
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 0 8px;
+      font-size: 10px;
+      font-weight: 850;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      white-space: nowrap;
+    }
+
+    .pill.good { color: var(--green); border-color: rgba(55,242,154,.42); background: var(--green-soft); }
+    .pill.info { color: var(--cyan); border-color: rgba(71,223,241,.42); background: var(--cyan-soft); }
+    .pill.warn { color: var(--amber); border-color: rgba(243,192,79,.42); background: var(--amber-soft); }
+    .pill.danger { color: var(--red); border-color: rgba(255,94,108,.42); background: var(--red-soft); }
+    .pill.violet { color: var(--violet); border-color: rgba(183,163,255,.42); background: var(--violet-soft); }
+
+    .table-wrap {
+      min-height: 0;
+      overflow: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    th, td {
+      padding: 10px;
+      border-bottom: 1px solid rgba(38,48,52,.82);
+      text-align: left;
+      vertical-align: middle;
+      font-size: 12px;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      color: var(--dim);
+      background: rgba(18,23,25,.82);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+
+    tbody tr {
+      transition: background .16s ease;
+      cursor: pointer;
+    }
+
+    tbody tr:hover, tbody tr.selected { background: rgba(71,223,241,.06); }
+    tbody tr.selected { box-shadow: inset 3px 0 0 var(--cyan); }
+
+    .sku-cell {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .small-thumb {
+      width: 34px;
+      height: 34px;
+      border-radius: 7px;
+      border: 1px solid var(--line-bright);
+      flex: 0 0 auto;
+      background:
+        linear-gradient(135deg, rgba(71,223,241,.3), rgba(55,242,154,.08)),
+        repeating-linear-gradient(45deg, rgba(255,255,255,.08) 0 4px, transparent 4px 8px);
+    }
+
+    .money {
+      font-variant-numeric: tabular-nums;
+      font-weight: 800;
+    }
+
+    .positive { color: var(--green); }
+    .negative { color: var(--red); }
+    .missing { color: var(--amber); }
+
+    .inspector {
+      min-width: 0;
+      min-height: 0;
+      border-left: 1px solid var(--line);
+      background: rgba(12,15,16,.94);
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .inspector-head {
+      padding: 18px;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      gap: 13px;
+    }
+
+    .identity-top {
+      display: grid;
+      grid-template-columns: 54px minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .inspector h2 {
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.15;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .inspector .handle {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 5px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .score {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      padding: 10px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .score div {
+      min-width: 0;
+      border: 1px solid rgba(38,48,52,.85);
+      border-radius: 7px;
+      padding: 8px;
+      background: rgba(9,11,12,.35);
+    }
+
+    .score span {
+      display: block;
+      color: var(--dim);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .score strong {
+      display: block;
+      margin-top: 5px;
+      font-size: 13px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .inspector-body {
+      min-height: 0;
+      overflow: auto;
+      padding: 14px 18px 18px;
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .detail-block {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .detail-block h3 {
+      margin: 0;
+      padding: 10px 11px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: minmax(118px, .85fr) minmax(0, 1.15fr);
+      gap: 8px;
+      padding: 8px 11px;
+      border-bottom: 1px solid rgba(38,48,52,.72);
+      font-size: 12px;
+    }
+
+    .kv:last-child { border-bottom: 0; }
+    .kv span:first-child { color: var(--dim); }
+    .kv span:last-child {
+      text-align: right;
+      overflow-wrap: anywhere;
+    }
+
+    .rule-list {
+      display: grid;
+      gap: 9px;
+      padding: 10px 11px 12px;
+    }
+
+    .rule {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr);
+      gap: 9px;
+      align-items: start;
+    }
+
+    .rule-dot {
+      width: 24px;
+      height: 24px;
+      border-radius: 7px;
+      border: 1px solid rgba(55,242,154,.38);
+      background: var(--green-soft);
+      color: var(--green);
+      display: grid;
+      place-items: center;
+      font-weight: 900;
+      font-size: 11px;
+    }
+
+    .rule.warn .rule-dot {
+      border-color: rgba(243,192,79,.42);
+      background: var(--amber-soft);
+      color: var(--amber);
+    }
+
+    .rule.danger .rule-dot {
+      border-color: rgba(255,94,108,.42);
+      background: var(--red-soft);
+      color: var(--red);
+    }
+
+    .rule strong { display: block; font-size: 12px; }
+    .rule span { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+
+    .footer {
+      border-top: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      color: var(--dim);
+      background: #080a0b;
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    @media (max-width: 1240px) {
+      body { overflow: auto; }
+      .shell { height: auto; min-height: 100vh; }
+      .main { grid-template-columns: 54px minmax(0, 1fr); }
+      .inspector { grid-column: 2; border-left: 0; border-top: 1px solid var(--line); min-height: 560px; }
+      .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .content { grid-template-columns: 1fr; overflow: visible; }
+      .topbar { grid-template-columns: 1fr auto; }
+      .status-strip { display: none; }
+    }
+
+    @media (max-width: 760px) {
+      .topbar { padding: 0 10px; }
+      .actions .text-btn:not(.primary) { display: none; }
+      .main { grid-template-columns: 1fr; }
+      .rail { display: none; }
+      .hero { grid-template-columns: 1fr; padding: 16px 12px 12px; }
+      h1 { font-size: 21px; }
+      .filters { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 12px; }
+      .content { padding: 12px; }
+      .inspector { grid-column: 1; }
+      th:nth-child(4), td:nth-child(4),
+      th:nth-child(5), td:nth-child(5) { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">SF</div>
+        <div>
+          <strong>SellerFolio Identity</strong>
+          <span>Product and SKU intelligence mock</span>
+        </div>
+      </div>
+      <div class="status-strip">
+        <span class="chip good"><strong>3</strong> product IDs</span>
+        <span class="chip"><strong>20</strong> SKU IDs</span>
+        <span class="chip warn"><strong>4</strong> missing costs</span>
+        <span class="chip danger"><strong>2</strong> name collisions</span>
+        <span class="chip">Seller Center order/list</span>
+      </div>
+      <div class="actions">
+        <button class="icon-btn" title="Refresh">R</button>
+        <button class="text-btn">Export SKU Map</button>
+        <button class="text-btn primary">Apply Costs</button>
+      </div>
+    </header>
+
+    <main class="main">
+      <nav class="rail" aria-label="primary navigation">
+        <button title="Command Center">C</button>
+        <button title="Live Monitor">L</button>
+        <button title="Sold Items">S</button>
+        <button title="Pack Queue">P</button>
+        <button title="SKU Intelligence" class="active alert">I</button>
+        <button title="Settings">G</button>
+      </nav>
+
+      <section class="work">
+        <div class="hero">
+          <div>
+            <h1>Stable Product / SKU Intelligence</h1>
+            <p>Mocked reconciliation view using Seller Center `product_id`, `sku_id`, `order_line_ids`, product images, SKU prices, and cost templates.</p>
+          </div>
+          <div class="filters">
+            <input class="field" id="query" placeholder="Search product, SKU, order" />
+            <select class="field" id="statusFilter">
+              <option value="all">All Identity</option>
+              <option value="clean">Clean</option>
+              <option value="missing-cost">Missing Cost</option>
+              <option value="collision">Name Collision</option>
+            </select>
+            <select class="field" id="sortSelect">
+              <option value="revenue">Revenue</option>
+              <option value="margin">Margin</option>
+              <option value="sku">SKU Count</option>
+              <option value="name">Name</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="metrics" id="metrics"></div>
+
+        <div class="content">
+          <section class="section">
+            <div class="section-head">
+              <h2>Product Clusters</h2>
+              <span class="pill warn">name fallback blocked</span>
+            </div>
+            <div class="product-list" id="productList"></div>
+          </section>
+
+          <section class="section">
+            <div class="section-head">
+              <h2>SKU Ledger</h2>
+              <div class="segmented">
+                <button class="active" data-mode="sku">SKU</button>
+                <button data-mode="order">Order</button>
+                <button data-mode="cost">Cost</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width: 34%">SKU</th>
+                    <th style="width: 16%">Product ID</th>
+                    <th style="width: 14%">Revenue</th>
+                    <th style="width: 14%">Cost</th>
+                    <th style="width: 12%">Margin</th>
+                    <th style="width: 10%">Orders</th>
+                  </tr>
+                </thead>
+                <tbody id="skuRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <aside class="inspector">
+        <div class="inspector-head">
+          <div class="identity-top">
+            <div class="thumb" id="inspectorThumb"></div>
+            <div style="min-width:0">
+              <h2 id="inspectorTitle">Select a SKU</h2>
+              <div class="handle" id="inspectorSub">Identity detail will appear here.</div>
+            </div>
+            <span class="pill info" id="inspectorPill">Ready</span>
+          </div>
+          <div class="score">
+            <div><span>Revenue</span><strong id="scoreRevenue">$0.00</strong></div>
+            <div><span>Cost</span><strong id="scoreCost">$0.00</strong></div>
+            <div><span>Margin</span><strong id="scoreMargin">0%</strong></div>
+          </div>
+          <div class="actions">
+            <button class="text-btn">Merge Alias</button>
+            <button class="text-btn warn">Set Cost</button>
+            <button class="text-btn primary">Save Rule</button>
+          </div>
+        </div>
+        <div class="inspector-body" id="inspectorBody"></div>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <span>Mock fields: sku_module.product_id, sku_module.sku_id, order_line_ids, product_image, sku_unit_price, sku_total_price</span>
+      <span id="clock">--:--:--</span>
+    </footer>
+  </div>
+
+  <script>
+    const products = [
+      {
+        id: '1732451632603436003',
+        name: 'Bin B - Alo Yoga and More, No Cancels',
+        image: 'cyan',
+        status: 'clean',
+        skus: [
+          { sku: 'SKU-B-069', orderLineIds: ['OL-069'], display: '#69 / Small black set', revenue: 82, cost: 28, orders: 1, units: 1 },
+          { sku: 'SKU-B-070', orderLineIds: ['OL-070'], display: '#70 / Blue leggings', revenue: 74, cost: 24, orders: 1, units: 1 },
+          { sku: 'SKU-B-071', orderLineIds: ['OL-071'], display: '#71 / Mixed athletic top', revenue: 65, cost: null, orders: 1, units: 1 },
+          { sku: 'SKU-B-072', orderLineIds: ['OL-072'], display: '#72 / Cream pullover', revenue: 95, cost: 34, orders: 1, units: 1 }
+        ]
+      },
+      {
+        id: '1732451632602715107',
+        name: 'Bin A - Alo Yoga and More, No Cancels',
+        image: 'violet',
+        status: 'missing-cost',
+        skus: [
+          { sku: 'SKU-A-055', orderLineIds: ['OL-055'], display: '#55 / Green sports bra', revenue: 48, cost: 16, orders: 1, units: 1 },
+          { sku: 'SKU-A-061', orderLineIds: ['OL-061'], display: '#61 / Black joggers', revenue: 36, cost: null, orders: 1, units: 1 },
+          { sku: 'SKU-A-062', orderLineIds: ['OL-062'], display: '#62 / Yoga shorts', revenue: 42, cost: 14, orders: 1, units: 1 },
+          { sku: 'SKU-A-063', orderLineIds: ['OL-063'], display: '#63 / Tank bundle', revenue: 54, cost: null, orders: 1, units: 1 }
+        ]
+      },
+      {
+        id: '1732451632609971008',
+        name: 'Bin B - Alo Yoga and More, No Cancels',
+        image: 'warn',
+        status: 'collision',
+        skus: [
+          { sku: 'SKU-C-080', orderLineIds: ['OL-080'], display: '#80 / Boutique mixed lot', revenue: 64, cost: 21, orders: 1, units: 1 },
+          { sku: 'SKU-C-081', orderLineIds: ['OL-081'], display: '#81 / Premium mixed lot', revenue: 88, cost: null, orders: 1, units: 1 }
+        ]
+      }
+    ];
+
+    let selectedProductId = products[0].id;
+    let selectedSku = products[0].skus[0].sku;
+
+    function money(value) {
+      if (value == null) return 'Missing';
+      return `$${value.toFixed(2)}`;
+    }
+
+    function productRows() {
+      return products.map((product) => {
+        const revenue = product.skus.reduce((sum, sku) => sum + sku.revenue, 0);
+        const cost = product.skus.reduce((sum, sku) => sum + (sku.cost || 0), 0);
+        const missing = product.skus.filter((sku) => sku.cost == null).length;
+        return { ...product, revenue, cost, missing, margin: revenue ? Math.round(((revenue - cost) / revenue) * 100) : 0 };
+      });
+    }
+
+    function allSkus() {
+      return productRows().flatMap((product) => product.skus.map((sku) => ({
+        ...sku,
+        productId: product.id,
+        productName: product.name,
+        productStatus: product.status,
+        image: product.image
+      })));
+    }
+
+    function selectedSkuRow() {
+      return allSkus().find((sku) => sku.sku === selectedSku) || allSkus()[0];
+    }
+
+    function toneForStatus(status) {
+      if (status === 'collision') return 'danger';
+      if (status === 'missing-cost') return 'warn';
+      return 'good';
+    }
+
+    function thumbClass(image) {
+      if (image === 'violet') return 'thumb alt';
+      if (image === 'warn') return 'thumb warn';
+      return 'thumb';
+    }
+
+    function renderMetrics() {
+      const rows = productRows();
+      const skus = allSkus();
+      const cards = [
+        { label: 'Product IDs', value: rows.length, meta: 'stable groups', tone: 'good' },
+        { label: 'SKU IDs', value: skus.length, meta: 'variant keys', tone: 'info' },
+        { label: 'Revenue', value: `$${skus.reduce((sum, sku) => sum + sku.revenue, 0).toFixed(0)}`, meta: 'SKU total', tone: 'good' },
+        { label: 'Missing Costs', value: skus.filter((sku) => sku.cost == null).length, meta: 'needs template', tone: 'warn' },
+        { label: 'Name Collisions', value: 2, meta: 'same name, different IDs', tone: 'danger' }
+      ];
+      document.getElementById('metrics').innerHTML = cards.map((card) => `
+        <div class="metric ${card.tone}">
+          <span class="label">${card.label}</span>
+          <span class="value">${card.value}</span>
+          <span class="meta"><span>${card.meta}</span><span>${card.value ? 'open' : 'clear'}</span></span>
+        </div>
+      `).join('');
+    }
+
+    function filteredProducts() {
+      const q = document.getElementById('query').value.trim().toLowerCase();
+      const status = document.getElementById('statusFilter').value;
+      return productRows().filter((product) => {
+        const matchesStatus = status === 'all' || product.status === status;
+        const haystack = [product.id, product.name, ...product.skus.flatMap((sku) => [sku.sku, sku.display, ...sku.orderLineIds])].join(' ').toLowerCase();
+        return matchesStatus && (!q || haystack.includes(q));
+      });
+    }
+
+    function renderProducts() {
+      document.getElementById('productList').innerHTML = filteredProducts().map((product) => `
+        <button class="product-card ${product.id === selectedProductId ? 'selected' : ''}" data-id="${product.id}">
+          <div class="${thumbClass(product.image)}" aria-hidden="true"></div>
+          <div style="min-width:0">
+            <span class="maintext">${product.name}</span>
+            <span class="subtext">${product.id} | ${product.skus.length} SKUs | ${money(product.revenue)}</span>
+          </div>
+          <span class="pill ${toneForStatus(product.status)}">${product.status.replace('-', ' ')}</span>
+        </button>
+      `).join('');
+
+      document.querySelectorAll('.product-card').forEach((node) => {
+        node.addEventListener('click', () => {
+          selectedProductId = node.dataset.id;
+          selectedSku = products.find((product) => product.id === selectedProductId).skus[0].sku;
+          renderProducts();
+          renderSkus();
+          renderInspector();
+        });
+      });
+    }
+
+    function filteredSkus() {
+      const q = document.getElementById('query').value.trim().toLowerCase();
+      const status = document.getElementById('statusFilter').value;
+      let rows = allSkus().filter((sku) => {
+        const productMatch = status === 'all' || sku.productStatus === status;
+        const selectedMatch = sku.productId === selectedProductId || q || status !== 'all';
+        const haystack = [sku.sku, sku.display, sku.productId, sku.productName, ...sku.orderLineIds].join(' ').toLowerCase();
+        return productMatch && selectedMatch && (!q || haystack.includes(q));
+      });
+      const sort = document.getElementById('sortSelect').value;
+      if (sort === 'revenue') rows = rows.slice().sort((a, b) => b.revenue - a.revenue);
+      if (sort === 'margin') rows = rows.slice().sort((a, b) => marginValue(b) - marginValue(a));
+      if (sort === 'sku') rows = rows.slice().sort((a, b) => a.sku.localeCompare(b.sku));
+      if (sort === 'name') rows = rows.slice().sort((a, b) => a.display.localeCompare(b.display));
+      return rows;
+    }
+
+    function marginValue(sku) {
+      if (sku.cost == null) return -999;
+      return Math.round(((sku.revenue - sku.cost) / sku.revenue) * 100);
+    }
+
+    function renderSkus() {
+      document.getElementById('skuRows').innerHTML = filteredSkus().map((sku) => {
+        const margin = marginValue(sku);
+        const marginClass = sku.cost == null ? 'missing' : margin >= 55 ? 'positive' : margin < 30 ? 'negative' : '';
+        return `
+          <tr data-sku="${sku.sku}" class="${sku.sku === selectedSku ? 'selected' : ''}">
+            <td>
+              <div class="sku-cell">
+                <div class="small-thumb" aria-hidden="true"></div>
+                <div style="min-width:0">
+                  <span class="maintext">${sku.display}</span>
+                  <span class="subtext">${sku.sku} | line ${sku.orderLineIds.join(', ')}</span>
+                </div>
+              </div>
+            </td>
+            <td><span class="maintext">${sku.productId}</span></td>
+            <td><span class="money">${money(sku.revenue)}</span></td>
+            <td><span class="money ${sku.cost == null ? 'missing' : ''}">${money(sku.cost)}</span></td>
+            <td><span class="money ${marginClass}">${sku.cost == null ? 'Set' : margin + '%'}</span></td>
+            <td>${sku.orders}</td>
+          </tr>
+        `;
+      }).join('');
+
+      document.querySelectorAll('#skuRows tr').forEach((row) => {
+        row.addEventListener('click', () => {
+          selectedSku = row.dataset.sku;
+          selectedProductId = selectedSkuRow().productId;
+          renderProducts();
+          renderSkus();
+          renderInspector();
+        });
+      });
+    }
+
+    function renderInspector() {
+      const sku = selectedSkuRow();
+      const margin = marginValue(sku);
+      const costText = money(sku.cost);
+      const marginText = sku.cost == null ? 'Missing' : `${margin}%`;
+      document.getElementById('inspectorThumb').className = thumbClass(sku.image);
+      document.getElementById('inspectorTitle').textContent = sku.display;
+      document.getElementById('inspectorSub').textContent = `${sku.sku} | ${sku.productId}`;
+      const pill = document.getElementById('inspectorPill');
+      pill.textContent = sku.productStatus.replace('-', ' ');
+      pill.className = `pill ${toneForStatus(sku.productStatus)}`;
+      document.getElementById('scoreRevenue').textContent = money(sku.revenue);
+      document.getElementById('scoreCost').textContent = costText;
+      document.getElementById('scoreMargin').textContent = marginText;
+
+      document.getElementById('inspectorBody').innerHTML = `
+        <div class="detail-block">
+          <h3>Stable Identity</h3>
+          <div class="kv"><span>product_id</span><span>${sku.productId}</span></div>
+          <div class="kv"><span>sku_id</span><span>${sku.sku}</span></div>
+          <div class="kv"><span>order_line_ids</span><span>${sku.orderLineIds.join(', ')}</span></div>
+          <div class="kv"><span>product_name</span><span>${sku.productName}</span></div>
+          <div class="kv"><span>variant</span><span>${sku.display}</span></div>
+        </div>
+        <div class="detail-block">
+          <h3>Cost Template</h3>
+          <div class="kv"><span>Template Key</span><span>${sku.productId}:${sku.sku}</span></div>
+          <div class="kv"><span>Revenue</span><span>${money(sku.revenue)}</span></div>
+          <div class="kv"><span>Cost</span><span>${costText}</span></div>
+          <div class="kv"><span>Margin</span><span>${marginText}</span></div>
+        </div>
+        <div class="detail-block">
+          <h3>Rules</h3>
+          <div class="rule-list">
+            <div class="rule">
+              <span class="rule-dot">ID</span>
+              <span><strong>Use product_id for grouping</strong><span>Prevents duplicate names from merging into one ledger bucket.</span></span>
+            </div>
+            <div class="rule ${sku.cost == null ? 'warn' : ''}">
+              <span class="rule-dot">$</span>
+              <span><strong>${sku.cost == null ? 'Cost template missing' : 'Cost template applied'}</strong><span>Template should key by product ID and SKU ID, not product name.</span></span>
+            </div>
+            <div class="rule ${sku.productStatus === 'collision' ? 'danger' : ''}">
+              <span class="rule-dot">NM</span>
+              <span><strong>${sku.productStatus === 'collision' ? 'Name collision detected' : 'Name fallback disabled'}</strong><span>Same product name can point at different TikTok product IDs.</span></span>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function bindControls() {
+      document.getElementById('query').addEventListener('input', () => {
+        renderProducts();
+        renderSkus();
+      });
+      document.getElementById('statusFilter').addEventListener('change', () => {
+        renderProducts();
+        renderSkus();
+      });
+      document.getElementById('sortSelect').addEventListener('change', renderSkus);
+      document.querySelectorAll('.segmented button').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.segmented button').forEach((node) => node.classList.remove('active'));
+          btn.classList.add('active');
+        });
+      });
+    }
+
+    function tickClock() {
+      const now = new Date();
+      document.getElementById('clock').textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    renderMetrics();
+    renderProducts();
+    renderSkus();
+    renderInspector();
+    bindControls();
+    tickClock();
+    setInterval(tickClock, 1000);
+  </script>
+</body>
+</html>
