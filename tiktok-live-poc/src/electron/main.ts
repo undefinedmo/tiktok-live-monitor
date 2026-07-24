@@ -203,6 +203,11 @@ function createMonitor() {
       contextIsolation: false,
       sandbox: false,
       preload: join(__dirname, 'preload.cjs'),
+      // The im/pin/roster poll loops are page timers, and Chromium clamps timers in
+      // hidden/occluded windows (chained setTimeouts down to 1/min after 5 backgrounded
+      // minutes) — minimizing this window would stretch the ~1s close signal to seconds.
+      // TikTok's own dashboard dodges the same clamp in-browser via worker-timer.js.
+      backgroundThrottling: false,
     },
   })
   monitor.webContents.setWindowOpenHandler(({ url }) => {
@@ -820,7 +825,9 @@ let printChain: Promise<unknown> = Promise.resolve()
 
 function getPrintWindow(): BrowserWindow {
   if (printWin && !printWin.isDestroyed()) return printWin
-  printWin = new BrowserWindow({ width: 240, height: 130, show: false, webPreferences: { contextIsolation: true, nodeIntegration: false } })
+  // backgroundThrottling: this window is never shown, so Chromium would otherwise
+  // throttle its rendering/timers from birth — slowing every label's render step.
+  printWin = new BrowserWindow({ width: 240, height: 130, show: false, webPreferences: { contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } })
   printWin.on('closed', () => { printWin = null })
   return printWin
 }
