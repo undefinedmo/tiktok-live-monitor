@@ -283,19 +283,37 @@ function setupChatInput() {
 }
 setupChatInput()
 
-// ── top buyer intel ─────────────────────────────────────────────────────────
+// ── top buyers (this show) ──────────────────────────────────────────────────
+// Ranked leaderboard for the live session. buyers is ev.topBuyers — already sorted
+// by spend desc and recomputed each sales poll — so this updates as sales land, and
+// ranks 2-8 visibly move even when the #1 whale is stable (the single-name version
+// looked "stuck" precisely because it only ever showed #1).
+const TOP_BUYERS_SHOWN = 8
 function renderTopBuyer(buyers: BuyerAgg[]) {
-  const top = buyers[0]
-  $('topBuyerName').textContent = top ? '@' + (top.handle ?? top.username) : '—'
-  $('topBuyerSpend').textContent = top ? `$${(top.totalCents / 100).toFixed(0)}` : '—'
-  const bars = $('topBuyerBars')
-  bars.replaceChildren()
-  const top8 = buyers.slice(0, 8)
-  const max = Math.max(1, ...top8.map((b) => b.totalCents))
-  top8.reverse().forEach((b) => {
-    const bar = el('div')
-    bar.style.cssText = `flex:1;height:${Math.max(10, (b.totalCents / max) * 100)}%;border-radius:2px;background:linear-gradient(180deg,#8a78ff,#6b56f0);`
-    bars.appendChild(bar)
+  const list = $('topBuyersList')
+  list.replaceChildren()
+  $('topBuyersCount').textContent = buyers.length ? `${buyers.length} buyer${buyers.length === 1 ? '' : 's'}` : ''
+  if (!buyers.length) {
+    const empty = el('div', 'mono', 'No sales yet')
+    empty.style.cssText = 'font-size:11px;color:#5c6473;'
+    list.appendChild(empty)
+    return
+  }
+  buyers.slice(0, TOP_BUYERS_SHOWN).forEach((b, i) => {
+    const rank = i + 1
+    const lead = rank === 1
+    const row = el('div')
+    row.style.cssText = 'display:flex;align-items:center;gap:9px;'
+    const rk = el('div', 'mono', String(rank))
+    rk.style.cssText = `width:15px;text-align:center;font-size:11px;font-weight:${lead ? '700' : '400'};color:${lead ? '#9b6cf6' : '#5c6473'};`
+    const name = el('div', '', '@' + (b.handle ?? (b.username || '—')))
+    name.style.cssText = `flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;font-weight:${lead ? '600' : '400'};color:${lead ? '#fff' : '#c4ccd9'};`
+    const spend = el('div', 'mono', `$${(b.totalCents / 100).toFixed(0)}`)
+    spend.style.cssText = 'font-size:12.5px;font-weight:600;color:#9b6cf6;'
+    const items = el('div', 'mono', `·${b.itemCount}`)
+    items.style.cssText = 'width:26px;text-align:right;font-size:11px;color:#5c6473;'
+    row.append(rk, name, spend, items)
+    list.appendChild(row)
   })
 }
 
@@ -487,26 +505,31 @@ function renderRecap() {
   }
 }
 async function transcribeSale(s: Sale) {
+  // Acquire the capture lock BEFORE the first await. grabClip() is slow, so checking
+  // the flag here but only setting it after that await let a burst of sales (e.g. the
+  // connect-time backfill firing several 'sales' events in one tick) all pass the guard
+  // and fire concurrent Gemini calls. Set-before-await serializes them; the extras drop.
   if (!recapEnabled || transcribing || !window.recapAPI) return
-  const clip = await grabClip()
-  if (!clip || clip.size < 2000) return
   transcribing = true
-  const entry: Recap = { head: `${s.skuDesc ?? ''} · ${s.productName.slice(0, 28)} — @${s.buyer.handle ?? s.buyer.username}`, status: 'transcribing', text: '' }
-  recaps.unshift(entry)
-  if (recaps.length > 30) recaps.pop()
-  renderRecap()
+  let entry: Recap | undefined
   try {
+    const clip = await grabClip()
+    if (!clip || clip.size < 2000) return
+    entry = { head: `${s.skuDesc ?? ''} · ${s.productName.slice(0, 28)} — @${s.buyer.handle ?? s.buyer.username}`, status: 'transcribing', text: '' }
+    recaps.unshift(entry)
+    if (recaps.length > 30) recaps.pop()
+    renderRecap()
     const audio = new Uint8Array(await clip.arrayBuffer())
     const res = await window.recapAPI.transcribe({ audio, productName: s.productName })
     entry.status = res.text ? 'done' : 'error'
     entry.text = res.text ?? res.error ?? 'failed'
     if (res.text) { transcriptsByOrder.set(s.orderId, res.text); renderLedger() }
   } catch (e) {
-    entry.status = 'error'
-    entry.text = (e as Error).message
+    if (entry) { entry.status = 'error'; entry.text = (e as Error).message }
+  } finally {
+    transcribing = false
+    renderRecap()
   }
-  transcribing = false
-  renderRecap()
 }
 // structured per-product (per-bin) transcription — one capture covers every order of that product
 const productTxBusy = new Set<string>()

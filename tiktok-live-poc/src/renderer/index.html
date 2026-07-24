@@ -350,14 +350,11 @@
             </div>
           </div>
           <div class="panel pad">
-            <div style="display:flex;align-items:center;gap:11px;">
-              <div style="width:38px;height:38px;border-radius:8px;background:linear-gradient(135deg,#1c2c47,#2a2150);border:1px solid #364663;display:flex;align-items:end;justify-content:center;gap:2px;padding-bottom:9px;"><div style="width:3px;height:8px;background:#7da8ff;border-radius:1px;"></div><div style="width:3px;height:13px;background:#8a78ff;border-radius:1px;"></div><div style="width:3px;height:6px;background:#9b6cf6;border-radius:1px;"></div></div>
-              <div style="flex:1;"><div class="mono" style="font-size:10px;letter-spacing:1px;color:#707a8c;">BUYER INTEL</div><div id="topBuyerName" style="font-weight:700;color:#fff;margin-top:2px;">--</div></div>
-              <div id="topBuyerSpend" class="mono" style="font-size:18px;font-weight:600;color:#9b6cf6;">--</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <span class="mono" style="font-size:10px;letter-spacing:1px;color:#707a8c;">TOP BUYERS &middot; THIS SHOW</span>
+              <span id="topBuyersCount" class="mono" style="font-size:9.5px;letter-spacing:.5px;color:#5c6473;"></span>
             </div>
-            <div style="display:flex;gap:7px;margin-top:11px;"><span class="tag whale">WHALE STATUS</span><span class="tag" style="background:#161b24;color:#aab2c0;border:1px solid #262c38;">ACTIVE SESSION</span></div>
-            <div id="topBuyerBars" style="display:flex;align-items:end;gap:5px;height:46px;margin-top:14px;"></div>
-            <div style="display:flex;justify-content:space-between;margin-top:8px;font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.5px;color:#5c6473;"><span>SHOW HISTORY</span><span>ACTIVE SESSION</span></div>
+            <div id="topBuyersList" style="margin-top:11px;display:flex;flex-direction:column;gap:7px;"></div>
           </div>
           <div class="panel" style="padding:15px;background:linear-gradient(180deg,#10131b,#0c0f16);border-color:#2a3142;">
             <div style="display:flex;align-items:center;justify-content:space-between;">
