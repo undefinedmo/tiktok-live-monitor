@@ -489,8 +489,8 @@
             <label style="display:flex;gap:8px;align-items:center;margin-top:10px;"><input type="checkbox" id="autoPrint" /> Auto-print a label when an item sells</label>
             <div style="margin-top:12px;">
               <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Print source <span style="font-weight:400;color:#7a8296;">(auto-print signal)</span></div>
-              <label style="display:flex;gap:8px;align-items:center;"><input type="radio" name="printSource" value="pin" checked /> Fast <span style="color:#7a8296;">— live server signals (auction close), ~1s after the gavel</span></label>
-              <label style="display:flex;gap:8px;align-items:center;margin-top:5px;"><input type="radio" name="printSource" value="order" /> Confirmed <span style="color:#7a8296;">— order data, authoritative but ~6–7s after the auction ends</span></label>
+              <label style="display:flex;gap:8px;align-items:center;"><input type="radio" name="printSource" value="pin" checked /> Fast <span style="color:#7a8296;">— live auction-close signal, ~1s after the gavel — the same feed TikTok's console paints “Won” from</span></label>
+              <label style="display:flex;gap:8px;align-items:center;margin-top:5px;"><input type="radio" name="printSource" value="order" /> Confirmed <span style="color:#7a8296;">— order data, authoritative — TikTok only creates the order record ~6s after the close, so labels trail by ~6–7s</span></label>
               <div id="feedWinsSeen" style="margin-top:7px;font-size:11px;color:#7fd6a6;"></div>
             </div>
           </div>
