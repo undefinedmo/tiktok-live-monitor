@@ -370,6 +370,30 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
       debug(`[tt] stream ${url.slice(0, 70)}`)
       send({ kind: 'stream', url, ts: now })
     }
+  } else if (msg?.endpoint === 'session_list') {
+    // Bootstrap fallback: adopt the newest LIVE room. Liveness = during_time still
+    // growing (start+during within 2min of now) or absent; a room that ended keeps a
+    // frozen during_time and MUST NOT be adopted — pollSent latches, so locking onto
+    // a dead room would block the real one when the next show starts.
+    if (pollSent) return
+    const sessions = (json as { data?: { live_sessions?: { id?: string; name?: string; live_room_infos?: { room_id?: string; start_time?: string; during_time?: string }[] }[] } })?.data?.live_sessions ?? []
+    const nowSec = Math.floor(now / 1000)
+    for (const s of sessions) {
+      for (const r of s.live_room_infos ?? []) {
+        const start = Number(r.start_time ?? 0)
+        const during = Number(r.during_time ?? 0)
+        if (!r.room_id || !s.id || !start || nowSec - start > 12 * 3600) continue
+        const live = during === 0 || start + during >= nowSec - 120
+        if (!live) continue
+        debug(`[tt] session_list bootstrap: room=${r.room_id} session=${s.id} (${s.name ?? ''})`)
+        pollRoomId = r.room_id
+        pollSessionId = s.id
+        if (!connected) { connected = true; send({ kind: 'status', status: 'connected', detail: `room ${r.room_id} (session list)` }) }
+        send({ kind: 'session', name: s.name, id: s.id, ts: now })
+        maybeStartPolling()
+        return
+      }
+    }
   } else if (msg?.endpoint === 'pin') {
     const pin = parsePin(json, now)
     lastPin = pin

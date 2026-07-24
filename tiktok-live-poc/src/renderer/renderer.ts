@@ -43,6 +43,10 @@ declare global {
   }
 }
 
+// Injected by esbuild (define) from package.json at build time — the ONLY version source
+// for the UI. The old hardcoded badge ('v1.2.7-debug') outlived three releases.
+declare const __APP_VERSION__: string
+
 const $ = (id: string) => document.getElementById(id)!
 const txt = (s: string) => document.createTextNode(s)
 function el(tag: string, className?: string, text?: string): HTMLElement {
@@ -793,6 +797,7 @@ function setupSettings() {
 setupSettings()
 setupFeed()
 renderStats()
+$('feedCount').textContent = 'v' + __APP_VERSION__
 
 // -- screens: live monitor + label settings ----------------------------------
 // productTx survives the ledger removal: the products panel shows per-product AI
@@ -897,7 +902,6 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       if (!gmvFromWs) stats.gmv = `$${(ev.totalCents / 100).toFixed(2)}`
       renderStats()
       $('feedCount').title = `${ev.totalSales} sales · $${(ev.totalCents / 100).toFixed(0)}`
-      $('feedCount').textContent = 'v1.2.7-debug'
       if (recentForRecap) void transcribeSale(recentForRecap) // AI transcript — after print + render
       break
     }

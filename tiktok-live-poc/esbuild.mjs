@@ -1,5 +1,7 @@
 import { build } from 'esbuild'
-import { copyFileSync, mkdirSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync } from 'node:fs'
+
+const VERSION = JSON.parse(readFileSync('./package.json', 'utf8')).version
 
 const common = { bundle: true, platform: 'node', target: 'node20', format: 'cjs', external: ['electron', 'electron-updater'] }
 
@@ -13,6 +15,7 @@ await build({
   target: 'chrome120',
   format: 'iife',
   outfile: 'dist/renderer.js',
+  define: { __APP_VERSION__: JSON.stringify(VERSION) }, // real version for the UI badge
 })
 
 // The renderer HTML + logo are loaded from dist/ (alongside main.cjs), so copy them there.
