@@ -327,32 +327,3 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
 })
 
 ipcRenderer.send('tt-status', { status: 'connecting' })
-
-// ── Show list (streamer_desktop/live_session/list) ───────────────────────────
-// Fired on demand from the ledger's Sync modal. Runs in the streamer page so the
-// TikTok SDK signs the request (X-Bogus/msToken); we forward raw page texts to main,
-// which parses them (parseShowList) and quotes the 19-digit room/event ids.
-ipcRenderer.on('tt-shows-fetch', async (_e, req: { id: number }) => {
-  const id = req?.id
-  const base = 'https://shop.tiktok.com/api/v1/streamer_desktop/live_session/list'
-  const q = '?aid=253642&app_name=i18n_ecom_alliance&device_platform=web&user_language=en&locale=en&page_scene=0&carrier_region=us'
-  const PAGE = 20
-  const fetchPage = (cur: number) =>
-    window.fetch(base + q, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-tt-store-region': 'us' },
-      body: JSON.stringify({ page_size: PAGE, cur_page: cur, search_type: 2, search_order: 2, with_reservations: true }),
-    }).then((r) => { if (!r.ok) throw new Error('live_session/list HTTP ' + r.status); return r.text() })
-  try {
-    const pages: string[] = []
-    const first = await fetchPage(1)
-    pages.push(first)
-    let pastTotal = 0
-    try { pastTotal = Number((JSON.parse(first) as { data?: { past_total?: number } })?.data?.past_total ?? 0) } catch { /* ignore */ }
-    const lastPage = Math.min(Math.ceil(pastTotal / PAGE), 20) // 20-page guard
-    for (let p = 2; p <= lastPage; p++) pages.push(await fetchPage(p))
-    ipcRenderer.send('tt-shows-result', { id, ok: true, pages })
-  } catch (e) {
-    ipcRenderer.send('tt-shows-result', { id, ok: false, pages: [], error: String(e) })
-  }
-})

@@ -1,7 +1,7 @@
-import { app, BrowserWindow, dialog, ipcMain, session, Menu, nativeTheme, net } from 'electron'
+import { app, BrowserWindow, ipcMain, session, Menu, nativeTheme } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { join } from 'node:path'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { gunzipSync } from 'node:zlib'
 import { parsePushFrame } from '../core/pushFrame'
 import { LiveFeed } from '../core/liveFeed'
@@ -12,15 +12,6 @@ import { AuctionWatch } from '../core/auctionWatch'
 import { decodeChat } from '../core/chat'
 import { decodeAuctionIm } from '../core/auctionIm'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
-import { pullTiktokOrders, fetchOrderDetails, pullTiktokOrdersSince, applyOrderDetails, filterOrdersForShow, SHOW_SYNC_BUFFER_MS } from './tiktok-orders'
-import { openDb, upsertOrders, getSnapshot, setCost, setTranscript, setPicked, getShows, setShows, importLegacy, rekeyProductTemplates, setShowNames, getOrdersByFulfillUnit, insertLabelBatch, insertLabelPages, getOrdersForRestack, listLabelBatches, getLabelBatch, getLabelPages, clearLabels, setPacked, setBatchStatus, type LegacyBlob } from './db'
-import { parseGenerateCapture } from '../core/restack/capture'
-import { tieByGenerateOrder } from '../core/restack/tie'
-import { orderedOrders, type RestackOrder } from '../core/restack/sortlogic'
-import { binOf } from '../core/restack/bins'
-import { pdfPageCount, reorderLabels, extractPage, buildPackingSheet, type SheetRow } from './label-pdf'
-import { parseShowList, roomNameMap, type ShowListing } from '../core/showList'
-import { buildClipMedia } from './clip'
 import type { LiveEvent, StatusEvent, PinState } from '../core/types'
 
 const DASHBOARD = 'https://shop.tiktok.com/streamer/live/event/dashboard'
@@ -31,10 +22,8 @@ const LOGIN_RE = /\/(login|passport|account\/login)/
 const CHROME_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36'
 
-let db: ReturnType<typeof openDb> | null = null
 let viewer: BrowserWindow | null = null
 let monitor: BrowserWindow | null = null
-let seller: BrowserWindow | null = null // Seller-Center login window for order Sync (independent of the Live Monitor)
 const feed = new LiveFeed()
 const auctionResults = new AuctionResults()
 const auctionWatch = new AuctionWatch()
@@ -60,57 +49,6 @@ async function tiktokLoggedIn(): Promise<boolean> {
     return false
   }
 }
-/** Build the Cookie header the way the browser would send it to Seller Center. */
-async function tiktokCookieHeader(): Promise<string> {
-  const cookies = await session.fromPartition(TT_PARTITION).cookies.get({ url: 'https://seller-us.tiktok.com' })
-  return cookies.map((c) => `${c.name}=${c.value}`).join('; ')
-}
-
-async function ensureMonitorLoaded(): Promise<boolean> {
-  if (!monitor || monitor.isDestroyed()) createMonitor()
-  if (!monitor || monitor.isDestroyed()) return false
-  const wc = monitor.webContents
-  if (!wc.isLoading()) return true
-  await new Promise<void>((resolve) => {
-    let t: ReturnType<typeof setTimeout> | undefined
-    const done = () => {
-      clearTimeout(t)
-      wc.removeListener('did-finish-load', done)
-      resolve()
-    }
-    wc.once('did-finish-load', done)
-    t = setTimeout(done, 10000) // don't hang forever if the page stalls
-  })
-  return true
-}
-
-let showsReqSeq = 0
-/** Ask the monitor page (signed streamer context) to fetch live_session/list, parse the
- *  returned pages, persist the roomId→name map, and return the ShowListings. */
-async function fetchShowList(): Promise<{ ok: boolean; shows?: ShowListing[]; needsLogin?: boolean; capped?: boolean; reason?: string }> {
-  if (!(await tiktokLoggedIn())) { openSellerLogin(); return { ok: false, needsLogin: true } }
-  if (!(await ensureMonitorLoaded())) return { ok: false, reason: 'monitor window unavailable' }
-  const id = ++showsReqSeq
-  const pages: string[] = await new Promise((resolve) => {
-    const timer = setTimeout(() => { ipcMain.removeListener('tt-shows-result', onResult); resolve([]) }, 15000)
-    const onResult = (_e: unknown, res: { id: number; ok: boolean; pages: string[] }) => {
-      if (res.id !== id) return
-      clearTimeout(timer); ipcMain.removeListener('tt-shows-result', onResult)
-      resolve(res.ok ? res.pages : [])
-    }
-    ipcMain.on('tt-shows-result', onResult)
-    monitor!.webContents.send('tt-shows-fetch', { id })
-  })
-  if (!pages.length) return { ok: true, shows: [], capped: true }
-  const shows = pages.flatMap((p) => parseShowList(p))
-  if (db) {
-    const names: Record<string, { sessionId: string; name: string; startMs: number }> = {}
-    roomNameMap(shows).forEach((v, k) => { names[k] = v })
-    setShowNames(db, names)
-  }
-  return { ok: true, shows }
-}
-
 // Once the WS stream yields room_id + session_id, tell the preload to start
 // polling the roster + sale-history REST endpoints itself.
 let pollRoomId: string | undefined
@@ -134,11 +72,6 @@ function capture(file: string | null, rec: unknown) {
   try { appendFileSync(file, JSON.stringify(rec) + '\n') } catch { /* ignore */ }
 }
 
-function labelsDir(): string {
-  const d = join(app.getPath('userData'), 'labels')
-  try { mkdirSync(d, { recursive: true }) } catch { /* ignore */ }
-  return d
-}
 const debug = (line: string) => { if (process.env.TT_DEBUG) console.log(line) }
 
 // ── Label-latency instrumentation (TT_LAT=1 or TT_DEBUG=1) ───────────────────
@@ -237,61 +170,8 @@ function createMonitor() {
   monitor.on('closed', () => { monitor = null })
 }
 
-// Open TikTok Seller Center in its own window so the user can log in for order Sync.
-// Shares the persisted session (so cookies/auth are reused) but is NOT the Live Monitor.
-function openSellerLogin() {
-  if (seller && !seller.isDestroyed()) { seller.show(); seller.focus(); return }
-  seller = new BrowserWindow({
-    width: 1100, height: 820, backgroundColor: '#07080b', autoHideMenuBar: true,
-    title: 'TikTok Seller Center — log in for Sync',
-    webPreferences: {
-      session: session.fromPartition(TT_PARTITION),
-      contextIsolation: false,
-      sandbox: false,
-      preload: join(__dirname, 'preload-seller.cjs'),
-    },
-  })
-  seller.on('closed', () => { seller = null })
-  void seller.loadURL('https://seller-us.tiktok.com/order')
-}
-
 ipcMain.on('tt-status', (_e, s: { status: StatusEvent['status']; detail?: string }) => {
   send({ kind: 'status', status: s.status, detail: s.detail })
-})
-
-ipcMain.on('tt-label-batch', async (_e, msg: { url?: string; reqBody?: string; respBody?: string }) => {
-  if (!db) return
-  const cap = parseGenerateCapture(msg?.reqBody ?? '', msg?.respBody ?? '')
-  if (!cap.fulfillUnitIds.length || !cap.docUrl) { debug('[tt] label batch: missing units or doc_url'); return }
-  const batchId = String(Date.now())
-  const pdfPath = join(labelsDir(), `${batchId}.pdf`)
-  try {
-    // doc_url is pre-signed (skipCookie=true); fetch via electron net.
-    const res = await net.fetch(cap.docUrl)
-    if (!res.ok) throw new Error(`doc_url HTTP ${res.status}`)
-    const bytes = new Uint8Array(await res.arrayBuffer())
-    if (bytes.length < 5 || Buffer.from(bytes.slice(0, 5)).toString() !== '%PDF-') throw new Error('not a PDF')
-    writeFileSync(pdfPath, bytes)
-    const pageCount = await pdfPageCount(bytes)
-    const ties = tieByGenerateOrder(cap.fulfillUnitIds, getOrdersByFulfillUnit(db))
-    const status = pageCount === cap.fulfillUnitIds.length ? 'tied' : 'page_mismatch' // page/unit mismatch -> barcode-tie fallback (Task 13)
-    insertLabelBatch(db, {
-      id: batchId, capturedAt: Date.now(), roomId: pollRoomId ?? null, docUrl: cap.docUrl, pdfPath,
-      pageCount, unitCount: cap.fulfillUnitIds.length, status,
-      requestJson: JSON.stringify(cap.fulfillUnitIds), statsJson: JSON.stringify(cap.statsUnitIds),
-    })
-    insertLabelPages(db, batchId, ties)
-    debug(`[tt] label batch ${batchId}: ${pageCount}p / ${cap.fulfillUnitIds.length}u status=${status}`)
-    viewerSend('tt-label-batch-ready', { batchId, pageCount, unitCount: cap.fulfillUnitIds.length, status })
-  } catch (e) {
-    insertLabelBatch(db, {
-      id: batchId, capturedAt: Date.now(), roomId: pollRoomId ?? null, docUrl: cap.docUrl, pdfPath: null,
-      pageCount: 0, unitCount: cap.fulfillUnitIds.length, status: 'error',
-      requestJson: JSON.stringify(cap.fulfillUnitIds), statsJson: JSON.stringify(cap.statsUnitIds),
-    })
-    debug(`[tt] label batch ${batchId} failed: ${(e as Error).message}`)
-    viewerSend('tt-label-batch-ready', { batchId, status: 'error', error: (e as Error).message })
-  }
 })
 
 // Viewer → monitor: post a chat message (only the monitor window has the SDK-signed fetch).
@@ -550,16 +430,6 @@ ipcMain.handle('save-printer', (_e, name: string) => {
   return true
 })
 
-// ── SQLite DB IPC handlers ────────────────────────────────────────────────────
-ipcMain.handle('tt-db:getSnapshot', () => (db ? getSnapshot(db) : { orders: [], costs: {}, productCosts: {}, orderTx: {}, productTx: {}, picked: [], shows: {} }))
-ipcMain.handle('tt-db:setCost', (_e, p: { orderId: string; cents: number | null }) => { if (db) setCost(db, 'order', p.orderId, p.cents, Date.now()); return true })
-ipcMain.handle('tt-db:setProductCost', (_e, p: { productId: string; cents: number | null }) => { if (db) setCost(db, 'product', p.productId, p.cents, Date.now()); return true })
-ipcMain.handle('tt-db:setTranscript', (_e, p: { scope: 'order' | 'product'; key: string; transcript: unknown | null }) => { if (db) setTranscript(db, p.scope, p.key, p.transcript as never, Date.now()); return true })
-ipcMain.handle('tt-db:setPicked', (_e, p: { orderId: string; picked: boolean }) => { if (db) setPicked(db, p.orderId, p.picked, Date.now()); return true })
-ipcMain.handle('tt-db:getShows', () => (db ? getShows(db) : {}))
-ipcMain.handle('tt-db:setShows', (_e, store: unknown) => { if (db) setShows(db, store); return true })
-ipcMain.handle('tt-db:importLegacy', (_e, blob: LegacyBlob) => { if (db) importLegacy(db, blob, Date.now()); return true })
-
 // ── AI transcription (Gemini, mirrors sellerfolio-live's enrichment) ─────────
 // Key resolution: env var wins, else a local gitignored `gemini.key` file in the PoC root
 // (same convention as live-ledger). __dirname is dist/, so '..' is the project root.
@@ -584,62 +454,6 @@ ipcMain.handle('tt-open-monitor', () => {
   monitor.show()
   monitor.focus()
   return { ok: true }
-})
-
-// "Sync orders" → pull the Seller-Center order book via the persisted session cookies.
-// Cookie auth only (no request signing). Entirely independent of the Live Monitor: if the
-// user isn't logged in, we open the Seller-Center window (NOT the monitor) to log in.
-let orderSyncing = false
-ipcMain.handle('tt-sync', async () => {
-  if (orderSyncing) return { ok: false, reason: 'Sync already running' }
-  if (!(await tiktokLoggedIn())) {
-    openSellerLogin()
-    return { ok: false, reason: 'Log into TikTok Seller Center (window opened), then Sync again' }
-  }
-  orderSyncing = true
-  try {
-    const cookieHeader = await tiktokCookieHeader()
-    const { orders, total } = await pullTiktokOrders(cookieHeader)
-    const now = Date.now()
-    if (db) { upsertOrders(db, orders, now); rekeyProductTemplates(db, now) }
-    debug(`[tt] synced ${orders.length}/${total} orders`)
-    return { ok: true, count: orders.length }
-  } catch (e) {
-    const msg = (e as Error).message
-    if (/code\s|HTTP 401|session may be expired/i.test(msg)) openSellerLogin()
-    return { ok: false, reason: msg.slice(0, 160) }
-  } finally {
-    orderSyncing = false
-  }
-})
-
-ipcMain.handle('tt-shows-list', async () => {
-  try { return await fetchShowList() }
-  catch (e) { return { ok: false, reason: (e as Error).message.slice(0, 160) } }
-})
-
-ipcMain.handle('tt-sync-show', async (_e, arg: { roomIds: string[]; startMs: number; endMs: number }) => {
-  if (orderSyncing) return { ok: false, reason: 'Sync already running' }
-  if (!(await tiktokLoggedIn())) { openSellerLogin(); return { ok: false, reason: 'Log into TikTok Seller Center (window opened), then Sync again' } }
-  orderSyncing = true
-  try {
-    const cookieHeader = await tiktokCookieHeader()
-    const since = arg.startMs - SHOW_SYNC_BUFFER_MS
-    const { orders } = await pullTiktokOrdersSince(cookieHeader, since)
-    const details = await fetchOrderDetails(orders.map((o) => o.externalOrderId), cookieHeader)
-    const enriched = applyOrderDetails(orders, details)
-    const kept = filterOrdersForShow(enriched, arg.roomIds, arg.startMs - SHOW_SYNC_BUFFER_MS, arg.endMs + SHOW_SYNC_BUFFER_MS)
-    const now = Date.now()
-    if (db) { upsertOrders(db, kept, now); rekeyProductTemplates(db, now) }
-    debug(`[tt] show-sync kept ${kept.length}/${orders.length} orders`)
-    return { ok: true, count: kept.length }
-  } catch (e) {
-    const msg = (e as Error).message
-    if (/code\s|HTTP 401|session may be expired/i.test(msg)) openSellerLogin()
-    return { ok: false, reason: msg.slice(0, 160) }
-  } finally {
-    orderSyncing = false
-  }
 })
 
 ipcMain.handle('recap-enabled', () => ({ enabled: !!GEMINI_KEY, model: GEMINI_MODEL }))
@@ -759,61 +573,6 @@ ipcMain.handle('tt-transcribe', async (_e, payload: { audio?: Uint8Array; produc
   }
 })
 
-// Transcribe INDIVIDUAL ORDERS from their Seller-Center video receipts (not live bins).
-// For each order: order/get → per-order video receipt .m3u8 + sale-moment offset → ffmpeg audio
-// clip ending at the sale → structured Gemini extraction. Cookie auth (Seller Center) required.
-ipcMain.handle('tt-transcribe-orders', async (_e, items: { orderId: string; productName?: string; placedAtMs?: number }[]) => {
-  if (!GEMINI_KEY) return { error: 'GEMINI_API_KEY not set' }
-  if (!(await tiktokLoggedIn())) return { error: 'Log into TikTok Seller Center (cookies needed for order video receipts)' }
-  const cookieHeader = await tiktokCookieHeader()
-  const total = items.length
-  const progress = (done: number, orderId: string, phase: 'start' | 'done', ok?: boolean) =>
-    viewerSend('tt-transcribe-progress', { done, total, orderId, phase, ok })
-  const ids = items.map((i) => i.orderId)
-  const details = await fetchOrderDetails(ids, cookieHeader)
-  const results: { orderId: string; fields: TranscriptFields }[] = []
-  const errors: { orderId: string; error: string }[] = []
-  let completed = 0
-
-  // process one order: ONE ffmpeg pass (audio + 5 frames) → Gemini
-  const processOne = async (it: { orderId: string; productName?: string; placedAtMs?: number }) => {
-    progress(completed, it.orderId, 'start')
-    let ok = false
-    try {
-      const d = details.get(it.orderId)
-      if (!d?.videoUrl) {
-        errors.push({ orderId: it.orderId, error: 'no video receipt' })
-      } else {
-        // seek by the ORDER's placed-at epoch (the sale moment) — same as live-ledger.
-        const atSec = it.placedAtMs != null ? Math.floor(it.placedAtMs / 1000) : null
-        const { audio, frames } = await buildClipMedia(d.videoUrl, atSec, 5)
-        if (!audio || audio.byteLength < 1000) {
-          errors.push({ orderId: it.orderId, error: 'clip failed' })
-        } else {
-          const media = [...frames.map((f) => ({ mimeType: 'image/jpeg', data: f })), { mimeType: 'audio/aac', data: audio }]
-          const r = await geminiStructured(media, it.productName ?? '')
-          if (r.fields && Object.keys(r.fields).length) { results.push({ orderId: it.orderId, fields: r.fields }); ok = true }
-          else if (r.text) { results.push({ orderId: it.orderId, fields: { summary: r.text } }); ok = true }
-          else errors.push({ orderId: it.orderId, error: r.error ?? 'no transcript' })
-        }
-      }
-    } catch (e) {
-      errors.push({ orderId: it.orderId, error: String((e as Error).message).slice(0, 120) })
-    }
-    progress(++completed, it.orderId, 'done', ok)
-  }
-
-  // run with bounded concurrency (ffmpeg + Gemini are I/O-bound; keep it modest for rate limits)
-  const CONCURRENCY = Math.min(4, items.length)
-  let next = 0
-  await Promise.all(
-    Array.from({ length: CONCURRENCY }, async () => {
-      while (next < items.length) { const i = next++; await processOne(items[i]!) }
-    }),
-  )
-  return { results, errors }
-})
-
 // ── Label printing ───────────────────────────────────────────────────────────
 // Re-creating a hidden BrowserWindow per label + a fixed 350ms render sleep added
 // ~½–1s of latency to EVERY label (and auto-print fired several at once, spawning
@@ -882,77 +641,6 @@ ipcMain.handle('print-label', (_e, args: { labelData: LabelData; printerName: st
   })
 })
 
-// ── Picklist / label batch IPC handlers ──────────────────────────────────────
-ipcMain.handle('tt-label:list', () => (db ? listLabelBatches(db).map((b) => ({ id: b.id, capturedAt: b.capturedAt, pageCount: b.pageCount, unitCount: b.unitCount, status: b.status })) : []))
-
-ipcMain.handle('tt-label:get', (_e, batchId: string) => {
-  if (!db) return null
-  const batch = getLabelBatch(db, batchId)
-  if (!batch) return null
-  const pages = getLabelPages(db, batchId)
-  const units = new Set(JSON.parse(batch.requestJson) as string[])
-  const orders = getOrdersForRestack(db).filter((o) => o.fulfillUnitId && units.has(o.fulfillUnitId))
-  return { batch, pages, orders }
-})
-
-ipcMain.handle('tt-label:pagePdf', async (_e, p: { batchId: string; pageIndex: number }) => {
-  if (!db) return null
-  const batch = getLabelBatch(db, p.batchId)
-  if (!batch?.pdfPath) return null
-  try { return await extractPage(new Uint8Array(readFileSync(batch.pdfPath)), p.pageIndex) } catch { return null }
-})
-
-function restackSequence(orders: ReturnType<typeof getOrdersForRestack>): string[] {
-  const ro: RestackOrder[] = orders.map((o) => ({ orderId: o.orderId, buyer: o.buyer, createdMs: o.placedAt }))
-  return orderedOrders(ro).map((o) => o.orderId)
-}
-
-ipcMain.handle('tt-label:export', async (_e, p: { batchId: string; kind: 'labels' | 'sheet' }) => {
-  if (!db) return { ok: false, error: 'no db' }
-  const batch = getLabelBatch(db, p.batchId)
-  if (!batch?.pdfPath) return { ok: false, error: 'batch has no PDF' }
-  const pages = getLabelPages(db, p.batchId)
-  const orders = getOrdersForRestack(db).filter((o) => o.fulfillUnitId && pages.some((pg) => pg.fulfillUnitId === o.fulfillUnitId))
-  const seq = restackSequence(orders)
-  // map order -> the page index of its fulfill_unit
-  const pageOfUnit = new Map(pages.map((pg) => [pg.fulfillUnitId, pg.pageIndex]))
-  const unitOfOrder = new Map(orders.map((o) => [o.orderId, o.fulfillUnitId!]))
-  try {
-    let bytes: Uint8Array
-    let suggested: string
-    if (p.kind === 'labels') {
-      const pageSeq = seq.map((oid) => pageOfUnit.get(unitOfOrder.get(oid)!)).filter((i): i is number => i != null)
-      bytes = await reorderLabels(new Uint8Array(readFileSync(batch.pdfPath)), [...new Set(pageSeq)])
-      suggested = 'Labels_sorted_newest_to_oldest.pdf'
-    } else {
-      const byId = new Map(orders.map((o) => [o.orderId, o]))
-      const rows: SheetRow[] = seq.map((oid, i) => {
-        const o = byId.get(oid)!
-        const items = o.items.map((it) => `${it.sku ?? '?'} (Bin ${binOf(it.productName)})`).join(', ')
-        return { seq: i + 1, buyer: o.buyer, purchased: o.placedAt ? new Date(o.placedAt).toLocaleTimeString() : '', items, multi: o.items.length > 1 }
-      })
-      bytes = await buildPackingSheet(rows)
-      suggested = 'Packing_sheet.pdf'
-    }
-    const save = await dialog.showSaveDialog({ defaultPath: suggested })
-    if (save.canceled || !save.filePath) return { ok: false, error: 'cancelled' }
-    writeFileSync(save.filePath, bytes)
-    setBatchStatus(db, p.batchId, 'exported')
-    return { ok: true, path: save.filePath }
-  } catch (e) {
-    return { ok: false, error: (e as Error).message }
-  }
-})
-
-ipcMain.handle('tt-label:clear', () => {
-  if (!db) return { ok: false }
-  for (const path of clearLabels(db)) { try { unlinkSync(path) } catch { /* ignore */ } }
-  try { rmSync(labelsDir(), { recursive: true, force: true }) } catch { /* ignore */ }
-  return { ok: true }
-})
-
-ipcMain.handle('tt-label:setPacked', (_e, p: { orderId: string; packed: boolean }) => { if (db) setPacked(db, p.orderId, p.packed, Date.now()); return true })
-
 // ── Auto-update (launch-time, GitHub Releases) ───────────────────────────────
 // Packaged builds only: ONE check ~3s after launch (no recurring poll). Download
 // silently, install on the next quit, and tell the dashboard once an update is
@@ -976,7 +664,6 @@ app.whenReady().then(() => {
   app.userAgentFallback = CHROME_UA
   Menu.setApplicationMenu(null) // remove the native File/Edit/View/Window/Help menu bar
   nativeTheme.themeSource = 'dark' // dark native title bar (min/max/close) to match the body
-  db = openDb(join(app.getPath('userData'), 'tiktok.db'))
   createViewer()
   if (process.env.TT_REPLAY) {
     setTimeout(replayFixtures, 1200)

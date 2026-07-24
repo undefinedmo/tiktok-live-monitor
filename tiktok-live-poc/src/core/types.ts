@@ -338,12 +338,6 @@ export interface StatusEvent {
 }
 
 /** Synced order book from Seller-Center order/list (cookie auth, no live stream). */
-export interface OrdersEvent {
-  kind: 'orders'
-  orders: Sale[]
-  total: number
-  ts: number
-}
 
 export type LiveEvent =
   | ProductStatsSnapshot
@@ -358,5 +352,4 @@ export type LiveEvent =
   | RosterSnapshot
   | SalesUpdate
   | StatusEvent
-  | OrdersEvent
   | PinState
