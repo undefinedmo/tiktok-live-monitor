@@ -38,7 +38,7 @@ function endpointOf(url: string): string | null {
   if (/added_auction_product\/list/.test(url)) return 'roster'
   if (/live\/detail\/room\/status/.test(url)) return 'room_status'
   if (/pin\/get/.test(url)) return 'pin'
-  if (/live_session\/list/.test(url)) return 'session_list'
+  if (/live_room_info\/get/.test(url)) return 'live_room_info'
   return null
 }
 
@@ -179,19 +179,15 @@ if (WON_DEBUG) {
 // reliably when the app is open BEFORE go-live. Launched mid-show, the page gets
 // redirected to /streamer/live/session and the app never connects (observed live
 // 2026-07-24: no room → polls never start → no close signals → no labels). So
-// until polling starts, ask live_session/list every 5s via the page's signed
-// fetch. The fetch hook above forwards each response to main ('session_list'),
-// where the newest LIVE room (start+during ≈ now) starts the poll config.
+// until polling starts, ask live_room_info/get every 5s via the page's signed
+// fetch — it returns the CURRENT live room + session directly (verified live:
+// room_id + current_session{id, live_session_status:11} while streaming; NOTE
+// live_session/list search_type:2 does NOT list the live session — past only).
+// The fetch hook above forwards each response to main ('live_room_info').
 const bootTimer = setInterval(() => {
   if (polling) { clearInterval(bootTimer); return }
   const q = '?aid=253642&app_name=i18n_ecom_alliance&device_platform=web&user_language=en&locale=en&page_scene=0&carrier_region=us'
-  void window
-    .fetch('https://shop.tiktok.com/api/v1/streamer_desktop/live_session/list' + q, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-tt-store-region': 'us' },
-      body: JSON.stringify({ page_size: 5, cur_page: 1, search_type: 2, search_order: 2, with_reservations: false }),
-    })
-    .catch(() => {})
+  void window.fetch('https://shop.tiktok.com/api/v1/streamer_desktop/live_room_info/get' + q).catch(() => {})
 }, 5000)
 
 // ── Active polling (production approach) ────────────────────────────────────

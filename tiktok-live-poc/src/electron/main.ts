@@ -370,30 +370,20 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
       debug(`[tt] stream ${url.slice(0, 70)}`)
       send({ kind: 'stream', url, ts: now })
     }
-  } else if (msg?.endpoint === 'session_list') {
-    // Bootstrap fallback: adopt the newest LIVE room. Liveness = during_time still
-    // growing (start+during within 2min of now) or absent; a room that ended keeps a
-    // frozen during_time and MUST NOT be adopted — pollSent latches, so locking onto
-    // a dead room would block the real one when the next show starts.
+  } else if (msg?.endpoint === 'live_room_info') {
+    // Bootstrap fallback: live_room_info/get returns the CURRENT live room directly
+    // (room_id + current_session while streaming; live_session_status 11 = live,
+    // 20 = ended). pollSent latches, so only adopt a genuinely-live session.
     if (pollSent) return
-    const sessions = (json as { data?: { live_sessions?: { id?: string; name?: string; live_room_infos?: { room_id?: string; start_time?: string; during_time?: string }[] }[] } })?.data?.live_sessions ?? []
-    const nowSec = Math.floor(now / 1000)
-    for (const s of sessions) {
-      for (const r of s.live_room_infos ?? []) {
-        const start = Number(r.start_time ?? 0)
-        const during = Number(r.during_time ?? 0)
-        if (!r.room_id || !s.id || !start || nowSec - start > 12 * 3600) continue
-        const live = during === 0 || start + during >= nowSec - 120
-        if (!live) continue
-        debug(`[tt] session_list bootstrap: room=${r.room_id} session=${s.id} (${s.name ?? ''})`)
-        pollRoomId = r.room_id
-        pollSessionId = s.id
-        if (!connected) { connected = true; send({ kind: 'status', status: 'connected', detail: `room ${r.room_id} (session list)` }) }
-        send({ kind: 'session', name: s.name, id: s.id, ts: now })
-        maybeStartPolling()
-        return
-      }
-    }
+    const d = (json as { data?: { room_id?: string; current_session?: { id?: string; name?: string; live_session_status?: number } } })?.data
+    const sess = d?.current_session
+    if (!d?.room_id || !sess?.id || sess.live_session_status !== 11) return
+    debug(`[tt] live_room_info bootstrap: room=${d.room_id} session=${sess.id} (${sess.name ?? ''})`)
+    pollRoomId = d.room_id
+    pollSessionId = sess.id
+    if (!connected) { connected = true; send({ kind: 'status', status: 'connected', detail: `room ${d.room_id} (live_room_info)` }) }
+    send({ kind: 'session', name: sess.name, id: sess.id, ts: now })
+    maybeStartPolling()
   } else if (msg?.endpoint === 'pin') {
     const pin = parsePin(json, now)
     lastPin = pin

@@ -596,10 +596,21 @@ function printSale(s: Sale) {
   printLabel({ itemNumber: num, buyer: s.buyer.username || s.buyer.handle, productName: s.productName, price: s.price.formatted, title })
 }
 
+// Lot numbers restart per LISTING (variant #1..#K under each auction product), so a
+// bare lot number as the dedupe key silently swallowed EVERY print after the seller
+// switched listings mid-show ("printing completely stops") — lot #3 of listing B
+// looked like a re-fire of lot #3 of listing A. Scope the key by product name, which
+// every print source carries (pin, im-end attribution, im-result, order rows).
+// Normalized (case/whitespace) so the SAME sale reported by different sources (pin
+// roster name vs im Manager title vs auction_result product_name) still dedupes.
+const printKey = (lot: string, productName?: string) =>
+  `${(productName ?? '').trim().toLowerCase().replace(/\s+/g, ' ')}|${lot}`
+
 // Order-data (slow) path: auto-print a genuinely-new sale, de-duped by item number.
 function autoPrintSale(s: Sale) {
   if (!autoPrint || !selectedPrinter) return
-  const key = (s.skuDesc ?? '').replace(/^#/, '') || s.orderId
+  const lot = (s.skuDesc ?? '').replace(/^#/, '')
+  const key = lot ? printKey(lot, s.productName) : s.orderId
   if (printedKeys.has(key)) return
   printedKeys.add(key)
   printSale(s)
@@ -635,7 +646,7 @@ function onAuctionClosed(ev: Extract<LiveEvent, { kind: 'auction-closed' }>) {
   // No lot number yet (unattributed im auction.end): don't print a numberless label —
   // the im-result event carries the lot ~6s later and prints it then.
   if (!lot) return
-  const key = lot
+  const key = printKey(lot, ev.productName)
   if (printedKeys.has(key)) return
   printedKeys.add(key)
   void printLabel({ itemNumber: lot, buyer: ev.winner, price: ev.price, title: `#${lot}` })
