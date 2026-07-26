@@ -535,13 +535,6 @@ void initRecap()
 // ── label printing ──────────────────────────────────────────────────────────
 let selectedPrinter = ''
 let autoPrint = false
-// Which signal drives auto-print:
-//   'pin'   = pin/get status 1→3 (DEFAULT). Structured server field, measured 6.0-7.3s
-//             ahead of auction_result/get, polled at 700ms.
-//   'order' = auction_result/get newSales — authoritative but 6-7s late; kept as fallback.
-//   'feed'  = the on-screen "won" feed (DOM scrape). Caught nothing in a TT_LAT run —
-//             the selector has drifted; retained only for A/B while pin is proven.
-let printSource: 'pin' | 'order' | 'feed' = 'pin'
 // Auction/item numbers already auto-printed. SHARED across both sources so flipping
 // the switch mid-show (or an observer re-fire) never prints the same win twice.
 const printedKeys = new Set<string>()
@@ -621,11 +614,6 @@ function autoPrintSale(s: Sale) {
 function onWonFeed(ev: Extract<LiveEvent, { kind: 'won-feed' }>) {
   feedWinsSeen++
   updateFeedWinsSeen()
-  if (printSource !== 'feed' || !autoPrint || !selectedPrinter) return
-  const key = ev.auctionNo
-  if (printedKeys.has(key)) return
-  printedKeys.add(key)
-  void printLabel({ itemNumber: ev.auctionNo, buyer: ev.name, price: ev.price, title: `#${ev.auctionNo}` })
 }
 
 // Fast-close path: an auction closed, reported by pin/get (status 1→3, pinned lots
@@ -642,7 +630,7 @@ function onAuctionClosed(ev: Extract<LiveEvent, { kind: 'auction-closed' }>) {
   lotSoldAt = Date.now() // tickCountdown paints SOLD and holds it against repaints
   lastPinRenderAt = Date.now() // hold this against the slower roster paint (PIN_FRESH_MS)
   if (lot) lastPrintedNumber = Number(lot) || lastPrintedNumber
-  if (printSource !== 'pin' || !autoPrint || !selectedPrinter) return
+  if (!autoPrint || !selectedPrinter) return
   // No lot number yet (unattributed im auction.end): don't print a numberless label —
   // the im-result event carries the lot ~6s later and prints it then.
   if (!lot) return
@@ -679,18 +667,6 @@ async function setupPrinting() {
   updateSampleBtn()
   autoPrint = localStorage.getItem('tt-autoprint') === '1'
   ;($('autoPrint') as HTMLInputElement).checked = autoPrint
-  // 'pin' is the fast live-signal mode (im auction.end / pin close) and the default.
-  // A stored 'feed' is the retired DOM-observer option — migrate it to 'pin', which
-  // superseded it. Only an explicit 'order' opts into the slow authoritative path.
-  printSource = localStorage.getItem('tt-print-source') === 'order' ? 'order' : 'pin'
-  document.querySelectorAll<HTMLInputElement>('input[name="printSource"]').forEach((r) => {
-    r.checked = r.value === printSource
-    r.addEventListener('change', () => {
-      if (!r.checked) return
-      printSource = r.value === 'order' ? 'order' : 'pin'
-      localStorage.setItem('tt-print-source', printSource)
-    })
-  })
   updateFeedWinsSeen()
   updatePrintNext()
   renderQueue()
@@ -894,9 +870,11 @@ window.ttLive.onEvent((ev: LiveEvent) => {
         // pinned card does NOT advance per lot, so auction_result newSales is the reliable
         // per-sale signal (verified live: it emits +1 per sale; the pinned stays put).
         const freshSales = ev.newSales.filter((s) => s.createdAt > seedMaxCreatedAt!)
-        // Order-data mode drives auto-print here; Live-feed mode prints from the
-        // 'won-feed' event instead (see below). Either way de-dup is shared.
-        if (printSource === 'order') for (const s of freshSales) autoPrintSale(s)
+        // EVERY source auto-prints; printedKeys arbitrates. Single-source modes
+        // proved fragile live 2026-07-24: the im auction decode went silent and
+        // pin only covers pinned lots, while order rows landed 0.3-3s after
+        // creation - so redundancy IS the latency strategy, not a fallback.
+        for (const s of freshSales) autoPrintSale(s)
         recentForRecap = freshSales.find((s) => s.paymentStatus !== 'failed' && Date.now() - s.createdAt < 60000)
         seedMaxCreatedAt = Math.max(seedMaxCreatedAt, maxCreated)
       }
