@@ -12,7 +12,7 @@ import { AuctionWatch } from '../core/auctionWatch'
 import { decodeChat } from '../core/chat'
 import { evaluateWatchdog } from '../core/watchdog'
 import { initFlightLog, flightLogPath, flog, flushFlightLogSync } from './flightlog'
-import { decodeAuctionIm } from '../core/auctionIm'
+import { decodeAuctionIm, extractMessagePayloads } from '../core/auctionIm'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
 import type { LiveEvent, StatusEvent, PinState } from '../core/types'
 
@@ -64,7 +64,8 @@ let wdLastPinAt: number | undefined
 let wdLastImAt: number | undefined
 let wdSalesSinceClose = 0
 const wdPrintErrors: number[] = [] // ms timestamps of failed label jobs
-let wdLastAlertsJson = '[]'
+let wdLastAlertsJson = ''
+let wdLastSentAt = 0
 let endPollSig = '' // auctionConfigId|expectedEndMs the timer is armed for
 function maybeStartPolling() {
   if (pollSent || !pollRoomId || !pollSessionId || !monitor) return
@@ -221,7 +222,20 @@ ipcMain.on('tt-chat-sent', (_e, result: { id?: number; ok: boolean; error?: stri
 // When the frontier WS connects (it does in the app; the HAR browser had NO WS and
 // used im/fetch instead), TikTok likely pushes the same webcast messages down the WS —
 // so BOTH channels feed the same handler, deduped via imSeen.
+let shoppingSamples = 0
+const SHOPPING_SAMPLE_CAP = 20
 function ingestAuctionBytes(raw: Uint8Array, now: number, via: 'im' | 'ws') {
+  // Self-collecting schema samples: WebcastOecLiveShoppingMessage is the only Oec
+  // message still on the stream (Creator/Manager are extinct per the 2026-07-28
+  // census) and we cannot decode it yet. Log a bounded number of raw payloads so
+  // the field layout can be reversed straight from a show's flight log.
+  if (shoppingSamples < SHOPPING_SAMPLE_CAP) {
+    for (const payload of extractMessagePayloads(raw, 'WebcastOecLiveShoppingMessage')) {
+      if (shoppingSamples >= SHOPPING_SAMPLE_CAP) break
+      shoppingSamples++
+      flog(`[sample] OecLiveShopping via=${via} #${shoppingSamples} b64=${Buffer.from(payload).toString('base64')}`)
+    }
+  }
   for (const ev of decodeAuctionIm(raw)) {
     if (ev.type === 'end') {
       const key = `end|${ev.auctionId}|${ev.endMs ?? ''}`
@@ -405,7 +419,7 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
   } else if (msg?.endpoint === 'auction_result') {
     const update = auctionResults.ingest(json, now)
     debug(`[tt] sales: +${update.newSales.length} new, ${update.totalSales} total, ${update.uniqueBuyers} buyers, ${update.failedPayments.length} failed`)
-    if (TIMING && update.newSales.length) {
+    if (update.newSales.length) {
       lat(`C rest auction_result +${update.newSales.length} new (Δws-tick=${lastWsTickAt ? now - lastWsTickAt : '?'}ms)`)
       for (const s of update.newSales) {
         const item = (s.skuDesc ?? '').replace(/^#/, '')
@@ -444,7 +458,7 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
     // Liveness/edge trace: AuctionWatch can only fire on a 1→3 TRANSITION, so if pin
     // samples are sparse we silently miss closes. Log every status/lot change plus a
     // periodic heartbeat to show the poll is actually feeding us.
-    if (TIMING) {
+    {
       const c = pin.current
       const sig = `${c?.auctionConfigId ?? '-'}|${c?.status ?? '-'}`
       pinSamples++
@@ -714,18 +728,16 @@ ipcMain.handle('print-label', (_e, args: { labelData: LabelData; printerName: st
   // Serialize: the single hidden window renders+prints one label at a time, and
   // auto-print can fire several fresh sales at once. Chain so they queue in order.
   const item = String(args?.labelData?.itemNumber ?? '')
-  const seen = TIMING ? saleSeenAt.get(item) : undefined
+  const seen = saleSeenAt.get(item)
   const queuedAt = Date.now()
   lat(`E print QUEUED #${item}${seen ? ` (Δrest→queue=${queuedAt - seen}ms, Δws-tick=${lastWsTickAt ? queuedAt - lastWsTickAt : '?'}ms)` : ' (no live origin — manual/range)'}`)
   const run = printChain.then(() => printLabelJob(args))
   printChain = run.catch(() => {})
   return run.then((r) => {
     if (!r.success) wdPrintErrors.push(Date.now())
-    if (TIMING) {
-      const done = Date.now()
-      lat(`E print DONE #${item} ok=${r.success} spool=${done - queuedAt}ms${seen ? ` · total(rest→label)=${done - seen}ms` : ''}`)
-      saleSeenAt.delete(item)
-    }
+    const done = Date.now()
+    lat(`E print DONE #${item} ok=${r.success} spool=${done - queuedAt}ms${seen ? ` · total(rest→label)=${done - seen}ms` : ''}`)
+    saleSeenAt.delete(item)
     return r
   })
 })
@@ -743,11 +755,12 @@ setInterval(() => {
     salesSinceLastClose: wdSalesSinceClose,
     printErrorsRecent: wdPrintErrors.length,
   })
-  const j = JSON.stringify(alerts)
-  if (j === wdLastAlertsJson) return // only send edges (raise/clear/change)
-  wdLastAlertsJson = j
-  if (alerts.length) flog(`[watchdog] ${alerts.map((a) => a.message).join(' · ')}`)
-  else flog('[watchdog] clear')
+  const codes = alerts.map((a) => a.code).sort().join(',')
+  const edge = codes !== wdLastAlertsJson
+  if (!edge && (!alerts.length || now - wdLastSentAt < 60000)) return
+  wdLastAlertsJson = codes
+  wdLastSentAt = now
+  if (edge) flog(alerts.length ? `[watchdog] ${alerts.map((a) => a.message).join(' · ')}` : '[watchdog] clear')
   send({ kind: 'watchdog', alerts, ts: now })
 }, 15000)
 

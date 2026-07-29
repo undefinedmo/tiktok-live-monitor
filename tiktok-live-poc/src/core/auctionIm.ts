@@ -210,6 +210,31 @@ function parseManager(b: Uint8Array, s: number, e: number): AuctionResultIm | nu
   return out
 }
 
+/** Extract the raw payload bytes of every occurrence of `name` in a WebcastResponse
+ *  (same marker heuristic as decodeAuctionIm: the method name immediately followed by
+ *  tag 0x12 + varint length). Used to self-collect samples of message types we can't
+ *  decode yet — e.g. WebcastOecLiveShoppingMessage, which replaced the Creator/Manager
+ *  auction messages (census 2026-07-28: those two are extinct; Shopping ×12/show). */
+export function extractMessagePayloads(b: Uint8Array, name: string): Uint8Array[] {
+  const out: Uint8Array[] = []
+  let cur = ''
+  for (let i = 0; i < b.length; i++) {
+    const c = b[i]!
+    if (c >= 32 && c < 127) {
+      cur += String.fromCharCode(c)
+      continue
+    }
+    if (c === 0x12 && cur.endsWith(name)) {
+      let q = i + 1
+      let len: number
+      ;[len, q] = readVarint(b, q)
+      out.push(b.subarray(q, Math.min(q + len, b.length)))
+    }
+    cur = ''
+  }
+  return out
+}
+
 /** Find every auction lifecycle message in a WebcastResponse and decode it.
  *  Same frame-split heuristic as decodeChat: the method-name marker is immediately
  *  followed by tag 0x12 (field 2, the payload). The method string also appears inside
