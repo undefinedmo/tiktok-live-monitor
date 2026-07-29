@@ -464,7 +464,7 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
       pinSamples++
       if (sig !== lastPinSig) {
         lastPinSig = sig
-        lat(`A3.sample lot=${c?.variantDesc ?? '?'} status=${c?.status ?? '?'} winner=${c?.winUsername ?? '-'} (sample #${pinSamples})`)
+        lat(`A3.sample lot=${c?.variantDesc ?? '?'} status=${c?.status ?? '?'} winner=${c?.winUsername ?? '-'} cfg=${c?.auctionConfigId ?? '-'} (sample #${pinSamples})`)
       } else if (pinSamples % 30 === 0) {
         lat(`A3.heartbeat ${pinSamples} pin samples, current lot=${c?.variantDesc ?? '?'} status=${c?.status ?? '?'}`)
       }

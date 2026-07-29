@@ -132,6 +132,27 @@ describe('AuctionWatch swap-close', () => {
     expect(w.ingest(pin({ auctionConfigId: 'a2', variantDesc: '#18', status: 1 }, 6000))).toEqual([]) // swap after
   })
 
+  it('fires when the close arrives under a ROTATED auctionConfigId (same lot)', () => {
+    // Observed live 2026-07-28 (v1.3.4 pin trace): lots #71-#75 each showed ONE logged
+    // transition — straight to status 3 under a NEW config id — so the 1→3 detector
+    // saw "first seen already closed" and suppressed every close. Same lot number +
+    // winner arriving ended right after we watched that lot bidding = the close.
+    const w = new AuctionWatch()
+    w.ingest(pin({ auctionConfigId: 'a71', variantDesc: '#71', winUsername: undefined, status: 1, expectedEndMs: 30000 }, 5000))
+    const closed = w.ingest(pin({ auctionConfigId: 'a71x', variantDesc: '#71', winUsername: 'MissJay', maxBiddingPrice: '$44.00', status: 3 }, 6000))
+    expect(closed).toHaveLength(1)
+    expect(closed[0]).toMatchObject({ lotNumber: '#71', winner: 'MissJay', price: '$44.00', source: 'pin' })
+    // and never again for either id
+    expect(w.ingest(pin({ auctionConfigId: 'a71x', variantDesc: '#71', winUsername: 'MissJay', status: 3 }, 6500))).toEqual([])
+  })
+
+  it('rotated-id close does NOT fire for a DIFFERENT lot number (stale start suppression)', () => {
+    const w = new AuctionWatch()
+    w.ingest(pin({ auctionConfigId: 'a71', variantDesc: '#71', status: 1, expectedEndMs: 30000 }, 5000))
+    // app catches a different, already-ended lot → not ours, don't print
+    expect(w.ingest(pin({ auctionConfigId: 'a99', variantDesc: '#99', winUsername: 'x', status: 3 }, 6000))).toEqual([])
+  })
+
   it('judges remaining time on the SERVER clock (serverTimeOffsetMs)', () => {
     const w = new AuctionWatch()
     const skewed = pin({ status: 1, expectedEndMs: 5000 }, 1000) // client clock 3.9s behind

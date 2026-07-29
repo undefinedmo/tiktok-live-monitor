@@ -62,6 +62,39 @@ export class AuctionWatch {
     this.seen.set(id, c.status ?? -1)
     if (c.status === STATUS_BIDDING) this.lastBidding = { lot: c, atServerMs: pin.ts + (pin.serverTimeOffsetMs ?? 0) }
 
+    // ── rotated-id close: TikTok (since ~2026-07-28) can reissue the ended state
+    // under a NEW auctionConfigId, so the same lot arrives "first seen already
+    // closed" and the transition rule below suppresses it. If we were just watching
+    // this exact lot number bidding and it now shows ended-with-winner under a new
+    // id, that IS our close. (A different lot number ending under a fresh id is a
+    // stale card at app start — still suppressed.)
+    if (
+      prevStatus === undefined &&
+      c.status === STATUS_ENDED &&
+      c.winUsername &&
+      prev &&
+      prev.lot.auctionConfigId !== id &&
+      prev.lot.variantDesc !== undefined &&
+      prev.lot.variantDesc === c.variantDesc &&
+      !this.emitted.has(prev.lot.auctionConfigId!) &&
+      !this.emitted.has(id)
+    ) {
+      this.emitted.add(prev.lot.auctionConfigId!)
+      this.emitted.add(id)
+      this.lastBidding = null
+      out.push({
+        kind: 'auction-closed',
+        auctionConfigId: id,
+        lotNumber: c.variantDesc,
+        productName: c.productName,
+        winner: c.winUsername,
+        price: c.maxBiddingPrice,
+        source: 'pin',
+        ts: pin.ts,
+      })
+      return out
+    }
+
     // ── status transition: only a TRANSITION into ended counts. A lot first seen
     // already closed ended before we were watching — printing it would spam stale
     // labels on app start. An unsold lot (no winner) closes without a sale.

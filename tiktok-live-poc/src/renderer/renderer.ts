@@ -125,7 +125,7 @@ let currentTopSet = new Set<string>()
 let feedPage = 0
 let feedSize = Number(localStorage.getItem('tt-feed-size')) || 25
 
-const provKeyOf = (s: Sale) => printKey((s.skuDesc ?? '').replace(/^#/, ''), s.productName)
+const provKeyOf = (s: Sale) => printKey((s.skuDesc ?? '').replace(/^#/, ''), s.buyer.username || s.buyer.handle)
 
 /** Confirmed rows merged with not-yet-confirmed provisional closes; prunes stale/matched. */
 function feedRows(): Sale[] {
@@ -621,14 +621,14 @@ function printSale(s: Sale) {
 // every print source carries (pin, im-end attribution, im-result, order rows).
 // Normalized (case/whitespace) so the SAME sale reported by different sources (pin
 // roster name vs im Manager title vs auction_result product_name) still dedupes.
-const printKey = (lot: string, productName?: string) =>
-  `${(productName ?? '').trim().toLowerCase().replace(/\s+/g, ' ')}|${lot}`
+const printKey = (lot: string, winner?: string) =>
+  `${(winner ?? '').trim().toLowerCase().replace(/\s+/g, ' ')}|${lot}`
 
 // Order-data (slow) path: auto-print a genuinely-new sale, de-duped by item number.
 function autoPrintSale(s: Sale) {
   if (!autoPrint || !selectedPrinter) return
   const lot = (s.skuDesc ?? '').replace(/^#/, '')
-  const key = lot ? printKey(lot, s.productName) : s.orderId
+  const key = lot ? printKey(lot, s.buyer.username || s.buyer.handle) : s.orderId
   if (printedKeys.has(key)) return
   printedKeys.add(key)
   printSale(s)
@@ -662,7 +662,7 @@ function onAuctionClosed(ev: Extract<LiveEvent, { kind: 'auction-closed' }>) {
   // Instant bid history: a provisional row at the top of the feed, replaced by the
   // confirmed auction_result row when it lands (feedRows matches on product+lot).
   if (lot) {
-    const key = printKey(lot, ev.productName)
+    const key = printKey(lot, ev.winner)
     const covered =
       provisionalSales.some((p) => p.orderId === `prov:${key}`) ||
       allSales.some((s) => provKeyOf(s) === key)
@@ -685,7 +685,7 @@ function onAuctionClosed(ev: Extract<LiveEvent, { kind: 'auction-closed' }>) {
   // No lot number yet (unattributed im auction.end): don't print a numberless label —
   // the im-result event carries the lot ~6s later and prints it then.
   if (!lot) return
-  const key = printKey(lot, ev.productName)
+  const key = printKey(lot, ev.winner)
   if (printedKeys.has(key)) return
   printedKeys.add(key)
   void printLabel({ itemNumber: lot, buyer: ev.winner, price: ev.price, title: `#${lot}` })
