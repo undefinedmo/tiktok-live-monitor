@@ -12,7 +12,8 @@
     "build": "node esbuild.mjs",
     "build:win": "node esbuild.mjs && electron-builder --win",
     "publish": "node esbuild.mjs && electron-builder --publish always",
-    "dev": "node esbuild.mjs && electron ."
+    "dev": "node esbuild.mjs && electron .",
+    "publish:safe": "bash scripts/publish-safe.sh"
   },
   "devDependencies": {
     "@types/node": "^22.19.20",
