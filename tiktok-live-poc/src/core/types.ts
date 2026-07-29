@@ -81,7 +81,7 @@ export interface AuctionClosedEvent {
   winner: string
   price?: string
   username?: string // im-result only: the winner's @handle
-  source?: 'pin' | 'im' | 'im-result'
+  source?: 'pin' | 'pin-swap' | 'im' | 'im-result' | 'ws'
   ts: number
 }
 

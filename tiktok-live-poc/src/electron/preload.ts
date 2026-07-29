@@ -210,14 +210,13 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
     headers: { 'content-type': 'application/json', 'x-tt-store-region': 'us' },
     body: JSON.stringify(body),
   })
-  // auction_result/get is paginated (count:100). New sales land on PAGE 0 (rows are
-  // newest-first), so the 3s hot path fetches page 0 only — paging the ENTIRE show
-  // history every cycle re-downloaded 131KB×N per 3s tick (measured live: 128 rows
-  // across multiple pages at startup alone) and put the big parse on the critical
-  // path. A deep sweep runs on the first cycle (seeds the backlog) and then every
-  // 10th cycle (~30s) to reconcile payment-status flips on older rows. Each page's
-  // response is forwarded to main by the fetch hook above; the core dedupes by
-  // order_id, so re-fetched pages are harmless.
+  // auction_result/get is paginated. Rows are NEWEST-FIRST, so the hot path needs only
+  // the newest handful: the 1.5s cycle fetches a count:20 page 0 (~26KB), not the old
+  // count:100 full-history pagination (131KB×N per tick — measured 128 rows re-downloaded
+  // at startup alone). A deep count:100 sweep runs on the first cycle (seeds the backlog)
+  // and every 10th (~15s) to reconcile payment-status flips on older rows. Each response
+  // is forwarded to main by the fetch hook above; the core dedupes by order_id, so
+  // re-fetched pages are harmless.
   // insights/room/status is a DIFFERENT app than the streamer_desktop endpoints
   // (aid=4068 i18n_ecom_shop, vertical=3) — using the alliance aid errors 98001xxx.
   const qStatus = `?user_language=en&locale=en&aid=4068&app_name=i18n_ecom_shop&device_platform=web&cookie_enabled=true&timezone_name=America/Chicago&vertical=3&carrier_region=us`
@@ -226,28 +225,32 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
   let resultSweep = 0
   const cycle = async () => {
     void window.fetch(`${base}/added_auction_product/list${q}`, post({ room_id: cfg.roomId, session_id: cfg.sessionId, page_scene: 1, offset: 0, count: 100, auction_page_type: 0 })).catch(() => {})
-    // refresh the live video URL every ~5 cycles (~15s) — it is signed/expiring.
-    if (statusTick++ % 5 === 0) {
+    // refresh the live video URL every ~10 cycles (~15s) — it is signed/expiring.
+    if (statusTick++ % 10 === 0) {
       void window.fetch(statusUrl, post({ request: { room_filter: { room_id: cfg.roomId } } })).catch(() => {})
     }
-    const deep = resultSweep++ % 10 === 0 // page 0 every cycle; full history every ~10th
+    const deep = resultSweep++ % 10 === 0 // count:20 page 0 every cycle; full history every ~10th
+    const pageSize = deep ? 100 : 20
     let offset = 0
     for (let guard = 0; guard < (deep ? 30 : 1); guard++) {
       let res: Response
       try {
-        res = await window.fetch(`${base}/auction_result/get${q}`, post({ room_id: cfg.roomId, session_id: cfg.sessionId, auction_page_type: 0, offset, count: 100 }))
+        res = await window.fetch(`${base}/auction_result/get${q}`, post({ room_id: cfg.roomId, session_id: cfg.sessionId, auction_page_type: 0, offset, count: pageSize }))
       } catch {
         break
       }
       let more = false
       try { more = ((await res.clone().json()) as { has_more?: boolean }).has_more === true } catch { /* ignore */ }
       if (!more) break
-      offset += 100
+      offset += pageSize
     }
   }
   runCycle = cycle
   void cycle()
-  setInterval(() => void cycle(), 3000)
+  // 1.5s (was 3s): the order row is the signal that actually fires live (im decode can
+  // go silent; pin only covers pinned lots) and it lands 0.3-3s after the sale — a 3s
+  // timer added up to 3s of pure wait on every label for no savings that matter.
+  setInterval(() => void cycle(), 1500)
 
   // ── Pin poll (the low-latency close signal) ────────────────────────────────
   // pin/get flips latest_auction_item.status 1→3 within ~0.5s of the gavel, which
@@ -294,10 +297,15 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
   // forwards every response to main → decodeChat → render; here we read it only to advance
   // the cursor and honor the server's fetchInterval. The dashboard's own view doesn't fire
   // this endpoint, so without our poll chat never flows.
+  // Params mirror the dashboard's own working request (2026-07-21 HAR) — including the
+  // SECOND version_code (180800 = the webcast client's; 260000 = the app's). The capture
+  // that delivered auction lifecycle messages had both; ours originally sent only 260000,
+  // a suspect in the 2026-07-24 show where the im auction decode saw 0 events all night.
   const chatStatic =
-    `aid=253642&app_name=i18n_ecom_alliance&version_code=260000&device_platform=web&app_language=en` +
+    `version_code=180800&device_platform=web&cookie_enabled=true&tz_name=America/Chicago` +
+    `&aid=253642&app_name=i18n_ecom_alliance&version_code=260000&app_language=en` +
     `&webcast_language=en&identity=anchor&live_id=12&resp_content_type=protobuf&fetch_rule=1` +
-    `&history_comment_count=100&sup_ws_ds_opt=1&did_rule=3&cookie_enabled=true`
+    `&history_comment_count=100&sup_ws_ds_opt=1&did_rule=3`
   let chatCursor = ''
   let chatExt = ''
   let ecKey = '' // per-streamer key (needed to POST chat); arrives in a room-init webcast response

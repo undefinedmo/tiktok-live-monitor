@@ -77,3 +77,66 @@ describe('AuctionWatch', () => {
     expect(w.ingest(pin({ status: 3, winUsername: undefined }, 1500))).toEqual([])
   })
 })
+
+// Back-to-back auctions: the seller starts the next lot within seconds of the gavel, so
+// the pinned card swaps to the new lot BEFORE the 700ms poll ever samples the old lot's
+// ended state — the 1→3 transition is never visible. A lot that vanishes while bidding
+// with a leader and its countdown (nearly) run out closed naturally; one that vanishes
+// mid-countdown was canceled/reset and must not print.
+describe('AuctionWatch swap-close', () => {
+  it('fires when the tracked lot is replaced after its countdown ran out', () => {
+    const w = new AuctionWatch()
+    w.ingest(pin({ status: 1, expectedEndMs: 5000 }, 4900)) // 100ms left at last sighting
+    const closed = w.ingest(pin({ auctionConfigId: 'a2', variantDesc: '#18', winUsername: 'Monique', status: 1, expectedEndMs: 40000 }, 6000))
+    expect(closed).toHaveLength(1)
+    expect(closed[0]).toMatchObject({
+      kind: 'auction-closed',
+      auctionConfigId: 'a1',
+      lotNumber: '#17',
+      winner: 'Elizabeth',
+      price: '$27.00',
+      source: 'pin-swap',
+    })
+  })
+
+  it('does NOT fire when the lot vanished mid-countdown (canceled/reset)', () => {
+    const w = new AuctionWatch()
+    w.ingest(pin({ status: 1, expectedEndMs: 25000 }, 5000)) // 20s left — a cancel, not a close
+    expect(w.ingest(pin({ auctionConfigId: 'a2', variantDesc: '#18', status: 1 }, 6000))).toEqual([])
+  })
+
+  it('does NOT fire when the vanished lot had no leader', () => {
+    const w = new AuctionWatch()
+    w.ingest(pin({ status: 1, winUsername: undefined, expectedEndMs: 5000 }, 4900))
+    expect(w.ingest(pin({ auctionConfigId: 'a2', variantDesc: '#18', status: 1 }, 6000))).toEqual([])
+  })
+
+  it('does NOT fire without an expectedEndMs to judge by', () => {
+    const w = new AuctionWatch()
+    w.ingest(pin({ status: 1, expectedEndMs: undefined }, 4900))
+    expect(w.ingest(pin({ auctionConfigId: 'a2', variantDesc: '#18', status: 1 }, 6000))).toEqual([])
+  })
+
+  it('fires when the card unpins entirely near the end', () => {
+    const w = new AuctionWatch()
+    w.ingest(pin({ status: 1, expectedEndMs: 5000 }, 4800))
+    const closed = w.ingest({ kind: 'pin', ts: 6000 })
+    expect(closed).toHaveLength(1)
+    expect(closed[0]).toMatchObject({ auctionConfigId: 'a1', winner: 'Elizabeth', source: 'pin-swap' })
+  })
+
+  it('never double-fires a lot whose 1→3 transition WAS observed', () => {
+    const w = new AuctionWatch()
+    w.ingest(pin({ status: 1, expectedEndMs: 5000 }, 4900))
+    expect(w.ingest(pin({ status: 3, expectedEndMs: 5000 }, 5400))).toHaveLength(1) // normal close
+    expect(w.ingest(pin({ auctionConfigId: 'a2', variantDesc: '#18', status: 1 }, 6000))).toEqual([]) // swap after
+  })
+
+  it('judges remaining time on the SERVER clock (serverTimeOffsetMs)', () => {
+    const w = new AuctionWatch()
+    const skewed = pin({ status: 1, expectedEndMs: 5000 }, 1000) // client clock 3.9s behind
+    skewed.serverTimeOffsetMs = 3900 // serverNow = 4900 → 100ms left
+    w.ingest(skewed)
+    expect(w.ingest(pin({ auctionConfigId: 'a2', variantDesc: '#18', status: 1 }, 2000))).toHaveLength(1)
+  })
+})

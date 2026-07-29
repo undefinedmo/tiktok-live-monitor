@@ -112,12 +112,31 @@ function renderStats() {
 
 // ── live sales feed (comp "bid feed") — paginated ───────────────────────────
 let allSales: Sale[] = []
+// Provisional rows from the fast close signals (pin/im), shown the instant an auction
+// closes — the confirmed auction_result row replaces them (matched by product+lot key)
+// or they expire after 90s. This is what makes the bid history "capture" a sale at
+// the gavel instead of 2-6s later.
+const provisionalSales: Sale[] = []
+const PROV_TTL_MS = 90000
 let currentTopSet = new Set<string>()
 let feedPage = 0
 let feedSize = Number(localStorage.getItem('tt-feed-size')) || 25
 
-function updateFeedNav(totalPages: number) {
-  $('feedPage').textContent = `${allSales.length ? feedPage + 1 : 0}/${totalPages}`
+const provKeyOf = (s: Sale) => printKey((s.skuDesc ?? '').replace(/^#/, ''), s.productName)
+
+/** Confirmed rows merged with not-yet-confirmed provisional closes; prunes stale/matched. */
+function feedRows(): Sale[] {
+  const now = Date.now()
+  const realKeys = new Set(allSales.map(provKeyOf))
+  for (let i = provisionalSales.length - 1; i >= 0; i--) {
+    const p = provisionalSales[i]!
+    if (realKeys.has(provKeyOf(p)) || now - p.createdAt > PROV_TTL_MS) provisionalSales.splice(i, 1)
+  }
+  return [...provisionalSales, ...allSales]
+}
+
+function updateFeedNav(totalRows: number, totalPages: number) {
+  $('feedPage').textContent = `${totalRows ? feedPage + 1 : 0}/${totalPages}`
   ;($('feedPrev') as HTMLButtonElement).disabled = feedPage <= 0
   ;($('feedNext') as HTMLButtonElement).disabled = feedPage >= totalPages - 1
 }
@@ -125,15 +144,17 @@ function updateFeedNav(totalPages: number) {
 function renderFeed() {
   const feed = $('bidFeed')
   feed.replaceChildren()
-  if (!allSales.length) { feed.appendChild(el('div', 'mono', 'Waiting for sales…')); updateFeedNav(1); return }
-  const totalPages = Math.max(1, Math.ceil(allSales.length / feedSize))
+  const rows = feedRows()
+  if (!rows.length) { feed.appendChild(el('div', 'mono', 'Waiting for sales…')); updateFeedNav(0, 1); return }
+  const totalPages = Math.max(1, Math.ceil(rows.length / feedSize))
   feedPage = Math.max(0, Math.min(feedPage, totalPages - 1))
   const start = feedPage * feedSize
-  const page = allSales.slice(start, start + feedSize)
+  const page = rows.slice(start, start + feedSize)
   const topSet = currentTopSet
   page.forEach((s, idx) => {
     const i = start + idx
     const failed = s.paymentStatus === 'failed'
+    const provisional = s.orderId.startsWith('prov:')
     const row = el('div', 'bidrow' + (i === 0 ? ' fresh' : '') + (failed ? ' failed' : ''))
     row.appendChild(avatar(s.buyer.avatarUrl))
     const who = el('div', 'bidwho')
@@ -141,6 +162,7 @@ function renderFeed() {
     const sub = el('div', 'bidsub')
     if (topSet.has(s.buyer.ttuid || s.buyer.username)) sub.appendChild(el('span', 'tag whale', 'WHALE'))
     if (failed) sub.appendChild(el('span', 'tag failed', 'FAILED'))
+    else if (provisional) sub.appendChild(el('span', 'tag pending', 'CLOSED'))
     else if (s.paymentStatus === 'pending') sub.appendChild(el('span', 'tag pending', 'PENDING'))
     sub.appendChild(txt(`${s.skuDesc ? s.skuDesc + ' · ' : ''}${s.productName}`))
     who.appendChild(sub)
@@ -154,7 +176,7 @@ function renderFeed() {
     row.appendChild(pb)
     feed.appendChild(row)
   })
-  updateFeedNav(totalPages)
+  updateFeedNav(rows.length, totalPages)
 }
 
 function setupFeed() {
@@ -620,6 +642,10 @@ function onWonFeed(ev: Extract<LiveEvent, { kind: 'won-feed' }>) {
 // only) or by the im stream (auction.end for EVERY lot; im-result ~6s later with the
 // lot number). De-dup is shared with the other sources via printedKeys, so the slow
 // path re-reporting the same sale later never double-prints.
+const priceCentsOf = (formatted?: string): number => {
+  const m = /([\d,]+(?:\.\d{1,2})?)/.exec(formatted ?? '')
+  return m?.[1] ? Math.round(parseFloat(m[1].replace(/,/g, '')) * 100) : 0
+}
 function onAuctionClosed(ev: Extract<LiveEvent, { kind: 'auction-closed' }>) {
   const lot = (ev.lotNumber ?? '').replace(/^#/, '')
   // Instant UI: paint the close on the lot overlay even when the lot number isn't
@@ -630,6 +656,28 @@ function onAuctionClosed(ev: Extract<LiveEvent, { kind: 'auction-closed' }>) {
   lotSoldAt = Date.now() // tickCountdown paints SOLD and holds it against repaints
   lastPinRenderAt = Date.now() // hold this against the slower roster paint (PIN_FRESH_MS)
   if (lot) lastPrintedNumber = Number(lot) || lastPrintedNumber
+  // Instant bid history: a provisional row at the top of the feed, replaced by the
+  // confirmed auction_result row when it lands (feedRows matches on product+lot).
+  if (lot) {
+    const key = printKey(lot, ev.productName)
+    const covered =
+      provisionalSales.some((p) => p.orderId === `prov:${key}`) ||
+      allSales.some((s) => provKeyOf(s) === key)
+    if (!covered) {
+      const cents = priceCentsOf(ev.price)
+      provisionalSales.unshift({
+        orderId: `prov:${key}`,
+        buyer: { username: ev.winner, handle: ev.username },
+        productId: ev.productName ?? key,
+        productName: ev.productName ?? '(item)',
+        skuDesc: `#${lot}`,
+        price: { cents, formatted: ev.price ?? `$${(cents / 100).toFixed(2)}` },
+        paymentStatus: 'pending',
+        createdAt: ev.ts,
+      })
+      renderFeed()
+    }
+  }
   if (!autoPrint || !selectedPrinter) return
   // No lot number yet (unattributed im auction.end): don't print a numberless label —
   // the im-result event carries the lot ~6s later and prints it then.
