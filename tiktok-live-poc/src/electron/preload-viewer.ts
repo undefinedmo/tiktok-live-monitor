@@ -25,6 +25,10 @@ contextBridge.exposeInMainWorld('syncAPI', {
   openMonitor: () => ipcRenderer.invoke('tt-open-monitor'),
 })
 
+contextBridge.exposeInMainWorld('diagAPI', {
+  open: () => ipcRenderer.invoke('tt-diag:open'),
+})
+
 contextBridge.exposeInMainWorld('chatAPI', {
   send: (text: string) => ipcRenderer.invoke('tt-chat-send', text),
   onSent: (cb: (r: unknown) => void) => ipcRenderer.on('tt-chat-sent', (_e, r) => cb(r)),

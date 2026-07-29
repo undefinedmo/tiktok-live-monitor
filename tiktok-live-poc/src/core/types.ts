@@ -73,6 +73,13 @@ export interface WonFeedEvent {
  *                 carries the lot number + product + username, so it prints the lots
  *                 the fast paths couldn't attribute.
  */
+/** Watchdog edge (raise/clear/change): degraded signal paths the seller should see. */
+export interface WatchdogEvent {
+  kind: 'watchdog'
+  alerts: { code: string; message: string }[]
+  ts: number
+}
+
 export interface AuctionClosedEvent {
   kind: 'auction-closed'
   auctionConfigId: string
@@ -344,6 +351,7 @@ export type LiveEvent =
   | SaleEvent
   | WonFeedEvent
   | AuctionClosedEvent
+  | WatchdogEvent
   | CoreStatsEvent
   | SessionEvent
   | RoomEvent

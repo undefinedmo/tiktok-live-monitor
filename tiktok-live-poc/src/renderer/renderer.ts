@@ -40,6 +40,9 @@ declare global {
       send: (text: string) => Promise<{ ok: boolean; error?: string }>
       onSent: (cb: (r: { ok: boolean; error?: string }) => void) => void
     }
+    diagAPI?: {
+      open: () => Promise<{ ok: boolean; path?: string }>
+    }
   }
 }
 
@@ -853,6 +856,37 @@ function showScreen(s: 'monitor' | 'settings') {
 }
 $('navMonitor').addEventListener('click', () => showScreen('monitor'))
 document.getElementById('navSettings2')?.addEventListener('click', () => showScreen('settings'))
+document.getElementById('diagBtn')?.addEventListener('click', () => void window.diagAPI?.open())
+
+// ── watchdog banner: a degraded signal path must be SEEN, not discovered via
+// missing labels. Beeps once per newly-raised alert code, not on every re-send.
+const wdSeenCodes = new Set<string>()
+function wdBeep() {
+  try {
+    const ctx = new AudioContext()
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.frequency.value = 660
+    gain.gain.value = 0.06
+    osc.connect(gain).connect(ctx.destination)
+    osc.start()
+    osc.stop(ctx.currentTime + 0.18)
+    osc.onended = () => void ctx.close()
+  } catch { /* audio is best-effort */ }
+}
+function renderWatchdog(alerts: { code: string; message: string }[]) {
+  const bar = document.getElementById('watchdogBar')
+  if (!bar) return
+  if (!alerts.length) {
+    bar.style.display = 'none'
+    wdSeenCodes.clear()
+    return
+  }
+  bar.style.display = 'flex'
+  bar.textContent = '⚠ ' + alerts.map((a) => a.message).join('  ·  ')
+  if (alerts.some((a) => !wdSeenCodes.has(a.code))) wdBeep()
+  alerts.forEach((a) => wdSeenCodes.add(a.code))
+}
 
 // ── event loop ──────────────────────────────────────────────────────────────
 window.ttLive.onEvent((ev: LiveEvent) => {
@@ -954,6 +988,9 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       break
     case 'chat':
       appendChat(ev.items)
+      break
+    case 'watchdog':
+      renderWatchdog(ev.alerts)
       break
   }
 })

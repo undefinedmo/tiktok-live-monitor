@@ -290,6 +290,8 @@
     </div>
     <!-- #dot kept hidden (orange status dot removed); the JS still updates it -->
     <div id="liveStats" class="visually-hidden"><span id="dot"></span></div>
+    <!-- watchdog: degraded signal paths (raised/cleared by main's 15s check) -->
+    <div id="watchdogBar" style="display:none;align-items:center;gap:8px;padding:7px 16px;background:#2a1215;border-bottom:1px solid #5c2a2e;color:#ff9b9b;font-size:12.5px;font-weight:600;"></div>
 
     <div class="terminal-body">
       <div class="rail">
@@ -404,6 +406,7 @@
               <select id="printerSel"><option value="">No printer</option></select>
             </label>
             <div class="preview" style="margin-top:2px;">Default printer is preselected; your choice is saved. <span id="printerSaved" style="color:#7fd6a6;"></span></div>
+            <button id="diagBtn" class="qbtn void" style="margin-top:10px;height:30px;" title="Opens the flight-recorder log folder; the last 200 lines are also copied to the clipboard">🩺 Diagnostics log</button>
             <label style="display:flex;gap:8px;align-items:center;margin-top:10px;"><input type="checkbox" id="autoPrint" /> Auto-print a label when an item sells</label>
             <div style="margin-top:12px;">
               <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Print source <span style="font-weight:400;color:#7a8296;">(auto-print signal)</span></div>

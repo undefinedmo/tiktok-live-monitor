@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session, Menu, nativeTheme } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, session, Menu, nativeTheme, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { join } from 'node:path'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -10,6 +10,8 @@ import { parsePin } from '../core/pin'
 import { AuctionResults } from '../core/auctionResults'
 import { AuctionWatch } from '../core/auctionWatch'
 import { decodeChat } from '../core/chat'
+import { evaluateWatchdog } from '../core/watchdog'
+import { initFlightLog, flightLogPath, flog, flushFlightLogSync } from './flightlog'
 import { decodeAuctionIm } from '../core/auctionIm'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
 import type { LiveEvent, StatusEvent, PinState } from '../core/types'
@@ -56,10 +58,18 @@ let pollSessionId: string | undefined
 let pollSent = false
 let lastSalePollNow = 0 // debounce WS-sale-triggered immediate polls
 let endPollTimer: ReturnType<typeof setTimeout> | undefined // one-shot poll at the lot's expected end
+// ── Watchdog state (evaluated every 15s; core/watchdog.ts is the pure logic) ──
+let wdPollStartedAt: number | undefined
+let wdLastPinAt: number | undefined
+let wdLastImAt: number | undefined
+let wdSalesSinceClose = 0
+const wdPrintErrors: number[] = [] // ms timestamps of failed label jobs
+let wdLastAlertsJson = '[]'
 let endPollSig = '' // auctionConfigId|expectedEndMs the timer is armed for
 function maybeStartPolling() {
   if (pollSent || !pollRoomId || !pollSessionId || !monitor) return
   pollSent = true
+  wdPollStartedAt = Date.now()
   debug(`[tt] start polling room=${pollRoomId} session=${pollSessionId}`)
   monitor.webContents.send('tt-poll-config', { roomId: pollRoomId, sessionId: pollSessionId })
 }
@@ -75,7 +85,7 @@ function capture(file: string | null, rec: unknown) {
   try { appendFileSync(file, JSON.stringify(rec) + '\n') } catch { /* ignore */ }
 }
 
-const debug = (line: string) => { if (process.env.TT_DEBUG) console.log(line) }
+const debug = (line: string) => { flog(line); if (process.env.TT_DEBUG) console.log(line) }
 
 // ── Label-latency instrumentation (TT_LAT=1 or TT_DEBUG=1) ───────────────────
 // Times a live sale from the WS sold-count tick (A) → poll fired/debounced (B) →
@@ -83,7 +93,7 @@ const debug = (line: string) => { if (process.env.TT_DEBUG) console.log(line) }
 // process clock. Hop A's upstream (gavel→socket) is TikTok-side and unmeasurable
 // here; we anchor at the tick. Zero overhead when the flag is off.
 const TIMING = !!(process.env.TT_LAT || process.env.TT_DEBUG)
-const lat = (line: string) => { if (TIMING) console.log(`[lat ${Date.now()}] ${line}`) }
+const lat = (line: string) => { const l = `[lat ${Date.now()}] ${line}`; flog(l); if (TIMING) console.log(l) }
 let lastWsTickAt = 0 // ms of the most recent WS sold-count tick
 let pinSamples = 0 // pin/get responses seen — proves the 700ms poll is actually feeding us
 let lastPinSig = '' // last auctionConfigId|status, so we log edges not every sample
@@ -98,6 +108,11 @@ function viewerSend(channel: string, ...args: unknown[]) {
   }
 }
 function send(ev: LiveEvent) {
+  if (ev.kind === 'auction-closed') wdSalesSinceClose = 0
+  else if (ev.kind === 'sales' && wdPollStartedAt && Date.now() - wdPollStartedAt > 20000) {
+    // skip the connect-time backlog (first ~20s of ingests are history, not gavels)
+    wdSalesSinceClose += ev.newSales.length
+  }
   viewerSend('tt-live-event', ev)
 }
 
@@ -273,7 +288,6 @@ function ingestAuctionBytes(raw: Uint8Array, now: number, via: 'im' | 'ws') {
 const msgCensus = new Map<string, number>()
 const censusFrames = { ws: 0, im: 0 }
 function census(buf: Uint8Array, channel: 'ws' | 'im') {
-  if (!TIMING) return
   censusFrames[channel]++
   const s = Buffer.from(buf).toString('latin1')
   const re = /Webcast\w+Message/g
@@ -281,7 +295,7 @@ function census(buf: Uint8Array, channel: 'ws' | 'im') {
   while ((m = re.exec(s))) msgCensus.set(`${channel}:${m[0]}`, (msgCensus.get(`${channel}:${m[0]}`) ?? 0) + 1)
 }
 setInterval(() => {
-  if (!TIMING || (!censusFrames.ws && !censusFrames.im && !msgCensus.size)) return
+  if (!censusFrames.ws && !censusFrames.im && !msgCensus.size) return
   const tops = [...msgCensus.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, v]) => `${k}×${v}`).join(' ')
   lat(`census frames ws=${censusFrames.ws} im=${censusFrames.im} · ${tops || '(no Webcast markers)'}`)
 }, 60000)
@@ -336,6 +350,7 @@ ipcMain.on('tt-ws-frame', (_e, msg: { url?: string; data?: Uint8Array }) => {
 // exists in auction_result/get — for EVERY auction (pinned or not), making it the
 // universal fast close signal the dead WS sold-tick and the drifted DOM feed never were.
 ipcMain.on('tt-im-frame', (_e, bytes: Uint8Array) => {
+  wdLastImAt = Date.now()
   const raw = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
   capture(CAP_IM, { bytes: raw.byteLength, b64: Buffer.from(raw).toString('base64') })
   const now = Date.now()
@@ -425,6 +440,7 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
   } else if (msg?.endpoint === 'pin') {
     const pin = parsePin(json, now)
     lastPin = pin
+    wdLastPinAt = now
     // Liveness/edge trace: AuctionWatch can only fire on a 1→3 TRANSITION, so if pin
     // samples are sparse we silently miss closes. Log every status/lot change plus a
     // periodic heartbeat to show the poll is actually feeding us.
@@ -704,6 +720,7 @@ ipcMain.handle('print-label', (_e, args: { labelData: LabelData; printerName: st
   const run = printChain.then(() => printLabelJob(args))
   printChain = run.catch(() => {})
   return run.then((r) => {
+    if (!r.success) wdPrintErrors.push(Date.now())
     if (TIMING) {
       const done = Date.now()
       lat(`E print DONE #${item} ok=${r.success} spool=${done - queuedAt}ms${seen ? ` · total(rest→label)=${done - seen}ms` : ''}`)
@@ -711,6 +728,40 @@ ipcMain.handle('print-label', (_e, args: { labelData: LabelData; printerName: st
     }
     return r
   })
+})
+
+// ── Watchdog loop: alert the dashboard when a signal path degrades ───────────
+setInterval(() => {
+  const now = Date.now()
+  while (wdPrintErrors.length && now - wdPrintErrors[0]! > 300000) wdPrintErrors.shift()
+  const alerts = evaluateWatchdog({
+    now,
+    connected,
+    pollStartedAt: wdPollStartedAt,
+    lastPinSampleAt: wdLastPinAt,
+    lastImFrameAt: wdLastImAt,
+    salesSinceLastClose: wdSalesSinceClose,
+    printErrorsRecent: wdPrintErrors.length,
+  })
+  const j = JSON.stringify(alerts)
+  if (j === wdLastAlertsJson) return // only send edges (raise/clear/change)
+  wdLastAlertsJson = j
+  if (alerts.length) flog(`[watchdog] ${alerts.map((a) => a.message).join(' · ')}`)
+  else flog('[watchdog] clear')
+  send({ kind: 'watchdog', alerts, ts: now })
+}, 15000)
+
+// ── Diagnostics: reveal the flight-recorder log (+ recent lines to clipboard) ──
+ipcMain.handle('tt-diag:open', () => {
+  flushFlightLogSync()
+  const path = flightLogPath()
+  if (!path) return { ok: false }
+  try {
+    const lines = readFileSync(path, 'utf8').split('\n')
+    clipboard.writeText(lines.slice(-200).join('\n'))
+  } catch { /* clipboard is best-effort */ }
+  shell.showItemInFolder(path)
+  return { ok: true, path }
 })
 
 // ── Auto-update (launch-time, GitHub Releases) ───────────────────────────────
@@ -733,6 +784,7 @@ function initAutoUpdate() {
 }
 
 app.whenReady().then(() => {
+  initFlightLog(join(app.getPath('userData'), 'logs'), `TikTok Live Monitor v${app.getVersion()} · started ${new Date().toISOString()}`)
   app.userAgentFallback = CHROME_UA
   Menu.setApplicationMenu(null) // remove the native File/Edit/View/Window/Help menu bar
   nativeTheme.themeSource = 'dark' // dark native title bar (min/max/close) to match the body
@@ -748,6 +800,8 @@ app.on('window-all-closed', () => app.quit())
 // On quit, force-close any window so a page-level beforeunload (TikTok registers
 // one) can't veto the exit and strand the process. destroy() skips beforeunload.
 app.on('before-quit', () => {
+  flog('[app] quit')
+  flushFlightLogSync()
   for (const w of BrowserWindow.getAllWindows()) {
     try { if (!w.isDestroyed()) w.destroy() } catch { /* ignore */ }
   }
@@ -755,5 +809,5 @@ app.on('before-quit', () => {
 // Last-resort net: a stray async throw during teardown must never strand the app
 // behind the native "JavaScript error" dialog (which forces a Task Manager kill).
 // Log loudly so real bugs are still visible; the guards above are the actual fix.
-process.on('uncaughtException', (err) => { console.error('[main] uncaughtException:', err) })
+process.on('uncaughtException', (err) => { console.error('[main] uncaughtException:', err); flog(`[main] uncaughtException: ${err?.stack ?? err}`); flushFlightLogSync() })
 process.on('unhandledRejection', (err) => { console.error('[main] unhandledRejection:', err) })
