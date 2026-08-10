@@ -634,16 +634,27 @@ const printKey = (lot: string, winner?: string) =>
 let printedListingId = ''
 const printedLots = new Set<string>()
 function lotPrinted(lot: string, listingId?: string): boolean {
-  if (listingId && listingId !== printedListingId) { printedListingId = listingId; printedLots.clear() }
+  if (listingId && listingId !== printedListingId) { printedListingId = listingId; printedLots.clear(); for (const t of pendingSwap.values()) clearTimeout(t); pendingSwap.clear() }
   return printedLots.has(lot)
 }
 
-// Order-data (slow) path: auto-print a genuinely-new sale, de-duped by lot number.
+// Prefer the CONFIRMED winner: a pin swap-close only knows the last LEADER, which a snipe
+// overrides (the pin's leader != the auction_result winner). So a swap-close print is held
+// briefly; if a confirmed source (auction_result, or a pin/im close carrying the real
+// winner) prints the lot first, the held guess is cancelled. If nothing confirms in the
+// window, the guess prints (better than no label). Confirmed sources are never delayed.
+const SWAP_PRINT_DELAY_MS = 4000 // covers the ~2-3s auction_result server floor
+const pendingSwap = new Map<string, ReturnType<typeof setTimeout>>()
+function cancelPendingSwap(lot: string) { const t = pendingSwap.get(lot); if (t) { clearTimeout(t); pendingSwap.delete(lot) } }
+
+// Order-data (slow) path: auto-print a genuinely-new sale, de-duped by lot number. This is
+// the AUTHORITATIVE winner, so it also cancels/pre-empts any held swap-close guess.
 function autoPrintSale(s: Sale) {
   if (!autoPrint || !selectedPrinter) return
   const lot = (s.skuDesc ?? '').replace(/^#/, '')
   if (!lot) { if (printedKeys.has(s.orderId)) return; printedKeys.add(s.orderId); printSale(s); return }
   if (lotPrinted(lot)) return
+  cancelPendingSwap(lot)
   printedLots.add(lot)
   printSale(s)
 }
@@ -700,8 +711,16 @@ function onAuctionClosed(ev: Extract<LiveEvent, { kind: 'auction-closed' }>) {
   // the im-result event carries the lot ~6s later and prints it then.
   if (!lot) return
   if (lotPrinted(lot, ev.auctionConfigId)) return
-  printedLots.add(lot)
-  void printLabel({ itemNumber: lot, buyer: ev.winner, price: ev.price, title: `#${lot}` })
+  const doPrint = () => { printedLots.add(lot); void printLabel({ itemNumber: lot, buyer: ev.winner, price: ev.price, title: `#${lot}` }) }
+  if (ev.source === 'pin-swap') {
+    // Low-confidence guess (leader while bidding) — hold for a confirmed winner first.
+    if (pendingSwap.has(lot)) return
+    pendingSwap.set(lot, setTimeout(() => { pendingSwap.delete(lot); if (!lotPrinted(lot)) doPrint() }, SWAP_PRINT_DELAY_MS))
+    return
+  }
+  // Confirmed source (pin status=3 / im / im-result): print now, pre-empt any held guess.
+  cancelPendingSwap(lot)
+  doPrint()
 }
 
 function updateFeedWinsSeen() {
