@@ -37,6 +37,9 @@
       "dist/**/*",
       "package.json"
     ],
+    "extraResources": [
+      { "from": "scripts/rawlabel.exe", "to": "rawlabel.exe" }
+    ],
     "win": {
       "target": [
         "nsis"

@@ -21,8 +21,9 @@ declare global {
   interface Window {
     ttLive: { onEvent: (cb: (ev: LiveEvent) => void) => void }
     labelAPI: {
-      getPrinters: () => Promise<{ printers: { name: string; displayName: string; isDefault: boolean }[]; saved: string }>
+      getPrinters: () => Promise<{ printers: { name: string; displayName: string; isDefault: boolean }[]; saved: string; rawZpl: boolean }>
       savePrinter: (name: string) => Promise<boolean>
+      setRawZpl: (enabled: boolean) => Promise<boolean>
       print: (labelData: LabelData, printerName: string, template: LabelTemplate) => Promise<{ success: boolean; error?: string }>
     }
     updateAPI?: {
@@ -703,7 +704,7 @@ function updatePrintNext() {
 }
 
 async function setupPrinting() {
-  const { printers, saved } = await window.labelAPI.getPrinters()
+  const { printers, saved, rawZpl } = await window.labelAPI.getPrinters()
   const sel = $('printerSel') as HTMLSelectElement
   for (const p of printers) {
     const opt = document.createElement('option')
@@ -723,6 +724,8 @@ async function setupPrinting() {
   renderQueue()
   sel.addEventListener('change', () => { selectedPrinter = sel.value; void window.labelAPI.savePrinter(selectedPrinter); updatePrintNext(); renderQueue(); printerHint(); updateSampleBtn() })
   ;($('autoPrint') as HTMLInputElement).addEventListener('change', (e) => { autoPrint = (e.target as HTMLInputElement).checked; localStorage.setItem('tt-autoprint', autoPrint ? '1' : '0') })
+  ;($('rawZpl') as HTMLInputElement).checked = rawZpl
+  ;($('rawZpl') as HTMLInputElement).addEventListener('change', (e) => { void window.labelAPI.setRawZpl((e.target as HTMLInputElement).checked) })
   $('printNext').addEventListener('click', () => { if (lastPrintedNumber !== null) void printLabel({ itemNumber: String(lastPrintedNumber + 1) }) })
   $('printCustom').addEventListener('click', () => { const v = ($('customNum') as HTMLInputElement).value.replace(/^#/, '').trim(); if (v) void printLabel({ itemNumber: v }) })
   $('printRange').addEventListener('click', async () => {

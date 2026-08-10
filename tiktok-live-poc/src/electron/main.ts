@@ -14,6 +14,8 @@ import { evaluateWatchdog } from '../core/watchdog'
 import { initFlightLog, flightLogPath, flog, flushFlightLogSync } from './flightlog'
 import { decodeAuctionIm, extractMessagePayloads } from '../core/auctionIm'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
+import { labelZpl, labelNeedsHtml } from './zplLabel'
+import { sendRawToPrinter, warmRawPrinter } from './rawPrint'
 import type { LiveEvent, StatusEvent, PinState } from '../core/types'
 
 const DASHBOARD = 'https://shop.tiktok.com/streamer/live/event/dashboard'
@@ -516,19 +518,37 @@ function replayFixtures() {
 
 // ── Label printing (mirrors the desktop app: webContents.print of HTML) ──────
 const PRINTER_FILE = join(app.getPath('userData'), 'tt-printer.json')
-function loadPrinter(): string {
-  try { return JSON.parse(readFileSync(PRINTER_FILE, 'utf8')).printer ?? '' } catch { return '' }
+interface PrinterConfig { printer: string; rawZpl: boolean }
+function loadPrinterConfig(): PrinterConfig {
+  try { const j = JSON.parse(readFileSync(PRINTER_FILE, 'utf8')); return { printer: j.printer ?? '', rawZpl: !!j.rawZpl } } catch { return { printer: '', rawZpl: false } }
 }
+function savePrinterConfig(cfg: PrinterConfig) {
+  try { writeFileSync(PRINTER_FILE, JSON.stringify(cfg)) } catch { /* ignore */ }
+}
+// Cached so the print hot-path doesn't read the file per label.
+let rawZplEnabled = false
 
 ipcMain.handle('get-printers', async () => {
   const printers = (await viewer?.webContents.getPrintersAsync()) ?? []
+  const cfg = loadPrinterConfig()
   return {
     printers: printers.map((p) => ({ name: p.name, displayName: p.displayName, isDefault: p.isDefault })),
-    saved: loadPrinter(),
+    saved: cfg.printer,
+    rawZpl: cfg.rawZpl,
   }
 })
 ipcMain.handle('save-printer', (_e, name: string) => {
-  try { writeFileSync(PRINTER_FILE, JSON.stringify({ printer: name })) } catch { /* ignore */ }
+  savePrinterConfig({ printer: name, rawZpl: rawZplEnabled })
+  if (name && rawZplEnabled) warmRawPrinter(name)
+  return true
+})
+// Opt-in fast printing: raw ZPL straight to the spooler. Only enable for ZPL-capable
+// printers (e.g. Arkscan 2054A) — a non-ZPL printer would print the commands as text.
+ipcMain.handle('set-raw-zpl', (_e, enabled: boolean) => {
+  rawZplEnabled = !!enabled
+  const cfg = loadPrinterConfig()
+  savePrinterConfig({ printer: cfg.printer, rawZpl: rawZplEnabled })
+  if (rawZplEnabled && cfg.printer) warmRawPrinter(cfg.printer)
   return true
 })
 
@@ -696,6 +716,14 @@ function getPrintWindow(): BrowserWindow {
 async function printLabelJob(args: { labelData: LabelData; printerName: string; template?: LabelTemplate }): Promise<{ success: boolean; error?: string }> {
   try {
     const template = args.template ?? DEFAULT_TEMPLATE
+    // Fast path (opt-in): raw ZPL straight to the spooler (~50ms vs ~1s for the HTML
+    // render) — except labels whose text ZPL's built-in font can't draw (emoji/non-Latin),
+    // which fall back to the HTML path below. Any raw failure also falls back.
+    if (rawZplEnabled && !labelNeedsHtml(args.labelData, template)) {
+      const r = await sendRawToPrinter(args.printerName, labelZpl(args.labelData, template))
+      if (r.ok) return { success: true }
+      flog(`[label] raw ZPL failed (${r.detail}) — falling back to HTML print`)
+    }
     const size = LABEL_SIZES[template.labelSize] ?? LABEL_SIZES['2x1']
     const wc = getPrintWindow().webContents
     await wc.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(labelHtml(args.labelData, template)))
@@ -801,6 +829,11 @@ app.whenReady().then(() => {
   app.userAgentFallback = CHROME_UA
   Menu.setApplicationMenu(null) // remove the native File/Edit/View/Window/Help menu bar
   nativeTheme.themeSource = 'dark' // dark native title bar (min/max/close) to match the body
+  // Raw-ZPL fast printing (opt-in): load the setting and warm the helper so the first
+  // label isn't paying the ~900ms cold .NET start.
+  const pcfg = loadPrinterConfig()
+  rawZplEnabled = pcfg.rawZpl
+  if (pcfg.rawZpl && pcfg.printer) warmRawPrinter(pcfg.printer)
   createViewer()
   if (process.env.TT_REPLAY) {
     setTimeout(replayFixtures, 1200)

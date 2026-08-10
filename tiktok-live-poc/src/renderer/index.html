@@ -408,6 +408,8 @@
             <div class="preview" style="margin-top:2px;">Default printer is preselected; your choice is saved. <span id="printerSaved" style="color:#7fd6a6;"></span></div>
             <button id="diagBtn" class="qbtn void" style="margin-top:10px;height:30px;" title="Opens the flight-recorder log folder; the last 200 lines are also copied to the clipboard">🩺 Diagnostics log</button>
             <label style="display:flex;gap:8px;align-items:center;margin-top:10px;"><input type="checkbox" id="autoPrint" /> Auto-print a label when an item sells</label>
+            <label style="display:flex;gap:8px;align-items:center;margin-top:8px;"><input type="checkbox" id="rawZpl" /> Fast printing (raw ZPL) — ~20× faster spool</label>
+            <div class="preview" style="margin-top:2px;">Sends ZPL straight to the printer, skipping the slow render. Only for ZPL-capable label printers (e.g. Arkscan 2054A). Names with emoji auto-fall-back to normal printing.</div>
             <div style="margin-top:12px;">
               <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Print source <span style="font-weight:400;color:#7a8296;">(auto-print signal)</span></div>
               <div style="color:#7a8296;font-size:12px;">Every signal prints: live auction-close (~1s after the gavel) and the order record (~2–5s), whichever reports a sale first — duplicates are filtered automatically. No single TikTok feed going quiet can stop labels.</div>
