@@ -62,8 +62,21 @@ describe('labelZpl', () => {
     expect(labelZpl(data, withPrice)).toContain('^FD$27.00^FS')
   })
 
-  it('centers each line horizontally with a field block spanning the width', () => {
-    expect(labelZpl(data)).toMatch(/\^FB406,1,0,C,0/)
+  it('centers each line with an explicit x-offset (not ^FB, which emulators ignore)', () => {
+    const z = labelZpl(data)
+    expect(z).not.toContain('^FB')
+    const xs = [...z.matchAll(/\^FO(\d+),\d+/g)].map((m) => Number(m[1]))
+    expect(xs.length).toBeGreaterThan(0)
+    expect(xs.every((x) => x > 0)).toBe(true) // every line pushed right of the edge → centered
+  })
+
+  it('shrinks a long line so it stays within the round safe zone (2x2)', () => {
+    const big: LabelTemplate = { ...DEFAULT_TEMPLATE, labelSize: '2x2', buyer: true }
+    const z = labelZpl({ itemNumber: '1', buyer: 'a-really-long-buyer-name-that-would-overflow' }, big)
+    // the long line's font height is reduced below its 9pt→~25dot default
+    const buyerFont = /\^A0N,(\d+),\d+\^FDa-really/.exec(z)
+    expect(buyerFont).toBeTruthy()
+    expect(Number(buyerFont![1])).toBeLessThan(25)
   })
 
   it('escapes ZPL control characters in field data', () => {
