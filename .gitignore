@@ -11,5 +11,17 @@ desktop/
 web/
 middleware/
 
+# Build artifacts / installers
+tiktok-live-poc/build/
+tiktok-live-poc/release/
+
+# Local-only working data (1.8G of captures; never push)
+archive/
+
+# DB dumps — contain real customer data
+backups/
+*.sql.gz
+*-live_auctions.sql
+
 # Misc
 node_modules/

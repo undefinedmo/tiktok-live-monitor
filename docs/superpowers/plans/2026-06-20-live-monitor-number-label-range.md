@@ -178,7 +178,7 @@ describe('runPrintRange', () => {
       onProgress: noop,
     });
     expect(calls).toEqual([3, 4, 5]);
-    expect(summary).toEqual({ printed: 3, errors: 1 - 1, lastPrinted: 5, cancelled: false });
+    expect(summary).toEqual({ printed: 3, errors: 0, lastPrinted: 5, cancelled: false });
   });
 
   it('counts errors and keeps going', async () => {
@@ -236,7 +236,7 @@ describe('runPrintRange', () => {
 });
 ```
 
-> Note: `errors: 1 - 1` is written to read as "zero errors" while making the assertion's intent obvious; it evaluates to `0`.
+> Note: the `printItem: async (n) => { if (n === 2) throw ... }` case must increment `errors` but not halt the loop.
 
 - [ ] **Step 2: Run test to verify it fails**
 
