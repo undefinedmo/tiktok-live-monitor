@@ -625,13 +625,26 @@ function printSale(s: Sale) {
 const printKey = (lot: string, winner?: string) =>
   `${(winner ?? '').trim().toLowerCase().replace(/\s+/g, ' ')}|${lot}`
 
-// Order-data (slow) path: auto-print a genuinely-new sale, de-duped by item number.
+// Print dedup scoped to the current LISTING: exactly one label per lot number, whatever
+// source reports it and whether or not the sources agree on the winner. A snipe leaves the
+// pin's last leader != the auction_result winner (observed live: #252 printed twice — "Liz"
+// via pin swap-close, "Amy891" via the order row — because a winner-keyed guard saw two
+// distinct keys). Lot numbers restart per listing, so the set is cleared when the listing
+// (auctionConfigId) changes; auction-close events carry that id and lead the order rows.
+let printedListingId = ''
+const printedLots = new Set<string>()
+function lotPrinted(lot: string, listingId?: string): boolean {
+  if (listingId && listingId !== printedListingId) { printedListingId = listingId; printedLots.clear() }
+  return printedLots.has(lot)
+}
+
+// Order-data (slow) path: auto-print a genuinely-new sale, de-duped by lot number.
 function autoPrintSale(s: Sale) {
   if (!autoPrint || !selectedPrinter) return
   const lot = (s.skuDesc ?? '').replace(/^#/, '')
-  const key = lot ? printKey(lot, s.buyer.username || s.buyer.handle) : s.orderId
-  if (printedKeys.has(key)) return
-  printedKeys.add(key)
+  if (!lot) { if (printedKeys.has(s.orderId)) return; printedKeys.add(s.orderId); printSale(s); return }
+  if (lotPrinted(lot)) return
+  printedLots.add(lot)
   printSale(s)
 }
 
@@ -686,9 +699,8 @@ function onAuctionClosed(ev: Extract<LiveEvent, { kind: 'auction-closed' }>) {
   // No lot number yet (unattributed im auction.end): don't print a numberless label —
   // the im-result event carries the lot ~6s later and prints it then.
   if (!lot) return
-  const key = printKey(lot, ev.winner)
-  if (printedKeys.has(key)) return
-  printedKeys.add(key)
+  if (lotPrinted(lot, ev.auctionConfigId)) return
+  printedLots.add(lot)
   void printLabel({ itemNumber: lot, buyer: ev.winner, price: ev.price, title: `#${lot}` })
 }
 
