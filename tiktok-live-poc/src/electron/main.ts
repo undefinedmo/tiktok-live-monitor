@@ -101,6 +101,9 @@ let lastWsTickAt = 0 // ms of the most recent WS sold-count tick
 let pinSamples = 0 // pin/get responses seen — proves the 700ms poll is actually feeding us
 let lastPinSig = '' // last auctionConfigId|status, so we log edges not every sample
 const saleSeenAt = new Map<string, number>() // item# → ms when main first produced the sale row
+// DIAG (sudden-death investigation): lots whose auction-mode flags we've already logged,
+// so each lot is recorded once. Lets a lot run with sudden death ON be compared to one OFF.
+const modeSeen = new Set<string>()
 
 // Send to the dashboard ONLY when it's alive. `viewer?.` guards null but not a
 // destroyed window — sending to a closed webContents throws in main (uncaught →
@@ -417,6 +420,15 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
   if (msg?.endpoint === 'roster') {
     const snap = parseRoster(json, now)
     debug(`[tt] roster: ${snap.products.length} products, sold ${snap.totalSold}, pinned @${snap.pinned?.winUsername ?? '—'}`)
+    // DIAG (sudden-death investigation): log each lot's auction-mode flags once. Run one
+    // lot with sudden death ON and one OFF, then compare — the flag that flips is the one.
+    for (const p of snap.products) {
+      const k = p.variantDesc ?? p.auctionConfigId
+      if (!k || modeSeen.has(k)) continue
+      modeSeen.add(k)
+      flog(`[diag-mode] lot=${p.variantDesc ?? '?'} auction_mode=${p.auctionMode ?? '?'} card_type=${p.auctionCardType ?? '?'} config_type=${p.auctionConfigType ?? '?'} ext_dur=${p.extendedDurationSec ?? '?'} dur=${p.durationSec ?? '?'}`)
+    }
+    if (modeSeen.size > 5000) modeSeen.clear() // bound across a long multi-listing show
     send(snap)
   } else if (msg?.endpoint === 'auction_result') {
     const update = auctionResults.ingest(json, now)
