@@ -23,9 +23,18 @@ const STATUS_ENDED = 3
 // final clock), while excluding deliberate mid-flight cancels.
 const SWAP_CLOSE_GRACE_MS = 3000
 
+// Per-LOT identity. auctionConfigId is per-LISTING, not per-lot: every variant #1..#K
+// under one auction product shares it (measured live 2026-08-09: 211 lots across a show
+// carried just 2 config ids). Keying dedup state by auctionConfigId alone therefore let
+// the FIRST lot of each listing print and suppressed every lot after it (emitted.has(id)
+// was already true) — only 2 of 211 closes fired. variant_desc ("#17") is the real
+// per-lot key; it restarts per listing, so scope it by config id to stay unique across
+// listings. Mirrors the renderer's printKey reasoning (lot numbers restart per LISTING).
+const lotKeyOf = (lot: PinnedAuction): string => `${lot.auctionConfigId ?? ''}|${lot.variantDesc ?? ''}`
+
 export class AuctionWatch {
-  private seen = new Map<string, number>() // auctionConfigId → last observed status
-  private emitted = new Set<string>() // auctionConfigId already reported closed
+  private seen = new Map<string, number>() // lotKey → last observed status
+  private emitted = new Set<string>() // lotKey already reported closed
   // Latest snapshot of the current lot while it was BIDDING, on the server clock —
   // what we judge a swap-close by when the lot disappears.
   private lastBidding: { lot: PinnedAuction; atServerMs: number } | null = null
@@ -36,15 +45,19 @@ export class AuctionWatch {
     const id = c?.auctionConfigId
 
     // ── swap-close: the lot we were watching was replaced or unpinned ─────────
+    // A lot change is a change in lotKey, NOT just auctionConfigId — back-to-back lots
+    // in one listing share the config id, so comparing ids alone never saw the swap and
+    // let same-listing closes slip through. curKey is null when the card unpinned.
     const prev = this.lastBidding
-    if (prev && prev.lot.auctionConfigId !== id) {
-      const pid = prev.lot.auctionConfigId!
+    const curKey = c && id ? lotKeyOf(c) : null
+    if (prev && lotKeyOf(prev.lot) !== (curKey ?? '')) {
+      const pkey = lotKeyOf(prev.lot) // dedup key (per-lot); the EVENT keeps the real config id
       const remaining = (prev.lot.expectedEndMs ?? Infinity) - prev.atServerMs
-      if (!this.emitted.has(pid) && prev.lot.winUsername && remaining <= SWAP_CLOSE_GRACE_MS) {
-        this.emitted.add(pid)
+      if (!this.emitted.has(pkey) && prev.lot.winUsername && remaining <= SWAP_CLOSE_GRACE_MS) {
+        this.emitted.add(pkey)
         out.push({
           kind: 'auction-closed',
-          auctionConfigId: pid,
+          auctionConfigId: prev.lot.auctionConfigId!, // defined: lastBidding is only set past the `!id` guard
           lotNumber: prev.lot.variantDesc,
           productName: prev.lot.productName,
           winner: prev.lot.winUsername,
@@ -58,8 +71,9 @@ export class AuctionWatch {
 
     if (!c || !id) return out
 
-    const prevStatus = this.seen.get(id)
-    this.seen.set(id, c.status ?? -1)
+    const key = lotKeyOf(c)
+    const prevStatus = this.seen.get(key)
+    this.seen.set(key, c.status ?? -1)
     if (c.status === STATUS_BIDDING) this.lastBidding = { lot: c, atServerMs: pin.ts + (pin.serverTimeOffsetMs ?? 0) }
 
     // ── rotated-id close: TikTok (since ~2026-07-28) can reissue the ended state
@@ -76,11 +90,11 @@ export class AuctionWatch {
       prev.lot.auctionConfigId !== id &&
       prev.lot.variantDesc !== undefined &&
       prev.lot.variantDesc === c.variantDesc &&
-      !this.emitted.has(prev.lot.auctionConfigId!) &&
-      !this.emitted.has(id)
+      !this.emitted.has(lotKeyOf(prev.lot)) &&
+      !this.emitted.has(key)
     ) {
-      this.emitted.add(prev.lot.auctionConfigId!)
-      this.emitted.add(id)
+      this.emitted.add(lotKeyOf(prev.lot))
+      this.emitted.add(key)
       this.lastBidding = null
       out.push({
         kind: 'auction-closed',
@@ -100,8 +114,8 @@ export class AuctionWatch {
     // labels on app start. An unsold lot (no winner) closes without a sale.
     if (prevStatus === undefined || prevStatus === STATUS_ENDED) return out
     if (c.status !== STATUS_ENDED || !c.winUsername) return out
-    if (this.emitted.has(id)) return out
-    this.emitted.add(id)
+    if (this.emitted.has(key)) return out
+    this.emitted.add(key)
 
     out.push({
       kind: 'auction-closed',

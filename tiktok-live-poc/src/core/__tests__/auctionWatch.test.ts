@@ -65,6 +65,39 @@ describe('AuctionWatch', () => {
     expect(closed[0]).toMatchObject({ auctionConfigId: 'a2', lotNumber: '#18', winner: 'Monique' })
   })
 
+  it('fires every lot when consecutive lots SHARE one auctionConfigId (per-listing id)', () => {
+    // Measured live 2026-08-09: a whole show's lots carried just 2 config ids — the id is
+    // per-LISTING, and variant_desc ("#1", "#2"…) is the real per-lot key. Keying dedup by
+    // config id alone printed only the first lot of each listing (2 of 211 closes fired).
+    const w = new AuctionWatch()
+    const cfg = 'listingA'
+    const winners = [
+      { variantDesc: '#1', winUsername: 'SYSLEY', maxBiddingPrice: '$22.00' },
+      { variantDesc: '#2', winUsername: 'Nicole', maxBiddingPrice: '$18.00' },
+      { variantDesc: '#3', winUsername: 'Valarie', maxBiddingPrice: '$31.00' },
+    ]
+    let t = 1000
+    const fired: string[] = []
+    for (const lot of winners) {
+      w.ingest(pin({ auctionConfigId: cfg, ...lot, status: 1 }, t)) // bidding
+      const closed = w.ingest(pin({ auctionConfigId: cfg, ...lot, status: 3 }, t + 500)) // gavel
+      for (const ev of closed) fired.push(`${ev.lotNumber} ${ev.winner}`)
+      t += 1000
+    }
+    expect(fired).toEqual(['#1 SYSLEY', '#2 Nicole', '#3 Valarie'])
+  })
+
+  it('swap-closes a missed lot even when the next lot shares its config id', () => {
+    // Fast back-to-back lots in one listing: the 1→3 sample for #5 is missed and the card
+    // is already showing #6 (SAME config id). A config-id-only lot-change check never saw
+    // the swap; the lotKey check does.
+    const w = new AuctionWatch()
+    w.ingest(pin({ auctionConfigId: 'L', variantDesc: '#5', winUsername: 'Dana', status: 1, expectedEndMs: 5000 }, 4900))
+    const closed = w.ingest(pin({ auctionConfigId: 'L', variantDesc: '#6', winUsername: 'Priya', status: 1, expectedEndMs: 40000 }, 6000))
+    expect(closed).toHaveLength(1)
+    expect(closed[0]).toMatchObject({ lotNumber: '#5', winner: 'Dana', source: 'pin-swap' })
+  })
+
   it('ignores snapshots with no current auction or no id', () => {
     const w = new AuctionWatch()
     expect(w.ingest({ kind: 'pin', ts: 1000 })).toEqual([])

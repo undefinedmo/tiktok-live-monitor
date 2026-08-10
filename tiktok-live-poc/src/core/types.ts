@@ -184,8 +184,8 @@ export interface PinnedAuction {
   status?: number
   expectedEndMs?: number // latest_auction_item.expected_end_time_ms — for a countdown
   // ── Phase 4 enrichment ──
-  auctionConfigId?: string // the lot's unique id — identifies/dedupes an ended auction
-  variantDesc?: string // the lot number, e.g. "#35"
+  auctionConfigId?: string // per-LISTING id — SHARED by every lot (variant) under one auction product, NOT unique per lot. Dedupe closes by auctionConfigId+variantDesc (see AuctionWatch.lotKeyOf), not this alone.
+  variantDesc?: string // the lot number, e.g. "#35" — the real per-lot key (restarts per listing)
   skuId?: string
   actualStartMs?: number // latest_auction_item.actual_start_time (sec→ms; 0 = not started)
   actualEndMs?: number // latest_auction_item.actual_end_time (sec→ms)
