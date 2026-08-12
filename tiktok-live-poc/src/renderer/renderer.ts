@@ -89,6 +89,7 @@ const saveTemplate = () => localStorage.setItem('tt-label-template', JSON.string
 let sessionStart: number | undefined // current_session.start_time (scheduled)
 let liveStartedAt: number | undefined // room create_timestamp (actual go-live) — drives the elapsed timer
 let pinnedEndMs: number | undefined
+let lastLotName: string | undefined // most recent lot's product name — fallback title source for fast-path prints
 let lotSoldAt = 0 // last auction-closed paint — tickCountdown holds SOLD for 10s
 let serverTimeOffsetMs = 0 // from pin/get (resp_server_time − client clock); corrects the auction countdown
 // True once GMV comes from TikTok's own numbers (show_totals, or the legacy WS core_stats)
@@ -388,6 +389,9 @@ function renderAuction(p?: PinnedAuction) {
     return
   }
   pinnedEndMs = p.expectedEndMs
+  // Remembered for the fast print path: an im-sourced close can arrive without a product
+  // name, and the custom-regex field needs SOME descriptive text to extract a tag from.
+  if (p.productName) lastLotName = p.productName
   $('lotOverlay').style.display = 'flex'
   $('lotName').textContent = p.productName
   $('lotBid').textContent = p.maxBiddingPrice ?? '—'
@@ -809,7 +813,23 @@ function onAuctionClosed(ev: Extract<LiveEvent, { kind: 'auction-closed' }>) {
   // the im-result event carries the lot ~6s later and prints it then.
   if (!lot) return
   if (lotPrinted(lot, ev.auctionConfigId)) return
-  const doPrint = () => { printedLots.add(lot); void printLabel({ itemNumber: lot, buyer: ev.winner, price: ev.price, title: `#${lot}` }) }
+  // The custom-regex field extracts from `title` (falling back to productName), so the old
+  // title of just "#23" could never match a rule like \b(NWT|RETURN)S?\b — the tag
+  // extracted correctly in the settings preview and then never appeared on a live label,
+  // because THIS is the path that prints during a show. Carry the lot's real product name
+  // through, the way the slower auction_result path (printSale) already does.
+  const doPrint = () => {
+    printedLots.add(lot)
+    const name = (ev.productName ?? lastLotName ?? '').trim()
+    void printLabel({
+      itemNumber: lot,
+      buyer: ev.winner,
+      price: ev.price,
+      ...(name ? { productName: name } : {}),
+      // roster names already carry their own "#79 " prefix; don't double it
+      title: name ? (name.startsWith('#') ? name : `#${lot} ${name}`) : `#${lot}`,
+    })
+  }
   if (ev.source === 'pin-swap') {
     // Low-confidence guess (leader while bidding) — hold for a confirmed winner first.
     if (pendingSwap.has(lot)) return

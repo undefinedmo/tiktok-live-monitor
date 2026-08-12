@@ -112,6 +112,19 @@ describe('labelZpl', () => {
     expect(Number(buyerFont![1])).toBeLessThan(25)
   })
 
+  it('extracts the custom tag from the TITLE — a lot-number-only title yields nothing', () => {
+    // Contract for the print paths: whatever builds LabelData must put the lot's
+    // descriptive text in `title`. The fast close-signal path once passed title:"#23",
+    // so a rule like NWT|RETURN matched in the settings preview and never on a real
+    // label. Both halves are asserted so a regression is unambiguous.
+    const tpl: LabelTemplate = { ...DEFAULT_TEMPLATE, custom: { enabled: true, regex: '\\b(NWT|RETURN)S?\\b', flags: 'i' } }
+    const bare = labelZpl({ itemNumber: '23', buyer: 'Sarah D.', title: '#23' }, tpl)
+    expect(bare).not.toContain('RETURN')
+
+    const full = labelZpl({ itemNumber: '23', buyer: 'Sarah D.', title: '#23 FIGS CUSTOMER RETURNS - FINAL SALE' }, tpl)
+    expect(full).toContain('^FDRETURN^FS') // singular: the S is outside the capture group
+  })
+
   it('escapes ZPL control characters in field data', () => {
     const z = labelZpl({ itemNumber: '9', buyer: 'A^B~C\\D' })
     expect(z).toContain('A\\^B\\~C\\\\D')
