@@ -70,6 +70,39 @@ describe('labelZpl', () => {
     expect(xs.every((x) => x > 0)).toBe(true) // every line pushed right of the edge → centered
   })
 
+  it('draws at the font’s natural aspect (^A0 width = height, never condensed)', () => {
+    const z = labelZpl({ ...data, price: undefined }, { ...DEFAULT_TEMPLATE, price: true })
+    const fonts = [...z.matchAll(/\^A0N,(\d+),(\d+)/g)]
+    expect(fonts.length).toBeGreaterThan(0)
+    for (const [, h, w] of fonts) expect(w).toBe(h)
+  })
+
+  it('centers a short line further right than a long one (proportional measurement)', () => {
+    const x = (z: string) => Number(/\^FO(\d+),/.exec(z)![1])
+    const one = labelZpl({ itemNumber: '1' }, { ...DEFAULT_TEMPLATE, buyer: false, productName: false })
+    const many = labelZpl({ itemNumber: '888888' }, { ...DEFAULT_TEMPLATE, buyer: false, productName: false })
+    expect(x(one)).toBeGreaterThan(x(many))
+    // "#1" at the 2x1 default (32pt ≈ 90 dots) is ~2 narrow-ish glyphs, so it lands near
+    // the middle of the 406-dot label rather than hugging the left edge
+    expect(x(one)).toBeGreaterThan(120)
+  })
+
+  it('vertically centers the stack within the label', () => {
+    const z = labelZpl(data)
+    const ys = [...z.matchAll(/\^FO\d+,(\d+)/g)].map((m) => Number(m[1]))
+    const heights = [...z.matchAll(/\^A0N,(\d+),/g)].map((m) => Number(m[1]))
+    const topGap = ys[0]!
+    const bottomGap = 203 - (ys[ys.length - 1]! + heights[heights.length - 1]!)
+    expect(topGap).toBeGreaterThan(0)
+    expect(Math.abs(topGap - bottomGap)).toBeLessThanOrEqual(2) // within rounding
+  })
+
+  it('tracks the die-cut gap (^MNY) and clears any stale label home', () => {
+    const z = labelZpl(data)
+    expect(z).toContain('^MNY') // ^MNN = continuous → artwork walks off gapped stock
+    expect(z).toContain('^LH0,0')
+  })
+
   it('shrinks a long line so it stays within the round safe zone (2x2)', () => {
     const big: LabelTemplate = { ...DEFAULT_TEMPLATE, labelSize: '2x2', buyer: true }
     const z = labelZpl({ itemNumber: '1', buyer: 'a-really-long-buyer-name-that-would-overflow' }, big)

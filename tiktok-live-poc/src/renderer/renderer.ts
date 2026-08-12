@@ -1,6 +1,7 @@
 import flvjs from 'flv.js'
 import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuction, ChatMessage } from '../core/types'
-import { labelHtml, LABEL_SIZES } from '../electron/label' // portable (no electron deps) — renders the real print HTML for the preview
+import { labelHtml, LABEL_SIZES, basePt, parseItemNumber, extractCustom } from '../electron/label' // portable (no electron deps) — renders the real print HTML for the preview
+import { labelNeedsHtml } from '../electron/zplLabel' // preview-only: which print path this label would take
 
 // Structured AI-transcript fields (was core/ledger's LedgerTranscript; the products
 // panel still stores per-product transcripts in memory for the session).
@@ -90,7 +91,21 @@ let liveStartedAt: number | undefined // room create_timestamp (actual go-live) 
 let pinnedEndMs: number | undefined
 let lotSoldAt = 0 // last auction-closed paint — tickCountdown holds SOLD for 10s
 let serverTimeOffsetMs = 0 // from pin/get (resp_server_time − client clock); corrects the auction countdown
-let gmvFromWs = false
+// True once GMV comes from TikTok's own numbers (show_totals, or the legacy WS core_stats)
+// rather than from summing the sales this app happened to capture.
+let gmvAuthoritative = false
+let showElapsedSec = 0
+// Viewers has no working source right now: it only ever arrived on the dead frontier WS,
+// and no REST response carries it. A stats_type discovery sweep runs each session to find
+// the insights metric id (see "[stats-probe]" in the flight log). Until one is wired,
+// show an honest placeholder instead of a number frozen at whatever last arrived.
+let viewersFresh = 0
+const VIEWERS_STALE_MS = 60000
+function setViewers(n: number | null) {
+  const text = n === null ? '—' : String(n)
+  $('viewers').textContent = text
+  $('chatViewers').textContent = text
+}
 let seedMaxCreatedAt: number | null = null
 const rosterProducts = new Map<string, RosterProduct>()
 let lastByProduct: ProductRollup[] = []
@@ -167,7 +182,14 @@ function renderFeed() {
     if (topSet.has(s.buyer.ttuid || s.buyer.username)) sub.appendChild(el('span', 'tag whale', 'WHALE'))
     if (failed) sub.appendChild(el('span', 'tag failed', 'FAILED'))
     else if (provisional) sub.appendChild(el('span', 'tag pending', 'CLOSED'))
-    else if (s.paymentStatus === 'pending') sub.appendChild(el('span', 'tag pending', 'PENDING'))
+    else if (s.paymentStatus === 'pending') {
+      // show the real deadline when TikTok gave us one, so the room can see which
+      // pending wins are about to lapse rather than just that they are unpaid
+      const left = payLeft(s)
+      const tag = el('span', 'tag pending', left === undefined ? 'PENDING' : left > 0 ? `PENDING ${fmtLeft(left)}` : 'EXPIRED')
+      if (left !== undefined) tag.title = `Payment due by ${new Date(s.paymentExpiresAt!).toLocaleTimeString()}`
+      sub.appendChild(tag)
+    }
     sub.appendChild(txt(`${s.skuDesc ? s.skuDesc + ' · ' : ''}${s.productName}`))
     who.appendChild(sub)
     row.appendChild(who)
@@ -332,6 +354,7 @@ function renderProductsTable() {
     const tx = el('div', 'ptx' + (busy ? ' busy' : has ? ' has' : ''), busy ? '◴' : '✦')
     tx.title = has ? (productTx[row.id]?.summary || 'AI details captured — click to re-transcribe this product') : recapEnabled ? 'Click to AI-transcribe this product' : 'Set GEMINI_API_KEY to enable AI transcription'
     if (recapEnabled && !busy) tx.addEventListener('click', () => void transcribeProduct(row.id, row.name))
+    if (!AI_UI) tx.style.display = 'none'
     tr.appendChild(tx)
     tr.appendChild(el('div', 'pn', row.name))
     tr.appendChild(el('div', 'pc', String(row.sold)))
@@ -395,6 +418,74 @@ function tickCountdown() {
 }
 setInterval(tickCountdown, 250)
 
+// Pending-payment deadlines tick down in the feed, and a lapse moves the row into
+// PAYMENT ISSUES — both need a repaint on the second, not on the next poll.
+setInterval(() => {
+  if (!allSales.some((s) => s.paymentStatus === 'pending' && s.paymentExpiresAt)) return
+  renderFeed()
+  renderFailed()
+}, 1000)
+
+// Viewers only ever came from the frontier WS. If nothing has arrived for a minute the
+// number on screen is a fossil — say so rather than showing a stale count as if live.
+setInterval(() => {
+  if (viewersFresh && Date.now() - viewersFresh > VIEWERS_STALE_MS) { setViewers(null); viewersFresh = 0 }
+}, 5000)
+
+// ── payment expiry ──────────────────────────────────────────────────────────
+// An unpaid win carries payment_expire_timestamp — a hard deadline (observed: a flat
+// 5 minutes from the order) after which TikTok fails the order and the item is yours
+// again. Printing is deliberately NOT gated on this: the label goes out at the gavel as
+// always. This only tells the room how long a pending sale has left, and moves it into
+// PAYMENT ISSUES once it lapses.
+function payLeft(s: Sale): number | undefined {
+  if (!s.paymentExpiresAt || s.paymentStatus !== 'pending') return undefined
+  return Math.max(0, s.paymentExpiresAt - Date.now())
+}
+function fmtLeft(ms: number): string {
+  const total = Math.round(ms / 1000)
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+}
+
+// ── failed / expired payments ───────────────────────────────────────────────
+let failedSales: Sale[] = []
+function renderFailed() {
+  const panel = document.getElementById('failedPanel')
+  const list = document.getElementById('failedList')
+  const count = document.getElementById('failedCount')
+  if (!panel || !list) return
+  // Expired-but-not-yet-flipped rows belong here too: auction_result can take a while to
+  // move order_status to 2, and a lapsed deadline is already a decision the room can act on.
+  const expired = allSales.filter((s) => s.paymentStatus === 'pending' && s.paymentExpiresAt && s.paymentExpiresAt <= Date.now())
+  const rows = [...failedSales, ...expired.filter((e) => !failedSales.some((f) => f.orderId === e.orderId))]
+    .sort((a, b) => b.createdAt - a.createdAt)
+  panel.style.display = rows.length ? '' : 'none'
+  if (count) count.textContent = String(rows.length)
+  list.replaceChildren()
+  for (const s of rows.slice(0, 40)) {
+    const row = el('div', 'bidrow failed')
+    row.appendChild(avatar(s.buyer.avatarUrl))
+    const who = el('div', 'bidwho')
+    who.appendChild(el('div', 'bidname', s.buyer.username || s.buyer.handle || '—'))
+    const sub = el('div', 'bidsub')
+    sub.appendChild(el('span', 'tag failed', s.paymentStatus === 'failed' ? 'FAILED' : 'EXPIRED'))
+    sub.appendChild(txt(`${s.skuDesc ? s.skuDesc + ' · ' : ''}${s.productName}`))
+    who.appendChild(sub)
+    row.appendChild(who)
+    const right = el('div', 'bidright')
+    right.appendChild(el('div', 'bidprice failed', s.price.formatted))
+    right.appendChild(el('div', 'bidtime', ago(s.createdAt)))
+    row.appendChild(right)
+    // the label already printed at the gavel — reprinting is the common recovery when the
+    // item comes back off the pack bench and gets relisted
+    const pb = el('button', 'printmini', '🖨')
+    pb.title = 'Reprint this label'
+    pb.addEventListener('click', () => printSale(s))
+    row.appendChild(pb)
+    list.appendChild(row)
+  }
+}
+
 // ── session elapsed ─────────────────────────────────────────────────────────
 function fmtClock(unixSec: number): string {
   return new Date(unixSec * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
@@ -441,6 +532,11 @@ function loadStream(url: string) {
   // after any rebuffer. Periodically jump back toward the live edge when too far behind.
   flvCatchup = window.setInterval(() => { if (!video.paused) seekToLiveEdge(video, 2) }, 2000)
 }
+
+// AI extraction is off in the desktop UI for now. The whole pipeline below — clip
+// capture, Gemini call, per-product structured transcripts — stays wired and tested;
+// only its on-screen affordances are hidden. Flip this to re-surface them.
+const AI_UI = false
 
 // ── auction audio → AI transcript (mirrors sellerfolio-live enrichment) ──────
 let astream: MediaStream | null = null
@@ -553,7 +649,9 @@ async function transcribeProduct(productId: string, productName: string): Promis
 async function initRecap() {
   try { recapEnabled = (await window.recapAPI?.enabled())?.enabled ?? false } catch { recapEnabled = false }
   const st = document.getElementById('recapStatus')
-  if (st) st.textContent = recapEnabled ? 'AI EXTRACTION · 99%' : 'AI EXTRACTION'
+  // AI_UI off: hide the chip but leave recapEnabled/transcribe* wired, so re-enabling the
+  // feature is this one flag rather than a rebuild of the plumbing.
+  if (st) { st.style.display = AI_UI ? '' : 'none'; st.textContent = recapEnabled ? 'AI EXTRACTION · 99%' : 'AI EXTRACTION' }
   renderRecap()
 }
 void initRecap()
@@ -780,7 +878,28 @@ window.updateAPI?.onReady((info) => {
 // ── label print preview ──────────────────────────────────────────────────────
 // Renders the REAL print HTML (labelHtml) for a representative sale, scaled up, so the
 // user sees exactly how the thermal label will print as they change the template.
-const sampleLabel: LabelData = { itemNumber: '141', buyer: 'Sarah D.', productName: 'Alo Yoga & More — No Cancels', price: '$82.00', title: '#141 Bin A - Alo Yoga and More, No Cancels' }
+// The sample is editable so you can paste a REAL listing title and see, in one place,
+// what the custom regex pulls out of it and how the label physically prints. Persisted,
+// because the title you want to test against is usually the one you tested last time.
+const DEFAULT_SAMPLE_TITLE = '#141 Bin A - Alo Yoga and More, No Cancels'
+const DEFAULT_SAMPLE_BUYER = 'Sarah D.'
+let sampleTitle = localStorage.getItem('tt-sample-title') ?? DEFAULT_SAMPLE_TITLE
+let sampleBuyer = localStorage.getItem('tt-sample-buyer') ?? DEFAULT_SAMPLE_BUYER
+
+/** Build the preview's LabelData the same way a real sale does: the lot number is parsed
+ *  out of the title, and the product name is what remains once the "#NN " prefix is gone. */
+function sampleLabelData(): LabelData {
+  const title = sampleTitle.trim()
+  return {
+    itemNumber: parseItemNumber(title),
+    buyer: sampleBuyer.trim(),
+    // '#' optional so this strips exactly what parseItemNumber consumed — otherwise a
+    // title like "141 - Plain" prints the lot number twice
+    productName: title.replace(/^\s*#?\s*\d+\s*[-–—]?\s*/, '').trim() || title,
+    price: '$82.00',
+    title,
+  }
+}
 function renderLabelPreview() {
   const ifr = document.getElementById('labelPreview') as HTMLIFrameElement | null
   if (!ifr) return
@@ -791,7 +910,7 @@ function renderLabelPreview() {
   ifr.style.transformOrigin = 'top left'; ifr.style.transform = `scale(${scale})`
   const wrap = document.getElementById('labelPreviewWrap')
   if (wrap) { wrap.style.width = Math.round(wPx * scale) + 'px'; wrap.style.height = Math.round(hPx * scale) + 'px' }
-  ifr.srcdoc = labelHtml(sampleLabel, labelTemplate)
+  ifr.srcdoc = labelHtml(sampleLabelData(), labelTemplate)
   const sz = document.getElementById('labelPreviewSize'); if (sz) sz.textContent = `${size.widthIn}″ × ${size.heightIn}″`
 }
 
@@ -806,10 +925,16 @@ function updateSampleBtn() {
 // ── per-field text size (−/+ multipliers, applied by labelHtml + the preview) ──
 const SCALE_FIELDS: LabelField[] = ['itemNumber', 'custom', 'buyer', 'productName', 'price']
 const scaleOf = (f: LabelField): number => labelTemplate.scale?.[f] ?? 1
+// Show the size that actually prints (pt), not the multiplier: "100%" told you nothing
+// about how big the text is, and the same 100% is 40pt for the item number and 6.5pt for
+// the product name. The multiplier is still what's stored — it's just in the tooltip now.
 function updateScaleLabels() {
   for (const f of SCALE_FIELDS) {
     const lbl = document.getElementById('sz-' + f)
-    if (lbl) lbl.textContent = Math.round(scaleOf(f) * 100) + '%'
+    if (!lbl) continue
+    const base = basePt(f, labelTemplate.labelSize)
+    lbl.textContent = +(base * scaleOf(f)).toFixed(1) + 'pt'
+    lbl.title = `${Math.round(scaleOf(f) * 100)}% of the ${base}pt default for this label size`
   }
 }
 function applyScale(f: LabelField, delta: number) {
@@ -822,9 +947,6 @@ function applyScale(f: LabelField, delta: number) {
 function setupSettings() {
   const inp = (id: string) => document.getElementById(id) as HTMLInputElement
   const sel = (id: string) => document.getElementById(id) as HTMLSelectElement
-  const sample = '#141 Bin A - Alo Yoga and More, No Cancels'
-  const sampleEl = document.getElementById('sampleTitle')
-  if (sampleEl) sampleEl.textContent = `"${sample}"`
   sel('setSize').value = labelTemplate.labelSize
   inp('setItemNumber').checked = labelTemplate.itemNumber
   inp('setBuyer').checked = labelTemplate.buyer
@@ -833,22 +955,54 @@ function setupSettings() {
   inp('setCustom').checked = labelTemplate.custom.enabled
   inp('setRegex').value = labelTemplate.custom.regex
   inp('setFlags').value = labelTemplate.custom.flags
+  // Extraction preview runs the SAME extractCustom the printer path uses, against whatever
+  // title is currently in the box — so "(no match)" here means "(no match)" on the label.
   const preview = () => {
     const out = document.getElementById('extractPreview')!
     if (!labelTemplate.custom.regex) { out.textContent = '—'; return }
     try {
-      const m = sample.match(new RegExp(labelTemplate.custom.regex, labelTemplate.custom.flags))
-      out.textContent = m ? (m[1] ?? m[0]) || '(empty)' : '(no match)'
+      new RegExp(labelTemplate.custom.regex, labelTemplate.custom.flags) // throws on a bad pattern
+      const v = extractCustom(sampleTitle, labelTemplate.custom.regex, labelTemplate.custom.flags)
+      out.textContent = v || '(no match)'
     } catch { out.textContent = '(invalid regex)' }
   }
+  // Which print path this sample would take. Emoji / non-Latin in a buyer name can't be
+  // drawn by ZPL's built-in font, so those labels fall back to the ~1s HTML render — worth
+  // seeing while you are editing the sample rather than discovering it mid-show.
+  const pathHint = () => {
+    const hint = document.getElementById('samplePathHint')
+    if (!hint) return
+    const slow = labelNeedsHtml(sampleLabelData(), labelTemplate)
+    hint.textContent = slow ? '⚠ falls back to slow HTML path' : ''
+    hint.title = slow ? 'This label has glyphs ZPL cannot draw, so it prints via the slower HTML path.' : ''
+  }
+  const sampleInputs = () => {
+    const t = inp('sampleTitle')
+    const b = inp('sampleBuyer')
+    t.value = sampleTitle
+    b.value = sampleBuyer
+    const onEdit = () => {
+      sampleTitle = t.value
+      sampleBuyer = b.value
+      localStorage.setItem('tt-sample-title', sampleTitle)
+      localStorage.setItem('tt-sample-buyer', sampleBuyer)
+      preview(); renderLabelPreview(); pathHint()
+    }
+    t.addEventListener('input', onEdit)
+    b.addEventListener('input', onEdit)
+  }
+  sampleInputs()
   const apply = () => {
     labelTemplate = {
       labelSize: sel('setSize').value as LabelTemplate['labelSize'],
       itemNumber: inp('setItemNumber').checked, buyer: inp('setBuyer').checked,
       productName: inp('setProductName').checked, price: inp('setPrice').checked,
       custom: { enabled: inp('setCustom').checked, regex: inp('setRegex').value, flags: inp('setFlags').value },
+      scale: labelTemplate.scale, // carry the per-field sizes over — rebuilding without
+      // them reset every field to 1× whenever any checkbox/size/regex changed
     }
-    saveTemplate(); preview(); renderLabelPreview()
+    // the item number's 1× default is per label size, so the pt readout can move here too
+    saveTemplate(); preview(); renderLabelPreview(); updateScaleLabels(); pathHint()
   }
   for (const id of ['setSize', 'setItemNumber', 'setBuyer', 'setProductName', 'setPrice', 'setCustom', 'setRegex', 'setFlags']) {
     document.getElementById(id)?.addEventListener('input', apply)
@@ -857,11 +1011,12 @@ function setupSettings() {
   document.querySelectorAll<HTMLButtonElement>('.sizestep button').forEach((b) => {
     b.addEventListener('click', () => applyScale(b.dataset.size as LabelField, Number(b.dataset.d) * 0.1))
   })
-  document.getElementById('printSample')?.addEventListener('click', () => void printLabel(sampleLabel))
+  document.getElementById('printSample')?.addEventListener('click', () => void printLabel(sampleLabelData()))
   updateScaleLabels()
   updateSampleBtn()
   preview()
   renderLabelPreview()
+  pathHint()
   const open = () => showScreen('settings')
   document.getElementById('labelSettings')?.addEventListener('click', open)
   document.getElementById('labelSettingsFooter')?.addEventListener('click', open)
@@ -943,11 +1098,22 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       if (ev.startTime) $('sessionName').title = `started ${fmtClock(ev.startTime)}`
       break
     case 'core_stats':
-      if (ev.viewers !== undefined) { $('viewers').textContent = String(ev.viewers); $('chatViewers').textContent = String(ev.viewers) }
-      if (ev.gmv) { stats.gmv = ev.gmv.formatted; gmvFromWs = true }
+      // Legacy frontier-WS path. It has not delivered since the WS went quiet, but if it
+      // ever comes back it is still the freshest source, so keep honouring it.
+      if (ev.viewers !== undefined) { setViewers(ev.viewers); viewersFresh = Date.now() }
+      if (ev.gmv) { stats.gmv = ev.gmv.formatted; gmvAuthoritative = true }
       if (ev.sales !== undefined) stats.sales = String(ev.sales)
       if (ev.gmvPerHour) stats.pace = ev.gmvPerHour.formatted
       if (ev.gpm) stats.gpm = ev.gpm.formatted
+      renderStats()
+      break
+    case 'show_totals':
+      // TikTok's own whole-session series — correct even when this app attached to a show
+      // already in progress, which the locally-summed totals never are.
+      stats.gmv = ev.gmv.formatted
+      gmvAuthoritative = true
+      stats.pace = ev.pace ? ev.pace.formatted : '—'
+      if (ev.elapsedSec) showElapsedSec = ev.elapsedSec
       renderStats()
       break
     case 'product_stats':
@@ -1004,7 +1170,11 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       renderTopBuyer(ev.topBuyers)
       stats.buyers = String(ev.uniqueBuyers)
       stats.failed = String(ev.failedPayments.length)
-      if (!gmvFromWs) stats.gmv = `$${(ev.totalCents / 100).toFixed(2)}`
+      failedSales = ev.failedPayments
+      renderFailed()
+      // Locally-summed GMV is only a stand-in until show_totals lands: it counts nothing
+      // that happened before this app attached, so a mid-show start under-reports.
+      if (!gmvAuthoritative) stats.gmv = `$${(ev.totalCents / 100).toFixed(2)}`
       renderStats()
       $('feedCount').title = `${ev.totalSales} sales · $${(ev.totalCents / 100).toFixed(0)}`
       if (recentForRecap) void transcribeSale(recentForRecap) // AI transcript — after print + render

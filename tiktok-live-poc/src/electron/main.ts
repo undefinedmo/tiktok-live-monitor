@@ -9,6 +9,7 @@ import { parseRoster } from '../core/roster'
 import { parsePin } from '../core/pin'
 import { AuctionResults } from '../core/auctionResults'
 import { AuctionWatch } from '../core/auctionWatch'
+import { parseTrend, paceCentsPerHour, formatCents, STATS_GMV, STATS_ORDERS } from '../core/liveTrend'
 import { decodeChat } from '../core/chat'
 import { evaluateWatchdog } from '../core/watchdog'
 import { initFlightLog, flightLogPath, flog, flushFlightLogSync } from './flightlog'
@@ -32,6 +33,12 @@ const feed = new LiveFeed()
 const auctionResults = new AuctionResults()
 const auctionWatch = new AuctionWatch()
 let lastPin: PinState | null = null // latest pin/get — attributes im auction.end closes to a lot number
+// Whole-show aggregates (insights trend/chart + room/status), NOT derived from the sales
+// we happened to capture — so they stay right when the app attaches to a show in progress.
+let showElapsedSec: number | undefined // room/status data.duration — the show's real runtime
+let trendFirstPointMs: number | undefined // anchor of the trend window; must not move
+const KNOWN_STATS = new Set([STATS_GMV, STATS_ORDERS, 51, 84]) // the four the dashboard charts
+const statsProbeSeen = new Set<number>() // stats_type ids already reported by the discovery sweep
 const imSeen = new Set<string>() // dedupe im auction events across cursor replays/reconnects
 // The lot currently being bid, from im Manager bid messages (leader + lot# per bid).
 // auction.end carries no lot number — this attributes it without depending on pin/get.
@@ -446,10 +453,46 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
     }
     send(update)
   } else if (msg?.endpoint === 'room_status') {
-    const url = (json as { data?: { live_stream_url?: string } })?.data?.live_stream_url
-    if (url) {
-      debug(`[tt] stream ${url.slice(0, 70)}`)
-      send({ kind: 'stream', url, ts: now })
+    const d = (json as { data?: { live_stream_url?: string; duration?: number } })?.data
+    // `duration` is the WHOLE show's elapsed seconds, counted by TikTok from the session
+    // start — not from when we attached. It is what makes pace correct on a late join.
+    if (typeof d?.duration === 'number' && d.duration > 0) showElapsedSec = d.duration
+    if (d?.live_stream_url) {
+      debug(`[tt] stream ${d.live_stream_url.slice(0, 70)}`)
+      send({ kind: 'stream', url: d.live_stream_url, ts: now })
+    }
+  } else if (msg?.endpoint === 'trend') {
+    const trend = parseTrend(json, now)
+    if (trend) {
+      // Discovery: log any series OUTSIDE the four the dashboard itself charts that came
+      // back with real data — that is how the viewer metric gets identified (see the
+      // stats_type sweep in preload). Logged once per id so a show's log stays readable.
+      for (const s of trend.series) {
+        if (KNOWN_STATS.has(s.statsType) || statsProbeSeen.has(s.statsType)) continue
+        if (!s.total && !s.last) continue
+        statsProbeSeen.add(s.statsType)
+        flog(`[stats-probe] stats_type=${s.statsType} money=${s.isMoney} total=${s.total} last=${s.last} points=${s.points.length} sample=${s.points.slice(-5).map((p) => p.value).join(',')}`)
+      }
+      // The series is anchored to the session start; if that anchor ever moves, TikTok has
+      // capped it and our "whole show" total has quietly become a rolling window.
+      if (trendFirstPointMs && trend.firstPointMs && trend.firstPointMs > trendFirstPointMs) {
+        flog(`[trend] WINDOW MOVED: first point ${trendFirstPointMs} → ${trend.firstPointMs} — GMV is no longer whole-show`)
+      }
+      if (trend.firstPointMs && !trendFirstPointMs) trendFirstPointMs = trend.firstPointMs
+      // Only the full poll carries the real GMV series; probe chunks include 341 too, so
+      // both are valid samples. Ignore a chunk that came back without it.
+      const gmv = trend.series.find((s) => s.statsType === STATS_GMV)
+      if (gmv) {
+        const paceCents = paceCentsPerHour(gmv.total, showElapsedSec)
+        send({
+          kind: 'show_totals',
+          gmv: { cents: gmv.total, formatted: formatCents(gmv.total) },
+          ...(trend.orders !== undefined ? { orders: trend.orders } : {}),
+          ...(paceCents !== undefined ? { pace: { cents: paceCents, formatted: formatCents(paceCents) } } : {}),
+          ...(showElapsedSec ? { elapsedSec: showElapsedSec } : {}),
+          ts: now,
+        })
+      }
     }
   } else if (msg?.endpoint === 'live_room_info') {
     // Bootstrap fallback: live_room_info/get returns the CURRENT live room directly

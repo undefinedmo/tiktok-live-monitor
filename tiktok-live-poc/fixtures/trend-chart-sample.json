@@ -1,0 +1,713 @@
+{
+ "code": 0,
+ "message": "success",
+ "data": {
+  "trend_data": [
+   {
+    "stats_type": 341,
+    "data": [
+     {
+      "key": "1786557240",
+      "amount": {
+       "amount_formatted": "$0.00",
+       "amount_delimited": "0.00",
+       "amount": "0",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786557300",
+      "amount": {
+       "amount_formatted": "$0.00",
+       "amount_delimited": "0.00",
+       "amount": "0",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786557360",
+      "amount": {
+       "amount_formatted": "$0.00",
+       "amount_delimited": "0.00",
+       "amount": "0",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786557420",
+      "amount": {
+       "amount_formatted": "$12.20",
+       "amount_delimited": "12.20",
+       "amount": "12.2",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786557480",
+      "amount": {
+       "amount_formatted": "$0.00",
+       "amount_delimited": "0.00",
+       "amount": "0",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786557540",
+      "amount": {
+       "amount_formatted": "$5.69",
+       "amount_delimited": "5.69",
+       "amount": "5.69",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786557600",
+      "amount": {
+       "amount_formatted": "$24.46",
+       "amount_delimited": "24.46",
+       "amount": "24.46",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786557660",
+      "amount": {
+       "amount_formatted": "$15.02",
+       "amount_delimited": "15.02",
+       "amount": "15.02",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786557720",
+      "amount": {
+       "amount_formatted": "$38.11",
+       "amount_delimited": "38.11",
+       "amount": "38.11",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786557780",
+      "amount": {
+       "amount_formatted": "$27.01",
+       "amount_delimited": "27.01",
+       "amount": "27.01",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786557840",
+      "amount": {
+       "amount_formatted": "$29.60",
+       "amount_delimited": "29.60",
+       "amount": "29.6",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786557900",
+      "amount": {
+       "amount_formatted": "$23.35",
+       "amount_delimited": "23.35",
+       "amount": "23.35",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786557960",
+      "amount": {
+       "amount_formatted": "$15.65",
+       "amount_delimited": "15.65",
+       "amount": "15.65",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786558020",
+      "amount": {
+       "amount_formatted": "$16.66",
+       "amount_delimited": "16.66",
+       "amount": "16.66",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786558080",
+      "amount": {
+       "amount_formatted": "$31.33",
+       "amount_delimited": "31.33",
+       "amount": "31.33",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786558140",
+      "amount": {
+       "amount_formatted": "$19.25",
+       "amount_delimited": "19.25",
+       "amount": "19.25",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786558200",
+      "amount": {
+       "amount_formatted": "$20.42",
+       "amount_delimited": "20.42",
+       "amount": "20.42",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786558260",
+      "amount": {
+       "amount_formatted": "$19.30",
+       "amount_delimited": "19.30",
+       "amount": "19.3",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786558320",
+      "amount": {
+       "amount_formatted": "$26.43",
+       "amount_delimited": "26.43",
+       "amount": "26.43",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786558380",
+      "amount": {
+       "amount_formatted": "$4.37",
+       "amount_delimited": "4.37",
+       "amount": "4.37",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786558440",
+      "amount": {
+       "amount_formatted": "$9.37",
+       "amount_delimited": "9.37",
+       "amount": "9.37",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786558500",
+      "amount": {
+       "amount_formatted": "$16.76",
+       "amount_delimited": "16.76",
+       "amount": "16.76",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786558560",
+      "amount": {
+       "amount_formatted": "$37.62",
+       "amount_delimited": "37.62",
+       "amount": "37.62",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786558620",
+      "amount": {
+       "amount_formatted": "$27.33",
+       "amount_delimited": "27.33",
+       "amount": "27.33",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786558680",
+      "amount": {
+       "amount_formatted": "$19.56",
+       "amount_delimited": "19.56",
+       "amount": "19.56",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786558740",
+      "amount": {
+       "amount_formatted": "$20.60",
+       "amount_delimited": "20.60",
+       "amount": "20.6",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786558800",
+      "amount": {
+       "amount_formatted": "$15.72",
+       "amount_delimited": "15.72",
+       "amount": "15.72",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786558860",
+      "amount": {
+       "amount_formatted": "$31.22",
+       "amount_delimited": "31.22",
+       "amount": "31.22",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786558920",
+      "amount": {
+       "amount_formatted": "$33.04",
+       "amount_delimited": "33.04",
+       "amount": "33.04",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786558980",
+      "amount": {
+       "amount_formatted": "$25.50",
+       "amount_delimited": "25.50",
+       "amount": "25.5",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     },
+     {
+      "key": "1786559040",
+      "amount": {
+       "amount_formatted": "$6.33",
+       "amount_delimited": "6.33",
+       "amount": "6.33",
+       "currency_code": "USD",
+       "currency_symbol": "$"
+      }
+     }
+    ]
+   },
+   {
+    "stats_type": 342,
+    "data": [
+     {
+      "key": "1786557240",
+      "value": "0"
+     },
+     {
+      "key": "1786557300",
+      "value": "0"
+     },
+     {
+      "key": "1786557360",
+      "value": "0"
+     },
+     {
+      "key": "1786557420",
+      "value": "1"
+     },
+     {
+      "key": "1786557480",
+      "value": "0"
+     },
+     {
+      "key": "1786557540",
+      "value": "1"
+     },
+     {
+      "key": "1786557600",
+      "value": "3"
+     },
+     {
+      "key": "1786557660",
+      "value": "2"
+     },
+     {
+      "key": "1786557720",
+      "value": "4"
+     },
+     {
+      "key": "1786557780",
+      "value": "3"
+     },
+     {
+      "key": "1786557840",
+      "value": "3"
+     },
+     {
+      "key": "1786557900",
+      "value": "3"
+     },
+     {
+      "key": "1786557960",
+      "value": "3"
+     },
+     {
+      "key": "1786558020",
+      "value": "3"
+     },
+     {
+      "key": "1786558080",
+      "value": "3"
+     },
+     {
+      "key": "1786558140",
+      "value": "3"
+     },
+     {
+      "key": "1786558200",
+      "value": "3"
+     },
+     {
+      "key": "1786558260",
+      "value": "3"
+     },
+     {
+      "key": "1786558320",
+      "value": "4"
+     },
+     {
+      "key": "1786558380",
+      "value": "2"
+     },
+     {
+      "key": "1786558440",
+      "value": "1"
+     },
+     {
+      "key": "1786558500",
+      "value": "2"
+     },
+     {
+      "key": "1786558560",
+      "value": "4"
+     },
+     {
+      "key": "1786558620",
+      "value": "3"
+     },
+     {
+      "key": "1786558680",
+      "value": "3"
+     },
+     {
+      "key": "1786558740",
+      "value": "3"
+     },
+     {
+      "key": "1786558800",
+      "value": "2"
+     },
+     {
+      "key": "1786558860",
+      "value": "4"
+     },
+     {
+      "key": "1786558920",
+      "value": "3"
+     },
+     {
+      "key": "1786558980",
+      "value": "3"
+     },
+     {
+      "key": "1786559040",
+      "value": "1"
+     }
+    ]
+   },
+   {
+    "stats_type": 51,
+    "data": [
+     {
+      "key": "1786557240",
+      "value": "0"
+     },
+     {
+      "key": "1786557300",
+      "value": "1"
+     },
+     {
+      "key": "1786557360",
+      "value": "0"
+     },
+     {
+      "key": "1786557420",
+      "value": "7"
+     },
+     {
+      "key": "1786557480",
+      "value": "3"
+     },
+     {
+      "key": "1786557540",
+      "value": "3"
+     },
+     {
+      "key": "1786557600",
+      "value": "18"
+     },
+     {
+      "key": "1786557660",
+      "value": "17"
+     },
+     {
+      "key": "1786557720",
+      "value": "18"
+     },
+     {
+      "key": "1786557780",
+      "value": "22"
+     },
+     {
+      "key": "1786557840",
+      "value": "26"
+     },
+     {
+      "key": "1786557900",
+      "value": "28"
+     },
+     {
+      "key": "1786557960",
+      "value": "8"
+     },
+     {
+      "key": "1786558020",
+      "value": "11"
+     },
+     {
+      "key": "1786558080",
+      "value": "22"
+     },
+     {
+      "key": "1786558140",
+      "value": "14"
+     },
+     {
+      "key": "1786558200",
+      "value": "11"
+     },
+     {
+      "key": "1786558260",
+      "value": "17"
+     },
+     {
+      "key": "1786558320",
+      "value": "17"
+     },
+     {
+      "key": "1786558380",
+      "value": "4"
+     },
+     {
+      "key": "1786558440",
+      "value": "25"
+     },
+     {
+      "key": "1786558500",
+      "value": "15"
+     },
+     {
+      "key": "1786558560",
+      "value": "37"
+     },
+     {
+      "key": "1786558620",
+      "value": "22"
+     },
+     {
+      "key": "1786558680",
+      "value": "22"
+     },
+     {
+      "key": "1786558740",
+      "value": "16"
+     },
+     {
+      "key": "1786558800",
+      "value": "16"
+     },
+     {
+      "key": "1786558860",
+      "value": "14"
+     },
+     {
+      "key": "1786558920",
+      "value": "17"
+     },
+     {
+      "key": "1786558980",
+      "value": "19"
+     },
+     {
+      "key": "1786559040",
+      "value": "0"
+     }
+    ]
+   },
+   {
+    "stats_type": 84,
+    "data": [
+     {
+      "key": "1786557240",
+      "value": "0.328571"
+     },
+     {
+      "key": "1786557300",
+      "value": "0.334254"
+     },
+     {
+      "key": "1786557360",
+      "value": "0.267857"
+     },
+     {
+      "key": "1786557420",
+      "value": "0.283636"
+     },
+     {
+      "key": "1786557480",
+      "value": "0.488211"
+     },
+     {
+      "key": "1786557540",
+      "value": "0.433663"
+     },
+     {
+      "key": "1786557600",
+      "value": "0.402447"
+     },
+     {
+      "key": "1786557660",
+      "value": "0.312363"
+     },
+     {
+      "key": "1786557720",
+      "value": "0.134945"
+     },
+     {
+      "key": "1786557780",
+      "value": "0.101227"
+     },
+     {
+      "key": "1786557840",
+      "value": "0.095331"
+     },
+     {
+      "key": "1786557900",
+      "value": "0.080292"
+     },
+     {
+      "key": "1786557960",
+      "value": "0.062615"
+     },
+     {
+      "key": "1786558020",
+      "value": "0.061096"
+     },
+     {
+      "key": "1786558080",
+      "value": "0.074423"
+     },
+     {
+      "key": "1786558140",
+      "value": "0.064171"
+     },
+     {
+      "key": "1786558200",
+      "value": "0.047310"
+     },
+     {
+      "key": "1786558260",
+      "value": "0.050269"
+     },
+     {
+      "key": "1786558320",
+      "value": "0.059051"
+     },
+     {
+      "key": "1786558380",
+      "value": "0.056311"
+     },
+     {
+      "key": "1786558440",
+      "value": "0.045455"
+     },
+     {
+      "key": "1786558500",
+      "value": "0.042871"
+     },
+     {
+      "key": "1786558560",
+      "value": "0.049892"
+     },
+     {
+      "key": "1786558620",
+      "value": "0.047252"
+     },
+     {
+      "key": "1786558680",
+      "value": "0.063765"
+     },
+     {
+      "key": "1786558740",
+      "value": "0.048454"
+     },
+     {
+      "key": "1786558800",
+      "value": "0.042000"
+     },
+     {
+      "key": "1786558860",
+      "value": "0.041845"
+     },
+     {
+      "key": "1786558920",
+      "value": "0.052174"
+     },
+     {
+      "key": "1786558980",
+      "value": "0.037569"
+     },
+     {
+      "key": "1786559040",
+      "value": "0.068584"
+     }
+    ]
+   }
+  ],
+  "granularity": 1,
+  "timezone_offset": -28800,
+  "timezone": "America/PST"
+ }
+}

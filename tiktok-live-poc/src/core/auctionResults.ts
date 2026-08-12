@@ -32,6 +32,9 @@ function toSale(r: Json): Sale | null {
     avatarUrl: str(r['user_profile_image_url']),
   }
   const endTs = num(r['auction_end_timestamp'])
+  // payment_expire_timestamp arrives as a STRING of ms ("1786559467502") and is "0" once
+  // the row has paid — treat 0 as absent rather than as the epoch.
+  const expireMs = Number(str(r['payment_expire_timestamp']) ?? '') || undefined
   return {
     orderId,
     buyer,
@@ -44,6 +47,7 @@ function toSale(r: Json): Sale | null {
     paymentStatus: paymentStatusOf(r),
     orderStatus: num(r['order_status']),
     createdAt: num(r['order_create_time']) ?? 0,
+    ...(expireMs ? { paymentExpiresAt: expireMs } : {}),
     ...(endTs !== undefined && endTs > 0 ? { auctionEndMs: endTs } : {}),
   }
 }

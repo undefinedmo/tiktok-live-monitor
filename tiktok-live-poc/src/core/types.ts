@@ -235,6 +235,10 @@ export interface Sale {
   paymentStatus: 'paid' | 'failed' | 'pending'
   orderStatus?: number
   createdAt: number // order_create_time (ms)
+  // payment_expire_timestamp (ms) — the hard deadline for an unpaid win. Observed as a
+  // flat 5 min from order_create_time. 0/absent on paid rows. Drives the pending
+  // countdown and the failed-payment sweep; it does NOT gate printing.
+  paymentExpiresAt?: number
   auctionEndMs?: number // auction_result_data.auction_end_timestamp (ms); 0/undefined when not provided
   liveTag?: string // Seller-Center live-show tag (from order/list); groups synced orders by show
   roomId?: string // live_room_id — the stable TikTok LIVE room key (groups orders into a real show)
@@ -346,7 +350,20 @@ export interface StatusEvent {
 
 /** Synced order book from Seller-Center order/list (cookie auth, no live stream). */
 
+/** Whole-show aggregates from TikTok's own insights series (trend/chart + room/status).
+ *  Authoritative for the FULL session — unlike totals derived from the sales this app
+ *  captured, which start at whenever it attached. */
+export interface ShowTotalsEvent {
+  kind: 'show_totals'
+  gmv: Money
+  orders?: number
+  pace?: Money // GMV per hour over the show's real elapsed time
+  elapsedSec?: number
+  ts: number
+}
+
 export type LiveEvent =
+  | ShowTotalsEvent
   | ProductStatsSnapshot
   | SaleEvent
   | WonFeedEvent

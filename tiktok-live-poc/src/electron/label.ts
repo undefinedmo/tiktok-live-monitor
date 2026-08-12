@@ -47,6 +47,16 @@ export const LABEL_SIZES = {
   '2.25x1.25': { widthIn: 2.25, heightIn: 1.25, widthMicrons: 57150, heightMicrons: 31750, num: 36 },
 } as const
 
+/** Each field's default ("1×") point size. The item number's default lives on the label
+ *  size instead (LABEL_SIZES[...].num) because it scales with the stock. Shared by the
+ *  HTML path, the ZPL path, and the settings UI's size readout — one source of truth. */
+const FIELD_PT: Record<Exclude<keyof LabelScale, 'itemNumber'>, number> = { custom: 13, buyer: 9, productName: 6.5, price: 9 }
+
+/** The 1× point size of `field` on `labelSize` (before the user's scale multiplier). */
+export function basePt(field: keyof LabelScale, labelSize: LabelTemplate['labelSize']): number {
+  return field === 'itemNumber' ? (LABEL_SIZES[labelSize] ?? LABEL_SIZES['2x1']).num : FIELD_PT[field]
+}
+
 /** Item number from a sku_desc ("#34") / title; strips the leading '#'. */
 export function parseItemNumber(skuDescOrTitle: string | undefined): string {
   const s = (skuDescOrTitle ?? '').trim()
@@ -76,7 +86,7 @@ export function labelHtml(data: LabelData, template: LabelTemplate = DEFAULT_TEM
   const size = LABEL_SIZES[template.labelSize] ?? LABEL_SIZES['2x1']
   const sc = template.scale ?? {}
   // each field's point size = its default × the field's multiplier (1× when unset)
-  const pt = (k: keyof LabelScale, base: number) => +(base * (sc[k] ?? 1)).toFixed(1)
+  const pt = (k: keyof LabelScale) => +(basePt(k, template.labelSize) * (sc[k] ?? 1)).toFixed(1)
   const rows: string[] = []
   if (template.itemNumber) {
     const n = parseItemNumber(data.itemNumber)
@@ -94,10 +104,10 @@ export function labelHtml(data: LabelData, template: LabelTemplate = DEFAULT_TEM
   @page { size: ${size.widthIn}in ${size.heightIn}in; margin: 0; }
   html,body { margin:0; padding:0; width:${size.widthIn}in; height:${size.heightIn}in; }
   body { font-family: Arial, sans-serif; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; overflow:hidden; }
-  .num { font-size:${pt('itemNumber', size.num)}pt; font-weight:800; line-height:1; }
-  .custom { font-size:${pt('custom', 13)}pt; font-weight:700; margin-top:2pt; }
-  .buyer { font-size:${pt('buyer', 9)}pt; font-weight:600; margin-top:2pt; max-width:96%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-  .prod { font-size:${pt('productName', 6.5)}pt; color:#333; max-width:96%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-  .price { font-size:${pt('price', 9)}pt; font-weight:700; margin-top:1pt; }
+  .num { font-size:${pt('itemNumber')}pt; font-weight:800; line-height:1; }
+  .custom { font-size:${pt('custom')}pt; font-weight:700; margin-top:2pt; }
+  .buyer { font-size:${pt('buyer')}pt; font-weight:600; margin-top:2pt; max-width:96%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  .prod { font-size:${pt('productName')}pt; color:#333; max-width:96%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  .price { font-size:${pt('price')}pt; font-weight:700; margin-top:1pt; }
   </style></head><body>${rows.join('')}</body></html>`
 }

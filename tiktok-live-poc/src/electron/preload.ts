@@ -37,6 +37,7 @@ function endpointOf(url: string): string | null {
   if (/live_auction\/auction_result\/get/.test(url)) return 'auction_result'
   if (/added_auction_product\/list/.test(url)) return 'roster'
   if (/live\/detail\/room\/status/.test(url)) return 'room_status'
+  if (/live\/detail\/trend\/chart/.test(url)) return 'trend'
   if (/pin\/get/.test(url)) return 'pin'
   if (/live_room_info\/get/.test(url)) return 'live_room_info'
   return null
@@ -221,13 +222,26 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
   // (aid=4068 i18n_ecom_shop, vertical=3) — using the alliance aid errors 98001xxx.
   const qStatus = `?user_language=en&locale=en&aid=4068&app_name=i18n_ecom_shop&device_platform=web&cookie_enabled=true&timezone_name=America/Chicago&vertical=3&carrier_region=us`
   const statusUrl = `https://shop.tiktok.com/api/v1/insights/workbench/live/detail/room/status${qStatus}`
+  // Whole-show GMV / pace. The frontier WS that used to carry live_core_stats is dead, and
+  // summing only the sales WE captured under-reports every show we join late. This series
+  // is anchored to the session start, so it stays whole-show however late we attach.
+  // ~16KB, and it only moves once a minute — a 30s poll (20 × 1.5s cycles) is plenty.
+  const trendUrl = `https://shop.tiktok.com/api/v1/insights/workbench/live/detail/trend/chart${qStatus}`
+  const TREND_STATS = [341, 342, 51, 84] // 341 = GMV, 342 = orders; 51/84 unmapped
+  const trendBody = (statsTypes: number[]) => ({
+    request: { room_filter: { room_id: cfg.roomId, country: 'US' }, stats_types: statsTypes },
+  })
   let statusTick = 0
+  let trendTick = 0
   let resultSweep = 0
   const cycle = async () => {
     void window.fetch(`${base}/added_auction_product/list${q}`, post({ room_id: cfg.roomId, session_id: cfg.sessionId, page_scene: 1, offset: 0, count: 100, auction_page_type: 0 })).catch(() => {})
     // refresh the live video URL every ~10 cycles (~15s) — it is signed/expiring.
     if (statusTick++ % 10 === 0) {
       void window.fetch(statusUrl, post({ request: { room_filter: { room_id: cfg.roomId } } })).catch(() => {})
+    }
+    if (trendTick++ % 20 === 0) {
+      void window.fetch(trendUrl, post(trendBody(TREND_STATS))).catch(() => {})
     }
     const deep = resultSweep++ % 10 === 0 // count:20 page 0 every cycle; full history every ~10th
     const pageSize = deep ? 100 : 20
@@ -251,6 +265,28 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
   // go silent; pin only covers pinned lots) and it lands 0.3-3s after the sale — a 3s
   // timer added up to 3s of pure wait on every label for no savings that matter.
   setInterval(() => void cycle(), 1500)
+
+  // ── stats_type discovery sweep (runs once per session, ~15s) ───────────────
+  // The live viewer count used to arrive as live_core_stats.current_viewers on the
+  // frontier WS, which no longer delivers — and no REST response we have captured
+  // contains a viewer field. But `stats_types` is a REQUEST parameter on trend/chart:
+  // the dashboard only asks for the four its own chart draws (341/342/51/84), and the
+  // server will return any other metric we name. So walk the plausible ID space once and
+  // let main log which IDs come back with data (see "[stats-probe]" in the flight log) —
+  // that identifies the viewer metric without needing another HAR.
+  // Each chunk includes 341 so the response is still a usable GMV sample, never a waste.
+  const probeIds: number[] = []
+  for (let i = 1; i <= 120; i++) probeIds.push(i)
+  for (let i = 300; i <= 400; i++) probeIds.push(i)
+  const CHUNK = 24
+  let probeAt = 0
+  const probe = setInterval(() => {
+    if (probeAt >= probeIds.length) { clearInterval(probe); return }
+    const chunk = probeIds.slice(probeAt, probeAt + CHUNK)
+    probeAt += CHUNK
+    // 341 rides along so a rejected/empty chunk is distinguishable from a bad request
+    void window.fetch(trendUrl, post(trendBody([341, ...chunk.filter((n) => n !== 341)]))).catch(() => {})
+  }, 1500)
 
   // ── Pin poll (the low-latency close signal) ────────────────────────────────
   // pin/get flips latest_auction_item.status 1→3 within ~0.5s of the gavel, which

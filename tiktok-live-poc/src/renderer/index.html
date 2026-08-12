@@ -354,6 +354,13 @@
             </div>
             <div id="topBuyersList" style="margin-top:11px;display:flex;flex-direction:column;gap:7px;"></div>
           </div>
+          <div class="panel" id="failedPanel" style="display:none;">
+            <div class="panel-head">
+              <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#ff8f8f;">PAYMENT ISSUES</span>
+              <span id="failedCount" class="chip" style="border-color:#5a2a2a;background:#1c1113;color:#ff8f8f;">0</span>
+            </div>
+            <div id="failedList" class="sf-scroll" style="max-height:230px;"></div>
+          </div>
           <div class="panel" style="padding:15px;background:linear-gradient(180deg,#10131b,#0c0f16);border-color:#2a3142;">
             <div style="display:flex;align-items:center;justify-content:space-between;">
               <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#c4ccd9;">CURRENT AUCTION ITEM</span>
@@ -427,17 +434,26 @@
               </select>
             </label>
             <div class="fields">
-              <div class="field-row"><label><input type="checkbox" id="setItemNumber" /> Item number (#)</label><span class="sizestep"><button type="button" data-size="itemNumber" data-d="-1">−</button><b id="sz-itemNumber">100%</b><button type="button" data-size="itemNumber" data-d="1">+</button></span></div>
-              <div class="field-row"><label><input type="checkbox" id="setBuyer" /> Buyer</label><span class="sizestep"><button type="button" data-size="buyer" data-d="-1">−</button><b id="sz-buyer">100%</b><button type="button" data-size="buyer" data-d="1">+</button></span></div>
-              <div class="field-row"><label><input type="checkbox" id="setProductName" /> Product name (full)</label><span class="sizestep"><button type="button" data-size="productName" data-d="-1">−</button><b id="sz-productName">100%</b><button type="button" data-size="productName" data-d="1">+</button></span></div>
-              <div class="field-row"><label><input type="checkbox" id="setPrice" /> Price</label><span class="sizestep"><button type="button" data-size="price" data-d="-1">−</button><b id="sz-price">100%</b><button type="button" data-size="price" data-d="1">+</button></span></div>
-              <div class="field-row"><label><input type="checkbox" id="setCustom" /> Custom (regex extract)</label><span class="sizestep"><button type="button" data-size="custom" data-d="-1">−</button><b id="sz-custom">100%</b><button type="button" data-size="custom" data-d="1">+</button></span></div>
+              <div class="field-row"><label><input type="checkbox" id="setItemNumber" /> Item number (#)</label><span class="sizestep"><button type="button" data-size="itemNumber" data-d="-1">−</button><b id="sz-itemNumber">—</b><button type="button" data-size="itemNumber" data-d="1">+</button></span></div>
+              <div class="field-row"><label><input type="checkbox" id="setBuyer" /> Buyer</label><span class="sizestep"><button type="button" data-size="buyer" data-d="-1">−</button><b id="sz-buyer">—</b><button type="button" data-size="buyer" data-d="1">+</button></span></div>
+              <div class="field-row"><label><input type="checkbox" id="setProductName" /> Product name (full)</label><span class="sizestep"><button type="button" data-size="productName" data-d="-1">−</button><b id="sz-productName">—</b><button type="button" data-size="productName" data-d="1">+</button></span></div>
+              <div class="field-row"><label><input type="checkbox" id="setPrice" /> Price</label><span class="sizestep"><button type="button" data-size="price" data-d="-1">−</button><b id="sz-price">—</b><button type="button" data-size="price" data-d="1">+</button></span></div>
+              <div class="field-row"><label><input type="checkbox" id="setCustom" /> Custom (regex extract)</label><span class="sizestep"><button type="button" data-size="custom" data-d="-1">−</button><b id="sz-custom">—</b><button type="button" data-size="custom" data-d="1">+</button></span></div>
             </div>
             <div class="custom-row">
               <input type="text" id="setRegex" placeholder="regex, e.g. (#\d+)" />
               <input type="text" id="setFlags" placeholder="flags" />
             </div>
-            <div class="preview">Sample: <span id="sampleTitle"></span> → extracts <b id="extractPreview">—</b></div>
+            <div class="preview" style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
+              <span style="flex:none;">Sample:</span>
+              <input id="sampleTitle" class="ai-edit" style="flex:1 1 260px;max-width:none;" spellcheck="false" placeholder="paste a real listing title…" />
+              <span style="flex:none;">→ extracts <b id="extractPreview">—</b></span>
+            </div>
+            <div class="preview" style="display:flex;align-items:center;gap:7px;margin-top:6px;">
+              <span style="flex:none;">Buyer:</span>
+              <input id="sampleBuyer" class="ai-edit" style="flex:1 1 160px;max-width:220px;" spellcheck="false" placeholder="buyer name…" />
+              <span id="samplePathHint" style="flex:none;color:#5c6473;"></span>
+            </div>
           </div>
           <div class="modal-box" style="max-width:620px;margin:0;box-shadow:none;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:12px;">

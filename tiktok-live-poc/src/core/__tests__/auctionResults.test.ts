@@ -9,6 +9,31 @@ const rest = JSON.parse(
 const rows = rest.auctionResultRows as Record<string, unknown>[]
 const wrap = (data: unknown[]) => ({ code: 0, msg: 'success', auction_result_data: data })
 
+describe('payment expiry', () => {
+  // Shape from the 2026-08-12 HAR: an unpaid win carries a ms-string deadline a flat
+  // 5 minutes past order_create_time; a row that has paid carries "0".
+  const pending = { ...rows[0], order_id: 'p1', is_payment_successful: false, order_status: 4, order_create_time: 1786559167598, payment_expire_timestamp: '1786559467502' }
+  const paid = { ...rows[0], order_id: 'p2', is_payment_successful: true, payment_expire_timestamp: '0' }
+
+  it('parses the deadline on an unpaid win', () => {
+    const { newSales } = new AuctionResults().ingest(wrap([pending]), 1000)
+    expect(newSales[0]!.paymentStatus).toBe('pending')
+    expect(newSales[0]!.paymentExpiresAt).toBe(1786559467502)
+    expect(Math.round((newSales[0]!.paymentExpiresAt! - newSales[0]!.createdAt) / 1000)).toBe(300)
+  })
+
+  it('treats "0" on a paid row as absent, not as the epoch', () => {
+    const { newSales } = new AuctionResults().ingest(wrap([paid]), 1000)
+    expect(newSales[0]!.paymentStatus).toBe('paid')
+    expect(newSales[0]!.paymentExpiresAt).toBeUndefined()
+  })
+
+  it('leaves the field off when the API omits it', () => {
+    const { newSales } = new AuctionResults().ingest(wrap([rows[0]]), 1000)
+    expect(newSales[0]!.paymentExpiresAt).toBeUndefined()
+  })
+})
+
 describe('AuctionResults', () => {
   it('parses a sale row into a normalized Sale (buyer, price cents, order, payment)', () => {
     const { newSales } = new AuctionResults().ingest(wrap([rows[0]]), 1000)
