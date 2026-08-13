@@ -444,6 +444,14 @@
               <input type="text" id="setRegex" placeholder="regex, e.g. (#\d+)" />
               <input type="text" id="setFlags" placeholder="flags" />
             </div>
+            <div class="custom-row" style="margin-top:6px;align-items:center;">
+              <select id="presetSel" style="flex:1 1 190px;background:#0c0e13;color:#eef1f7;border:1px solid #2a3140;border-radius:5px;padding:4px 6px;font:inherit;font-size:12px;">
+                <option value="">— saved patterns —</option>
+              </select>
+              <input type="text" id="presetName" placeholder="name to save as…" style="flex:1 1 150px;" />
+              <button type="button" id="presetSave" class="chip amber" style="cursor:pointer;flex:none;">Save</button>
+              <button type="button" id="presetDelete" class="chip" style="cursor:pointer;flex:none;" disabled>Delete</button>
+            </div>
             <div class="preview" style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
               <span style="flex:none;">Sample:</span>
               <input id="sampleTitle" class="ai-edit" style="flex:1 1 260px;max-width:none;" spellcheck="false" placeholder="paste a real listing title…" />

@@ -963,6 +963,30 @@ function applyScale(f: LabelField, delta: number) {
   saveTemplate(); updateScaleLabels(); renderLabelPreview()
 }
 
+// ── saved regex patterns ────────────────────────────────────────────────────
+// There is no database behind any of this — the whole label template lives in this
+// window's localStorage (see saveTemplate). That already persisted the ONE active regex
+// across restarts, but a seller runs different tag schemes on different shows (NWT/RETURN
+// on a returns pallet, Bin A/B on a sorted one) and had to retype the pattern each time.
+// Presets are the same storage, just a named list, so switching is one dropdown.
+interface RegexPreset { name: string; regex: string; flags: string }
+const PRESETS_KEY = 'tt-regex-presets'
+const SEED_PRESETS: RegexPreset[] = [
+  { name: 'NWT / RETURN', regex: '\\b(NWT|RETURN)S?\\b', flags: 'i' },
+  { name: 'Bin A / Bin B', regex: '\\b(Bin\\s+[A-Z])\\b', flags: 'i' },
+  { name: 'Lot number', regex: '(#\\d+)', flags: '' },
+]
+function loadPresets(): RegexPreset[] {
+  try {
+    const raw = localStorage.getItem(PRESETS_KEY)
+    if (!raw) return [...SEED_PRESETS] // first run: start with the patterns we know work
+    const list = JSON.parse(raw) as RegexPreset[]
+    return Array.isArray(list) ? list.filter((p) => p && typeof p.name === 'string' && typeof p.regex === 'string') : [...SEED_PRESETS]
+  } catch { return [...SEED_PRESETS] }
+}
+const savePresets = (list: RegexPreset[]) => localStorage.setItem(PRESETS_KEY, JSON.stringify(list))
+let regexPresets: RegexPreset[] = loadPresets()
+
 // ── label settings modal ────────────────────────────────────────────────────
 function setupSettings() {
   const inp = (id: string) => document.getElementById(id) as HTMLInputElement
@@ -1031,6 +1055,68 @@ function setupSettings() {
   document.querySelectorAll<HTMLButtonElement>('.sizestep button').forEach((b) => {
     b.addEventListener('click', () => applyScale(b.dataset.size as LabelField, Number(b.dataset.d) * 0.1))
   })
+
+  // ── saved patterns ────────────────────────────────────────────────────────
+  const presetSel = sel('presetSel')
+  const presetName = inp('presetName')
+  const presetDelete = document.getElementById('presetDelete') as HTMLButtonElement
+  // Mark the dropdown when the box matches a saved pattern, so it reads as "you are on
+  // this preset" rather than leaving a stale name selected next to an edited regex.
+  const syncPresetSel = () => {
+    const hit = regexPresets.find((p) => p.regex === inp('setRegex').value && p.flags === inp('setFlags').value)
+    presetSel.value = hit ? hit.name : ''
+    presetDelete.disabled = !hit
+  }
+  const renderPresets = () => {
+    presetSel.replaceChildren()
+    const none = document.createElement('option')
+    none.value = ''
+    none.textContent = regexPresets.length ? '— saved patterns —' : '— none saved —'
+    presetSel.appendChild(none)
+    for (const p of regexPresets) {
+      const o = document.createElement('option')
+      o.value = p.name
+      o.textContent = p.name
+      o.title = `/${p.regex}/${p.flags}`
+      presetSel.appendChild(o)
+    }
+    syncPresetSel()
+  }
+  presetSel.addEventListener('change', () => {
+    const p = regexPresets.find((x) => x.name === presetSel.value)
+    if (!p) { presetDelete.disabled = true; return }
+    inp('setRegex').value = p.regex
+    inp('setFlags').value = p.flags
+    inp('setCustom').checked = true // picking a pattern implies you want it printed
+    presetName.value = p.name
+    apply()
+    presetDelete.disabled = false
+  })
+  document.getElementById('presetSave')?.addEventListener('click', () => {
+    const regex = inp('setRegex').value.trim()
+    if (!regex) return
+    // Default the name to the pattern itself rather than refusing — Electron has no
+    // window.prompt, and a nameless save that silently does nothing is worse.
+    const name = (presetName.value.trim() || regex).slice(0, 40)
+    const flags = inp('setFlags').value.trim()
+    const at = regexPresets.findIndex((p) => p.name.toLowerCase() === name.toLowerCase())
+    if (at >= 0) regexPresets[at] = { name, regex, flags } // same name overwrites, no duplicates
+    else regexPresets.push({ name, regex, flags })
+    savePresets(regexPresets)
+    renderPresets()
+    presetSel.value = name
+    presetDelete.disabled = false
+  })
+  presetDelete.addEventListener('click', () => {
+    const name = presetSel.value
+    if (!name) return
+    regexPresets = regexPresets.filter((p) => p.name !== name)
+    savePresets(regexPresets)
+    presetName.value = ''
+    renderPresets()
+  })
+  for (const id of ['setRegex', 'setFlags']) document.getElementById(id)?.addEventListener('input', syncPresetSel)
+  renderPresets()
   document.getElementById('printSample')?.addEventListener('click', () => void printLabel(sampleLabelData()))
   updateScaleLabels()
   updateSampleBtn()
