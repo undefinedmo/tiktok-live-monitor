@@ -919,13 +919,23 @@ setInterval(() => {
     flog(`[tt] poll pacing ${nowGated ? 'THROTTLED (verification gate)' : 'restored'}`)
     monitor?.webContents.send('tt-poll-gate', nowGated)
     if (nowGated) {
-      // The puzzle renders in the (usually hidden) monitor window, and every second it
-      // stays unsolved costs real closes. Make it unmissable: flash the viewer's taskbar
-      // button until focused, and raise the window that actually holds the challenge
-      // (without stealing keyboard focus). Solving it clears the alert next tick.
+      // The puzzle renders in the monitor window, which is usually behind the dashboard or
+      // minimised, and every second it goes unsolved is closes we never see. Make it
+      // unmissable: flash the viewer's taskbar button and surface the window that actually
+      // holds the challenge.
+      //
+      // NB: restore() on a minimised window DOES take focus — Windows activates it. That is
+      // the right trade for a puzzle that stops all printing, but it is not focus-neutral,
+      // so do not describe it as such. showInactive() (the merely-hidden case) is.
       viewer?.flashFrame(true)
       if (monitor?.isMinimized()) monitor.restore()
       else if (monitor && !monitor.isVisible()) monitor.showInactive()
+    } else {
+      // Stop the flashing when the gate clears on its own. Windows stops it once the window
+      // is focused, but the puzzle can be solved in the MONITOR window without ever
+      // touching the viewer — which would otherwise leave its taskbar button blinking for
+      // the rest of the show, training the seller to ignore the one signal that matters.
+      viewer?.flashFrame(false)
     }
   }
   const codes = alerts.map((a) => a.code).sort().join(',')
