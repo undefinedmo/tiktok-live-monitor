@@ -199,6 +199,31 @@ const bootTimer = setInterval(() => {
 let polling = false
 let runCycle: (() => Promise<void>) | null = null // set once polling starts; lets a manual Sync force a cycle
 ipcRenderer.on('tt-poll-now', () => { void runCycle?.() })
+
+// ── Request budget ───────────────────────────────────────────────────────────
+// Measured over one 23-minute show: 6030 requests, ~4.4/sec sustained, from a single
+// authenticated session — a 700ms pin poll, a 1.5s roster+orders cycle (halved from 3s for
+// label latency), a ~1s chat poll, and a 30-page order sweep every 15s. TikTok answers a
+// challenged session with a bare {"code":0} on EVERY endpoint until a puzzle is solved in
+// the monitor window, and we kept hammering at full rate straight through it: 2231 of 2300
+// pin responses in that show were empty. Polling a challenged endpoint 4×/sec is the surest
+// way to keep the challenge up.
+//
+// So the loops below are self-scheduling rather than fixed setIntervals, and back off hard
+// while gated. Nothing is lost by waiting: a gated response carries no data.
+let gated = false
+const THROTTLE = 8 // multiplier applied to every interval while a gate is up
+const paced = (ms: number) => (gated ? ms * THROTTLE : ms)
+/** Main owns the gate detection (it sees every endpoint); it tells us when to back off. */
+ipcRenderer.on('tt-poll-gate', (_e, on: boolean) => { gated = !!on })
+/** Self-scheduling loop: the delay is re-read every tick, so a gate slows it immediately. */
+function everyPaced(fn: () => Promise<void> | void, ms: () => number): void {
+  const tick = async () => {
+    try { await fn() } catch { /* a failed cycle must not stop the loop */ }
+    setTimeout(() => void tick(), paced(ms()))
+  }
+  setTimeout(() => void tick(), paced(ms()))
+}
 ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string }) => {
   if (polling || !cfg?.roomId || !cfg?.sessionId) return
   polling = true
@@ -246,7 +271,12 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
     const deep = resultSweep++ % 10 === 0 // count:20 page 0 every cycle; full history every ~10th
     const pageSize = deep ? 100 : 20
     let offset = 0
-    for (let guard = 0; guard < (deep ? 30 : 1); guard++) {
+    // 6 pages, not 30. The sweep only exists to reconcile payment-status flips on rows we
+    // already have, and 600 rows covers any real show; 30 pages was a burst of up to 30
+    // requests every 15s on top of a session already running at ~4/sec. Bursts like that
+    // are what a rate limiter notices.
+    const DEEP_PAGES = 6
+    for (let guard = 0; guard < (deep ? DEEP_PAGES : 1); guard++) {
       let res: Response
       try {
         res = await window.fetch(`${base}/auction_result/get${q}`, post({ room_id: cfg.roomId, session_id: cfg.sessionId, auction_page_type: 0, offset, count: pageSize }))
@@ -264,29 +294,20 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
   // 1.5s (was 3s): the order row is the signal that actually fires live (im decode can
   // go silent; pin only covers pinned lots) and it lands 0.3-3s after the sale — a 3s
   // timer added up to 3s of pure wait on every label for no savings that matter.
-  setInterval(() => void cycle(), 1500)
+  // Paced, so a verification gate stretches it to 12s instead of pounding a dead endpoint.
+  everyPaced(cycle, () => 1500)
 
-  // ── stats_type discovery sweep (runs once per session, ~15s) ───────────────
-  // The live viewer count used to arrive as live_core_stats.current_viewers on the
-  // frontier WS, which no longer delivers — and no REST response we have captured
-  // contains a viewer field. But `stats_types` is a REQUEST parameter on trend/chart:
-  // the dashboard only asks for the four its own chart draws (341/342/51/84), and the
-  // server will return any other metric we name. So walk the plausible ID space once and
-  // let main log which IDs come back with data (see "[stats-probe]" in the flight log) —
-  // that identifies the viewer metric without needing another HAR.
-  // Each chunk includes 341 so the response is still a usable GMV sample, never a waste.
-  const probeIds: number[] = []
-  for (let i = 1; i <= 120; i++) probeIds.push(i)
-  for (let i = 300; i <= 400; i++) probeIds.push(i)
-  const CHUNK = 24
-  let probeAt = 0
-  const probe = setInterval(() => {
-    if (probeAt >= probeIds.length) { clearInterval(probe); return }
-    const chunk = probeIds.slice(probeAt, probeAt + CHUNK)
-    probeAt += CHUNK
-    // 341 rides along so a rejected/empty chunk is distinguishable from a bad request
-    void window.fetch(trendUrl, post(trendBody([341, ...chunk.filter((n) => n !== 341)]))).catch(() => {})
-  }, 1500)
+  // ── stats_type discovery sweep — REMOVED 2026-09-07 ────────────────────────
+  // It walked stats_type ids 1..120 and 300..400 in chunks of 24 against trend/chart,
+  // hunting the live viewer count that vanished when the frontier WS stopped carrying
+  // live_core_stats. It ran once per session and never identified a viewer metric in any
+  // flight log it produced.
+  //
+  // Enumerating undocumented API parameters is exactly the signature an abuse detector
+  // looks for, and it rode on top of a session already issuing ~4.4 requests/sec. Whatever
+  // else provokes TikTok's verification puzzle, this is not worth being on the list for a
+  // result we never got. If the viewer count is wanted again, take it from a HAR of the
+  // dashboard asking for it — do not brute-force the id space.
 
   // ── Pin poll (the low-latency close signal) ────────────────────────────────
   // pin/get flips latest_auction_item.status 1→3 within ~0.5s of the gavel, which
@@ -296,7 +317,15 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
   // path. Poll it ourselves: it's a GET, ~1.6KB, and page-context fetch gets it
   // signed by TikTok's SDK like every other call here. The fetch hook forwards the
   // response to main, where AuctionWatch turns the 1→3 edge into an auction-closed.
-  const PIN_MS = 700 // worst-case detection lag; ~1.6KB/req is cheap next to the 131KB result pages
+  // Adaptive, because a flat 700ms was 1.43 req/sec on its own — a third of this session's
+  // entire request budget, most of it spent watching nothing happen. The 700ms only buys
+  // anything while a lot is actually running: that is when the 1→3 status flip we are
+  // waiting for can occur. Between lots (no auction card, or one already closed) there is
+  // no edge to catch, so poll lazily and step back up the moment a lot goes live. Worst
+  // case for detection is unchanged at 700ms; the idle case drops ~4×.
+  const PIN_LIVE_MS = 700 // a lot is bidding — this is the close-detection lag that matters
+  const PIN_IDLE_MS = 3000 // no live lot; nothing to detect until one starts
+  let pinLotLive = false
   const pinUrl =
     `https://shop.tiktok.com/api/v1/streamer_desktop/pin/get` +
     `?room_id=${cfg.roomId}&aid=253642&app_name=i18n_ecom_alliance&device_platform=web` +
@@ -315,9 +344,14 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
       if (!r.ok) { pinErr++; ipcRenderer.send('tt-pin-diag', { kind: 'http', status: r.status, n: pinErr }) }
       else {
         const body = await r.clone().text()
-        const code = Number(JSON.parse(body)?.code ?? 0)
+        const json = JSON.parse(body)
+        const code = Number(json?.code ?? 0)
         if (code !== 0) { pinErr++; ipcRenderer.send('tt-pin-diag', { kind: 'code', code, body: body.slice(0, 300), n: pinErr }) }
         else if (++pinOk % 20 === 1) ipcRenderer.send('tt-pin-diag', { kind: 'ok', n: pinOk })
+        // status 1 = bidding. Only then is a close edge possible, so only then is the fast
+        // cadence worth its request cost. Anything else (no card, already closed, gated
+        // empty body) drops us to the idle rate until a lot goes live again.
+        pinLotLive = Number(json?.auction_config?.latest_auction_item?.status) === 1
       }
     } catch (e) {
       pinErr++
@@ -325,7 +359,7 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
     } finally { pinInFlight = false }
   }
   void pinCycle()
-  setInterval(() => void pinCycle(), PIN_MS)
+  everyPaced(pinCycle, () => (pinLotLive ? PIN_LIVE_MS : PIN_IDLE_MS))
 
   // ── Chat poll ──────────────────────────────────────────────────────────────
   // webcast/im/fetch is params-only (no cookies/signing — verified), so we poll it

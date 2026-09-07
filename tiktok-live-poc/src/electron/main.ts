@@ -16,7 +16,7 @@ import { initFlightLog, flightLogPath, flog, flushFlightLogSync } from './flight
 import { decodeAuctionIm, extractMessagePayloads } from '../core/auctionIm'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
 import { labelZpl, labelNeedsHtml } from './zplLabel'
-import { sendRawToPrinter, warmRawPrinter } from './rawPrint'
+import { sendRawToPrinter, warmRawPrinter, probeRawPrinter, describePrinterStatus, isBlockingStatus } from './rawPrint'
 import type { LiveEvent, StatusEvent, PinState } from '../core/types'
 
 const DASHBOARD = 'https://shop.tiktok.com/streamer/live/event/dashboard'
@@ -73,6 +73,17 @@ let wdLastPinAt: number | undefined
 let wdLastImAt: number | undefined
 let wdSalesSinceClose = 0
 const wdPrintErrors: number[] = [] // ms timestamps of failed label jobs
+// TikTok answers every endpoint with a bare {"code":0} while a verification puzzle waits
+// in the monitor window. Track WHEN a body last carried a payload (not a count of empty
+// ones): the endpoints poll at different rates and gate independently, so a shared counter
+// tripped on empty roster/auction_result bodies while pin was fine, and the alert flapped.
+let wdLastRestPayloadAt: number | undefined
+let wdFirstRestAt: number | undefined
+// Printer state from the last raw dispatch or idle probe. `undefined` = never read
+// (HTML print path, or the helper could not read it) — distinct from 0 = ready.
+let lastPrinterStatus: number | undefined
+let lastPrinterJobs: number | undefined
+let wdGateSent = false // last throttle state pushed to the poll loops
 let wdLastAlertsJson = ''
 let wdLastSentAt = 0
 let endPollSig = '' // auctionConfigId|expectedEndMs the timer is armed for
@@ -432,6 +443,14 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
   try { json = JSON.parse(msg?.body ?? '') } catch { return }
   const now = Date.now()
   debug(`[tt] rest ${msg?.endpoint} code=${(json as { code?: unknown })?.code} len=${msg?.body?.length ?? 0}`)
+  // A response carrying nothing but `code` is TikTok's verification gate, not a quiet
+  // moment: `{"code":0}` is 10 bytes and arrives for EVERY endpoint until the puzzle in the
+  // monitor window is solved (2231 of 2300 pin responses in one show). Count the run so the
+  // watchdog can say so; any body with real payload clears it.
+  wdFirstRestAt ??= now
+  if (Object.keys(json as object ?? {}).filter((k) => k !== 'code' && k !== 'message').length > 0) {
+    wdLastRestPayloadAt = now
+  }
   if (msg?.endpoint === 'roster') {
     const snap = parseRoster(json, now)
     debug(`[tt] roster: ${snap.products.length} products, sold ${snap.totalSold}, pinned @${snap.pinned?.winUsername ?? '—'}`)
@@ -781,11 +800,26 @@ async function printLabelJob(args: { labelData: LabelData; printerName: string; 
     const template = args.template ?? DEFAULT_TEMPLATE
     // Fast path (opt-in): raw ZPL straight to the spooler (~50ms vs ~1s for the HTML
     // render) — except labels whose text ZPL's built-in font can't draw (emoji/non-Latin),
-    // which fall back to the HTML path below. Any raw failure also falls back.
+    // which fall back to the HTML path below.
     if (rawZplEnabled && !labelNeedsHtml(args.labelData, template)) {
       const r = await sendRawToPrinter(args.printerName, labelZpl(args.labelData, template))
-      if (r.ok) return { success: true }
-      flog(`[label] raw ZPL failed (${r.detail}) — falling back to HTML print`)
+      lastPrinterStatus = r.status
+      lastPrinterJobs = r.jobs
+      if (r.ok) {
+        // "Committed to the spooler" is NOT "the label came out". Say so when the device
+        // reports a blocking state, so a paused/paper-out printer is visible here instead
+        // of surfacing later as a burst of labels nobody expected.
+        if (isBlockingStatus(r.status)) flog(`[label] spooled while printer is ${describePrinterStatus(r.status!)} — label may not appear until cleared`)
+        return { success: true }
+      }
+      // Fall back ONLY when the spooler provably has nothing. Past StartDocPrinter a job
+      // exists even if the write failed, and a helper timeout means we simply do not know —
+      // re-printing either through the HTML path puts TWO labels out for one sale.
+      if (r.committed) {
+        flog(`[label] raw ZPL failed after the job was committed (${r.detail}) — NOT falling back, one label may be lost`)
+        return { success: false, error: r.detail }
+      }
+      flog(`[label] raw ZPL failed before anything was sent (${r.detail}) — falling back to HTML print`)
     }
     const size = LABEL_SIZES[template.labelSize] ?? LABEL_SIZES['2x1']
     const wc = getPrintWindow().webContents
@@ -833,8 +867,21 @@ ipcMain.handle('print-label', (_e, args: { labelData: LabelData; printerName: st
   })
 })
 
+// Idle printer probe: a `--dryrun` opens/closes the printer without printing, so the
+// device's own state is readable even when no label has been dispatched for a while. This
+// is the only way a paused / paper-out / offline printer becomes visible BEFORE the labels
+// it silently swallowed reappear as a burst. ~50ms warm, once per watchdog tick.
+async function probePrinterState(): Promise<void> {
+  const cfg = loadPrinterConfig()
+  if (!cfg.rawZpl || !cfg.printer) return // HTML path gives us no state to read
+  const r = await probeRawPrinter(cfg.printer)
+  if (r.status !== undefined) lastPrinterStatus = r.status
+  if (r.jobs !== undefined) lastPrinterJobs = r.jobs
+}
+
 // ── Watchdog loop: alert the dashboard when a signal path degrades ───────────
 setInterval(() => {
+  void probePrinterState()
   const now = Date.now()
   while (wdPrintErrors.length && now - wdPrintErrors[0]! > 300000) wdPrintErrors.shift()
   const alerts = evaluateWatchdog({
@@ -845,7 +892,21 @@ setInterval(() => {
     lastImFrameAt: wdLastImAt,
     salesSinceLastClose: wdSalesSinceClose,
     printErrorsRecent: wdPrintErrors.length,
+    ...(wdFirstRestAt !== undefined ? { firstRestAt: wdFirstRestAt } : {}),
+    ...(wdLastRestPayloadAt !== undefined ? { lastRestPayloadAt: wdLastRestPayloadAt } : {}),
+    ...(lastPrinterStatus !== undefined ? { printerStatus: lastPrinterStatus, printerStatusText: describePrinterStatus(lastPrinterStatus) } : {}),
+    ...(lastPrinterJobs !== undefined ? { printerJobs: lastPrinterJobs } : {}),
   })
+  // Tell the poll loops to back off while TikTok is challenging us. Continuing to poll a
+  // gated endpoint ~4×/sec (2231 of 2300 pin responses in one show were the empty
+  // {"code":0}) is the surest way to keep the challenge up, and a gated response carries
+  // no data, so nothing is lost by waiting.
+  const nowGated = alerts.some((a) => a.code === 'verification-gate')
+  if (nowGated !== wdGateSent) {
+    wdGateSent = nowGated
+    flog(`[tt] poll pacing ${nowGated ? 'THROTTLED (verification gate)' : 'restored'}`)
+    monitor?.webContents.send('tt-poll-gate', nowGated)
+  }
   const codes = alerts.map((a) => a.code).sort().join(',')
   const edge = codes !== wdLastAlertsJson
   if (!edge && (!alerts.length || now - wdLastSentAt < 60000)) return
