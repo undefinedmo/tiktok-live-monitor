@@ -133,18 +133,30 @@ describe('evaluateWatchdog', () => {
   // device swallowing labels and flushing them later was completely invisible.
   describe('printer state', () => {
     it('flags a blocking printer status', () => {
-      const alerts = evaluateWatchdog({ ...base, printerStatus: 0x1, printerStatusText: 'paused' })
+      const alerts = evaluateWatchdog({ ...base, printerBlocked: true, printerStatusText: 'paused' })
       expect(alerts.map((a) => a.code)).toEqual(['printer-blocked'])
       expect(alerts[0]!.message).toMatch(/paused/)
     })
 
     it('says nothing when the printer is ready', () => {
-      expect(evaluateWatchdog({ ...base, printerStatus: 0, printerJobs: 0 })).toEqual([])
+      expect(evaluateWatchdog({ ...base, printerBlocked: false, printerJobs: 0 })).toEqual([])
     })
 
-    it('flags a queue that is not draining', () => {
-      expect(evaluateWatchdog({ ...base, printerJobs: 3 }).map((a) => a.code)).toEqual(['printer-backlog'])
-      expect(evaluateWatchdog({ ...base, printerJobs: 2 })).toEqual([])
+    // A printer mid-job sets BUSY/PRINTING/PROCESSING in its status word. Alerting on
+    // "status != 0" reported those as faults — and because two constants were transcribed
+    // wrong (0x200/0x400 are BUSY and PRINTING, not OUT_OF_MEMORY and DOOR_OPEN), a
+    // printing printer announced "door_open — labels are queueing". The caller now decides
+    // via an explicit blocking mask.
+    it('says nothing while the printer is merely busy or printing', () => {
+      expect(evaluateWatchdog({ ...base, printerBlocked: false, printerStatusText: 'busy+printing' })).toEqual([])
+    })
+
+    it('flags a queue only once it has failed to drain across ticks', () => {
+      // A burst of three sales legitimately queues three jobs for a moment.
+      expect(evaluateWatchdog({ ...base, printerJobs: 3, printerBacklogTicks: 1 })).toEqual([])
+      expect(evaluateWatchdog({ ...base, printerJobs: 3, printerBacklogTicks: 2 })).toEqual([])
+      expect(evaluateWatchdog({ ...base, printerJobs: 3, printerBacklogTicks: 3 }).map((a) => a.code)).toEqual(['printer-backlog'])
+      expect(evaluateWatchdog({ ...base, printerJobs: 2, printerBacklogTicks: 9 })).toEqual([])
     })
   })
 })

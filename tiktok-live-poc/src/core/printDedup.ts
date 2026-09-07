@@ -37,14 +37,35 @@
 // the same sale reported by different sources still collapses to one key.
 //
 // This is what the older `printKey` comment in the renderer already argued for; the
-// listing-reset design lost it. There is no clearing, no heuristic, and no blackout
-// window — the degraded case (no listing id AND no product name) falls back to a bare lot
-// number, which is the old behaviour and no worse.
+// listing-reset design lost it. There is no clearing and no restart heuristic. The
+// degraded case (no listing id AND no product name) falls back to a bare lot number,
+// which is the old behaviour and no worse.
+//
+// One caveat, since an earlier version of this comment claimed the blackout window was
+// gone outright and it was not: setListing ignores empty ids, so the last id LATCHES
+// through a gate instead of clearing, and a listing change inside that window would still
+// collide. LISTING_TTL_MS below is what actually closes it.
 
 const norm = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, ' ')
 
+/**
+ * How long a listing id stays trustworthy without being re-confirmed by pin/roster.
+ *
+ * setListing ignores empty ids (an empty body is missing evidence, not a new listing), so
+ * during a verification blackout the last id LATCHES rather than clearing. If the seller
+ * starts a new listing inside that window, its lots would claim under the previous
+ * listing's scope and be suppressed as already-printed — the very failure the scoped key
+ * was meant to end, just moved from "app started gated" to "gate arrived mid-show".
+ *
+ * So an id that has not been re-confirmed for this long is treated as unknown, and the
+ * scope falls back to the product name. Erring this way costs at most one duplicate label
+ * at the boundary; erring the other way costs every label until pin recovers.
+ */
+const LISTING_TTL_MS = 30000
+
 export class PrintDedup {
   private listingId = ''
+  private listingSeenAt = 0
   private printed = new Set<string>()
   private orderIds = new Set<string>()
 
@@ -54,9 +75,10 @@ export class PrintDedup {
    * Unknown ids are ignored rather than treated as a new scope, so an empty
    * `{"code":0}` body during a verification gate is a no-op, not a scope change.
    */
-  setListing(listingId?: string): void {
+  setListing(listingId: string | undefined, now: number): void {
     if (!listingId) return
     this.listingId = listingId
+    this.listingSeenAt = now // re-confirmed; the TTL above restarts
   }
 
   /**
@@ -64,8 +86,9 @@ export class PrintDedup {
    * Both identify the listing; the id is authoritative, the name is what survives a
    * pin blackout. A lot with neither degrades to a bare lot number.
    */
-  private keyFor(lot: string, productName?: string): string {
-    const scope = this.listingId || norm(productName ?? '')
+  private keyFor(lot: string, productName: string | undefined, now: number): string {
+    const fresh = !!this.listingId && now - this.listingSeenAt <= LISTING_TTL_MS
+    const scope = fresh ? this.listingId : norm(productName ?? '')
     return `${scope}|${lot}`
   }
 
@@ -78,8 +101,8 @@ export class PrintDedup {
    * destructive reset side effect, so asking whether a lot had printed could change the
    * answer for every other lot. Claiming is the only mutation.
    */
-  claim(lot: string, productName?: string): boolean {
-    const key = this.keyFor(lot, productName)
+  claim(lot: string, productName: string | undefined, now: number): boolean {
+    const key = this.keyFor(lot, productName, now)
     if (this.printed.has(key)) return false
     this.printed.add(key)
     return true
@@ -90,8 +113,8 @@ export class PrintDedup {
    * must re-check just before firing to see whether a confirmed source got there first.
    * Everything else calls claim().
    */
-  printedAlready(lot: string, productName?: string): boolean {
-    return this.printed.has(this.keyFor(lot, productName))
+  printedAlready(lot: string, productName: string | undefined, now: number): boolean {
+    return this.printed.has(this.keyFor(lot, productName, now))
   }
 
   /**

@@ -25,12 +25,19 @@ export interface WatchdogState {
   lastRestPayloadAt?: number
   /** When the first REST response of any kind arrived — the gate check needs a start line. */
   firstRestAt?: number
-  /** GetPrinter Status word from the last dispatch/probe; 0 = ready, undefined = unknown. */
-  printerStatus?: number
-  /** Human-readable form of printerStatus, supplied by the caller. */
+  /**
+   * True only when the printer's status word contains a BLOCKING bit (paused, paper out,
+   * offline, door open…). Computed by the caller, which owns the Win32 mask — most of that
+   * status word describes a HEALTHY printer mid-job (BUSY, PRINTING, PROCESSING), so
+   * "status is nonzero" is not trouble and alerting on it fires while things work.
+   */
+  printerBlocked?: boolean
+  /** Human-readable form of the status word, supplied by the caller. */
   printerStatusText?: string
-  /** Jobs sitting on the device. */
+  /** Jobs sitting on the device, sampled once per tick. */
   printerJobs?: number
+  /** Consecutive ticks printerJobs has been at or above the backlog threshold. */
+  printerBacklogTicks?: number
 }
 
 export interface WatchdogAlert {
@@ -47,7 +54,8 @@ const SALES_WITHOUT_CLOSE = 3 // labels still print via order rows, but slower �
 // something carries a payload every couple of seconds; 45s with nothing from any endpoint
 // is the gate, and is long enough to ride out an ordinary between-listings lull.
 const REST_GATE_MS = 45000
-const PRINTER_BACKLOG = 3 // labels dispatch one at a time; 3+ queued means the device is not draining
+const PRINTER_BACKLOG = 3 // labels dispatch one at a time; 3+ queued MAY mean the device is not draining
+const BACKLOG_TICKS = 3 // ...but only if it stays there ~45s; a selling burst queues 3 briefly
 
 export function evaluateWatchdog(s: WatchdogState): WatchdogAlert[] {
   const out: WatchdogAlert[] = []
@@ -99,9 +107,13 @@ export function evaluateWatchdog(s: WatchdogState): WatchdogAlert[] {
   // a paused/paper-out device, or jobs stacking up on it, means labels are being swallowed
   // and will surface later in a burst. Previously invisible — printErrorsRecent only counts
   // outright dispatch failures, which a blocked-but-accepting printer never produces.
-  if (s.printerStatus)
-    out.push({ code: 'printer-blocked', message: `printer reports ${s.printerStatusText ?? `0x${s.printerStatus.toString(16)}`} — labels are queueing, not printing` })
-  if ((s.printerJobs ?? 0) >= PRINTER_BACKLOG)
-    out.push({ code: 'printer-backlog', message: `${s.printerJobs} labels queued on the printer — it is not keeping up` })
+  if (s.printerBlocked)
+    out.push({ code: 'printer-blocked', message: `printer reports ${s.printerStatusText ?? 'a fault'} — labels are queueing, not printing` })
+  // A backlog has to PERSIST. Labels dispatch one per sale, so three quick sales in a
+  // selling burst legitimately put three jobs in the queue for a moment; that is the
+  // printer keeping up, not falling behind. Only a depth that survives consecutive ticks
+  // means it is not draining.
+  if ((s.printerJobs ?? 0) >= PRINTER_BACKLOG && (s.printerBacklogTicks ?? 0) >= BACKLOG_TICKS)
+    out.push({ code: 'printer-backlog', message: `${s.printerJobs} labels queued on the printer for ${s.printerBacklogTicks} checks — it is not draining` })
   return out
 }

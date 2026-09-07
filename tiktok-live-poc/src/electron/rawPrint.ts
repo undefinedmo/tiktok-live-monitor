@@ -8,26 +8,51 @@ import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 import { app } from 'electron'
 
-/** PRINTER_STATUS_* bits worth naming. The rest are folded into `status` for the log. */
+// PRINTER_STATUS_* from winspool. Transcribe these from the header, do not guess: an
+// earlier version had OUT_OF_MEMORY at 0x200 and DOOR_OPEN at 0x400, which are really BUSY
+// and PRINTING — so a printer doing its job reported "door_open" and raised a blocked
+// alert on every label. The high-value bits genuinely are five hex digits.
 export const PRINTER_STATUS = {
   PAUSED: 0x00000001,
   ERROR: 0x00000002,
+  PENDING_DELETION: 0x00000004,
   PAPER_JAM: 0x00000008,
   PAPER_OUT: 0x00000010,
+  MANUAL_FEED: 0x00000020,
   PAPER_PROBLEM: 0x00000040,
   OFFLINE: 0x00000080,
-  OUT_OF_MEMORY: 0x00000200,
-  DOOR_OPEN: 0x00000400,
+  IO_ACTIVE: 0x00000100,
+  BUSY: 0x00000200,
+  PRINTING: 0x00000400,
+  OUTPUT_BIN_FULL: 0x00000800,
   NOT_AVAILABLE: 0x00001000,
+  WAITING: 0x00002000,
+  PROCESSING: 0x00004000,
+  INITIALIZING: 0x00008000,
+  WARMING_UP: 0x00010000,
+  TONER_LOW: 0x00020000,
   NO_TONER: 0x00040000,
+  PAGE_PUNT: 0x00080000,
   USER_INTERVENTION: 0x00100000,
+  OUT_OF_MEMORY: 0x00200000,
+  DOOR_OPEN: 0x00400000,
+  SERVER_UNKNOWN: 0x00800000,
+  POWER_SAVE: 0x01000000,
 } as const
 
-/** Bits that mean a label will NOT come out until a human or the device fixes something. */
+/**
+ * Bits that mean a label will NOT come out until a human or the device fixes something.
+ *
+ * Deliberately an allow-list of BAD states rather than "status != 0". Most of the status
+ * word describes a healthy printer mid-job — BUSY, PRINTING, IO_ACTIVE, PROCESSING,
+ * WARMING_UP, POWER_SAVE — and treating any nonzero value as trouble means the watchdog
+ * cries wolf exactly when things are working.
+ */
 const BLOCKING =
   PRINTER_STATUS.PAUSED | PRINTER_STATUS.ERROR | PRINTER_STATUS.PAPER_JAM | PRINTER_STATUS.PAPER_OUT |
-  PRINTER_STATUS.PAPER_PROBLEM | PRINTER_STATUS.OFFLINE | PRINTER_STATUS.DOOR_OPEN |
-  PRINTER_STATUS.NOT_AVAILABLE | PRINTER_STATUS.NO_TONER | PRINTER_STATUS.USER_INTERVENTION
+  PRINTER_STATUS.PAPER_PROBLEM | PRINTER_STATUS.OFFLINE | PRINTER_STATUS.OUTPUT_BIN_FULL |
+  PRINTER_STATUS.NOT_AVAILABLE | PRINTER_STATUS.NO_TONER | PRINTER_STATUS.USER_INTERVENTION |
+  PRINTER_STATUS.OUT_OF_MEMORY | PRINTER_STATUS.DOOR_OPEN | PRINTER_STATUS.SERVER_UNKNOWN
 
 export function describePrinterStatus(status: number): string {
   if (!status) return 'ready'

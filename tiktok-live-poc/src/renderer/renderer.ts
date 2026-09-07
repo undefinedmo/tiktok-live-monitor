@@ -727,7 +727,10 @@ async function printLabel(data: LabelData, { register = false }: { register?: bo
   if (!selectedPrinter) return
   if (register) {
     const n = String(data.itemNumber ?? '').trim()
-    if (n) printed.claim(n, data.productName)
+    // lastLotName as the scope fallback, matching the auto paths: during a pin blackout the
+    // scope IS the product name, so a manual claim keyed on "|76" would not match the close
+    // event key "<product>|76" and #76 would still print twice.
+    if (n) printed.claim(n, data.productName ?? lastLotName, Date.now())
   }
   const entry: { label: string; status: 'printing' | 'printed' | 'error' } = { label: `#${data.itemNumber}${data.buyer ? ' ' + data.buyer : ''}`, status: 'printing' }
   printQueue.unshift(entry)
@@ -766,7 +769,7 @@ const printKey = (lot: string, winner?: string) =>
 const printed = new PrintDedup()
 /** Called from the pin/roster stream — the only sources carrying a real per-listing id. */
 function setPrintListing(listingId?: string): void {
-  printed.setListing(listingId)
+  printed.setListing(listingId, Date.now())
 }
 
 // Prefer the CONFIRMED winner: a pin swap-close only knows the last LEADER, which a snipe
@@ -784,7 +787,7 @@ function autoPrintSale(s: Sale) {
   if (!autoPrint || !selectedPrinter) return
   const lot = (s.skuDesc ?? '').replace(/^#/, '')
   if (!lot) { if (printed.seenOrder(s.orderId)) return; printSale(s); return }
-  if (!printed.claim(lot, s.productName)) return
+  if (!printed.claim(lot, s.productName, Date.now())) return
   cancelPendingSwap(lot)
   printSale(s)
 }
@@ -849,12 +852,12 @@ function onAuctionClosed(ev: Extract<LiveEvent, { kind: 'auction-closed' }>) {
   // the dedup scope when pin has not given us a listing id, so resolve it ONCE and use the
   // same value for the check and the claim — two different names would be two different keys.
   const name = (ev.productName ?? lastLotName ?? '').trim()
-  if (printed.printedAlready(lot, name)) return
+  if (printed.printedAlready(lot, name, Date.now())) return
   const doPrint = () => {
     // Atomic: claim decides AND records. The held swap-close timer below fires up to 4s
     // later, so a confirmed source can land in between — claim() is what makes that race
     // safe without the timer re-checking.
-    if (!printed.claim(lot, name)) return
+    if (!printed.claim(lot, name, Date.now())) return
     void printLabel({
       itemNumber: lot,
       buyer: ev.winner,

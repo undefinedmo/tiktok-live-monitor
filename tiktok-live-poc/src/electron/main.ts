@@ -83,6 +83,7 @@ let wdFirstRestAt: number | undefined
 // (HTML print path, or the helper could not read it) — distinct from 0 = ready.
 let lastPrinterStatus: number | undefined
 let lastPrinterJobs: number | undefined
+let wdBacklogTicks = 0 // consecutive probes with a queue at or above the backlog threshold
 let wdGateSent = false // last throttle state pushed to the poll loops
 let wdLastAlertsJson = ''
 let wdLastSentAt = 0
@@ -875,8 +876,16 @@ async function probePrinterState(): Promise<void> {
   const cfg = loadPrinterConfig()
   if (!cfg.rawZpl || !cfg.printer) return // HTML path gives us no state to read
   const r = await probeRawPrinter(cfg.printer)
-  if (r.status !== undefined) lastPrinterStatus = r.status
-  if (r.jobs !== undefined) lastPrinterJobs = r.jobs
+  // A probe that read nothing must CLEAR the cache, not leave the last value standing. If the
+  // printer is unplugged or the spooler restarts, OpenPrinter starts failing and the last
+  // successful read — quite possibly 0 = ready — would otherwise persist forever, so the
+  // watchdog would report a healthy printer precisely when there is no printer.
+  lastPrinterStatus = r.status
+  lastPrinterJobs = r.jobs
+  // A backlog only counts once it PERSISTS: labels dispatch one per sale, so a burst of
+  // three sales briefly queues three jobs on a perfectly healthy printer.
+  if ((r.jobs ?? 0) >= 3) wdBacklogTicks++
+  else wdBacklogTicks = 0
 }
 
 // ── Watchdog loop: alert the dashboard when a signal path degrades ───────────
@@ -894,8 +903,11 @@ setInterval(() => {
     printErrorsRecent: wdPrintErrors.length,
     ...(wdFirstRestAt !== undefined ? { firstRestAt: wdFirstRestAt } : {}),
     ...(wdLastRestPayloadAt !== undefined ? { lastRestPayloadAt: wdLastRestPayloadAt } : {}),
-    ...(lastPrinterStatus !== undefined ? { printerStatus: lastPrinterStatus, printerStatusText: describePrinterStatus(lastPrinterStatus) } : {}),
-    ...(lastPrinterJobs !== undefined ? { printerJobs: lastPrinterJobs } : {}),
+    // The Win32 mask lives in rawPrint; core stays free of it. Passing a boolean rather
+    // than the raw word also makes the alert impossible to key on "status != 0", which
+    // fired for BUSY and PRINTING — a printer doing its job.
+    ...(lastPrinterStatus !== undefined ? { printerBlocked: isBlockingStatus(lastPrinterStatus), printerStatusText: describePrinterStatus(lastPrinterStatus) } : {}),
+    ...(lastPrinterJobs !== undefined ? { printerJobs: lastPrinterJobs, printerBacklogTicks: wdBacklogTicks } : {}),
   })
   // Tell the poll loops to back off while TikTok is challenging us. Continuing to poll a
   // gated endpoint ~4×/sec (2231 of 2300 pin responses in one show were the empty
@@ -906,6 +918,15 @@ setInterval(() => {
     wdGateSent = nowGated
     flog(`[tt] poll pacing ${nowGated ? 'THROTTLED (verification gate)' : 'restored'}`)
     monitor?.webContents.send('tt-poll-gate', nowGated)
+    if (nowGated) {
+      // The puzzle renders in the (usually hidden) monitor window, and every second it
+      // stays unsolved costs real closes. Make it unmissable: flash the viewer's taskbar
+      // button until focused, and raise the window that actually holds the challenge
+      // (without stealing keyboard focus). Solving it clears the alert next tick.
+      viewer?.flashFrame(true)
+      if (monitor?.isMinimized()) monitor.restore()
+      else if (monitor && !monitor.isVisible()) monitor.showInactive()
+    }
   }
   const codes = alerts.map((a) => a.code).sort().join(',')
   const edge = codes !== wdLastAlertsJson
