@@ -237,10 +237,14 @@ ipcMain.on('tt-chat-sent', (_e, result: { id?: number; ok: boolean; error?: stri
 let shoppingSamples = 0
 const SHOPPING_SAMPLE_CAP = 20
 function ingestAuctionBytes(raw: Uint8Array, now: number, via: 'im' | 'ws') {
-  // Self-collecting schema samples: WebcastOecLiveShoppingMessage is the only Oec
-  // message still on the stream (Creator/Manager are extinct per the 2026-07-28
-  // census) and we cannot decode it yet. Log a bounded number of raw payloads so
-  // the field layout can be reversed straight from a show's flight log.
+  // Self-collecting schema samples: WebcastOecLiveShoppingMessage is one Oec message we
+  // still cannot decode. Log a bounded number of raw payloads so the field layout can be
+  // reversed straight from a show's flight log.
+  // NB: this used to claim "Creator/Manager are extinct per the 2026-07-28 census". They
+  // are not — the 2026-09-07 census counted OecLiveCreatorMessage×634 and
+  // OecLiveManagerMessage×392 in a single show. That stale note is why the per-bid Manager
+  // feed sat decoded-but-unused for weeks while both lot cards showed nothing until the
+  // gavel. Re-read a live census before trusting any "extinct" claim here.
   if (shoppingSamples < SHOPPING_SAMPLE_CAP) {
     for (const payload of extractMessagePayloads(raw, 'WebcastOecLiveShoppingMessage')) {
       if (shoppingSamples >= SHOPPING_SAMPLE_CAP) break

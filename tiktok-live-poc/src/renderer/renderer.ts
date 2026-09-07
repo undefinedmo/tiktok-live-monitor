@@ -96,6 +96,12 @@ let serverTimeOffsetMs = 0 // from pin/get (resp_server_time − client clock); 
 // True once GMV comes from TikTok's own numbers (show_totals, or the legacy WS core_stats)
 // rather than from summing the sales this app happened to capture.
 let gmvAuthoritative = false
+// Has a roster/product_stats body actually reported a sold count? While TikTok serves a
+// verification puzzle the roster comes back as a bare {"code":0}, which parses to zero
+// products and totalSold 0 — and that was being written straight to the SALES card every
+// 1.5s, so a show with 68 sales displayed 0. Track whether we have a real number; until
+// then the order-row total stands in, the same way locally-summed GMV does below.
+let salesAuthoritative = false
 let showElapsedSec = 0
 // Viewers has no working source right now: it only ever arrived on the dead frontier WS,
 // and no REST response carries it. A stats_type discovery sweep runs each session to find
@@ -376,6 +382,7 @@ const PIN_FRESH_MS = 3000
 // Per-bid paints (webcast stream, every bid, works unpinned) are fresher than the 3s
 // roster snapshot too — a roster paint must not clobber them either.
 let lastBidRenderAt = 0
+let lastBidLot = '' // lot the bid feed is currently painting — detects the lot changing under it
 const freshestLotRenderAt = () => Math.max(lastPinRenderAt, lastBidRenderAt)
 
 // ── current auction ─────────────────────────────────────────────────────────
@@ -703,8 +710,24 @@ function renderQueue() {
   }
 }
 
-async function printLabel(data: LabelData) {
+/**
+ * `register: true` records the lot in the print guard as though a source had claimed it.
+ *
+ * The auto paths claim BEFORE calling here, so they leave it off. The manual lot buttons
+ * (Next / Custom / Range) set it: a hand-printed label is a physical label, so the lot's
+ * close event must not produce a second one later. Observed live — #76 came out four
+ * times, three by hand plus one automatic, because manual prints sat outside the guard.
+ *
+ * Manual prints still never CONSULT the guard: clicking the button is explicit intent, so
+ * reprinting a jammed label always works. The sample-label button leaves this off too —
+ * its placeholder item number would otherwise claim a real lot and suppress it.
+ */
+async function printLabel(data: LabelData, { register = false }: { register?: boolean } = {}) {
   if (!selectedPrinter) return
+  if (register) {
+    const n = String(data.itemNumber ?? '').trim()
+    if (n) printed.claim(n, data.productName)
+  }
   const entry: { label: string; status: 'printing' | 'printed' | 'error' } = { label: `#${data.itemNumber}${data.buyer ? ' ' + data.buyer : ''}`, status: 'printing' }
   printQueue.unshift(entry)
   if (printQueue.length > 30) printQueue.pop()
@@ -742,10 +765,7 @@ const printKey = (lot: string, winner?: string) =>
 const printed = new PrintDedup()
 /** Called from the pin/roster stream — the only sources carrying a real per-listing id. */
 function setPrintListing(listingId?: string): void {
-  if (!printed.setListing(listingId)) return
-  // Held swap-close guesses belong to the listing that just ended; drop them.
-  for (const t of pendingSwap.values()) clearTimeout(t)
-  pendingSwap.clear()
+  printed.setListing(listingId)
 }
 
 // Prefer the CONFIRMED winner: a pin swap-close only knows the last LEADER, which a snipe
@@ -763,9 +783,8 @@ function autoPrintSale(s: Sale) {
   if (!autoPrint || !selectedPrinter) return
   const lot = (s.skuDesc ?? '').replace(/^#/, '')
   if (!lot) { if (printed.seenOrder(s.orderId)) return; printSale(s); return }
-  if (printed.has(lot)) return
+  if (!printed.claim(lot, s.productName)) return
   cancelPendingSwap(lot)
-  printed.add(lot)
   printSale(s)
 }
 
@@ -821,15 +840,20 @@ function onAuctionClosed(ev: Extract<LiveEvent, { kind: 'auction-closed' }>) {
   // No lot number yet (unattributed im auction.end): don't print a numberless label —
   // the im-result event carries the lot ~6s later and prints it then.
   if (!lot) return
-  if (printed.has(lot)) return
   // The custom-regex field extracts from `title` (falling back to productName), so the old
   // title of just "#23" could never match a rule like \b(NWT|RETURN)S?\b — the tag
   // extracted correctly in the settings preview and then never appeared on a live label,
   // because THIS is the path that prints during a show. Carry the lot's real product name
-  // through, the way the slower auction_result path (printSale) already does.
+  // through, the way the slower auction_result path (printSale) already does. It doubles as
+  // the dedup scope when pin has not given us a listing id, so resolve it ONCE and use the
+  // same value for the check and the claim — two different names would be two different keys.
+  const name = (ev.productName ?? lastLotName ?? '').trim()
+  if (printed.printedAlready(lot, name)) return
   const doPrint = () => {
-    printed.add(lot)
-    const name = (ev.productName ?? lastLotName ?? '').trim()
+    // Atomic: claim decides AND records. The held swap-close timer below fires up to 4s
+    // later, so a confirmed source can land in between — claim() is what makes that race
+    // safe without the timer re-checking.
+    if (!printed.claim(lot, name)) return
     void printLabel({
       itemNumber: lot,
       buyer: ev.winner,
@@ -842,7 +866,7 @@ function onAuctionClosed(ev: Extract<LiveEvent, { kind: 'auction-closed' }>) {
   if (ev.source === 'pin-swap') {
     // Low-confidence guess (leader while bidding) — hold for a confirmed winner first.
     if (pendingSwap.has(lot)) return
-    pendingSwap.set(lot, setTimeout(() => { pendingSwap.delete(lot); if (!printed.has(lot)) doPrint() }, SWAP_PRINT_DELAY_MS))
+    pendingSwap.set(lot, setTimeout(() => { pendingSwap.delete(lot); doPrint() }, SWAP_PRINT_DELAY_MS))
     return
   }
   // Confirmed source (pin status=3 / im / im-result): print now, pre-empt any held guess.
@@ -884,13 +908,13 @@ async function setupPrinting() {
   ;($('autoPrint') as HTMLInputElement).addEventListener('change', (e) => { autoPrint = (e.target as HTMLInputElement).checked; localStorage.setItem('tt-autoprint', autoPrint ? '1' : '0') })
   ;($('rawZpl') as HTMLInputElement).checked = rawZpl
   ;($('rawZpl') as HTMLInputElement).addEventListener('change', (e) => { void window.labelAPI.setRawZpl((e.target as HTMLInputElement).checked) })
-  $('printNext').addEventListener('click', () => { if (lastPrintedNumber !== null) void printLabel({ itemNumber: String(lastPrintedNumber + 1) }) })
-  $('printCustom').addEventListener('click', () => { const v = ($('customNum') as HTMLInputElement).value.replace(/^#/, '').trim(); if (v) void printLabel({ itemNumber: v }) })
+  $('printNext').addEventListener('click', () => { if (lastPrintedNumber !== null) void printLabel({ itemNumber: String(lastPrintedNumber + 1) }, { register: true }) })
+  $('printCustom').addEventListener('click', () => { const v = ($('customNum') as HTMLInputElement).value.replace(/^#/, '').trim(); if (v) void printLabel({ itemNumber: v }, { register: true }) })
   $('printRange').addEventListener('click', async () => {
     const from = parseInt(($('rangeFrom') as HTMLInputElement).value, 10)
     const to = parseInt(($('rangeTo') as HTMLInputElement).value, 10)
     if (!Number.isFinite(from) || !Number.isFinite(to) || from > to || to - from > 500) return
-    for (let n = from; n <= to; n++) await printLabel({ itemNumber: String(n) })
+    for (let n = from; n <= to; n++) await printLabel({ itemNumber: String(n) }, { register: true })
   })
 }
 void setupPrinting()
@@ -1233,6 +1257,7 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       break
     case 'product_stats':
       stats.sales = String(ev.totalSold)
+      salesAuthoritative = true
       renderStats()
       break
     case 'roster':
@@ -1250,7 +1275,9 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       // Backstop for the print dedup's listing scope when pin/get is quiet: roster's
       // pinned auction carries the same per-listing auction_config_id.
       setPrintListing(ev.pinned?.auctionConfigId)
-      stats.sales = String(ev.totalSold)
+      // Same missing-evidence rule as the lot paint above: a gated roster reports 0 sold,
+      // and writing that to the card is how a 68-sale show displayed 0.
+      if (ev.products.length) { stats.sales = String(ev.totalSold); salesAuthoritative = true }
       renderStats()
       break
     case 'pin':
@@ -1282,6 +1309,16 @@ window.ttLive.onEvent((ev: LiveEvent) => {
         document.getElementById('auctionPanelBid')!.textContent = ev.price
       }
       $('lotBuyer').textContent = '@' + ev.leader
+      // The bid feed carries no bid COUNT, and the count on screen belongs to whatever lot
+      // pin last saw — often a different, already-closed one. A frozen wrong number reads
+      // as live data, which is worse than no number; blank it the same way the countdown is
+      // left alone. pin fills both back in for real if the host pins the card.
+      if (ev.lotNumber && ev.lotNumber !== lastBidLot) {
+        lastBidLot = ev.lotNumber
+        $('lotBids').textContent = '--'
+        document.getElementById('auctionPanelBids')!.textContent = '--'
+        document.getElementById('auctionPanelEnds')!.textContent = '--'
+      }
       $('lotOverlay').style.display = 'flex'
       lastBidRenderAt = Date.now() // hold this against the slower roster paint (PIN_FRESH_MS)
       break
@@ -1324,6 +1361,9 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       // Locally-summed GMV is only a stand-in until show_totals lands: it counts nothing
       // that happened before this app attached, so a mid-show start under-reports.
       if (!gmvAuthoritative) stats.gmv = `$${(ev.totalCents / 100).toFixed(2)}`
+      // Order rows are the only sold-count source that survives a verification gate: the
+      // roster is empty for its whole duration, so without this the card sits at 0.
+      if (!salesAuthoritative) stats.sales = String(ev.totalSales)
       renderStats()
       $('feedCount').title = `${ev.totalSales} sales · $${(ev.totalCents / 100).toFixed(0)}`
       if (recentForRecap) void transcribeSale(recentForRecap) // AI transcript — after print + render

@@ -1,6 +1,6 @@
 {
   "name": "tiktok-live-monitor",
-  "version": "1.3.18",
+  "version": "1.3.19",
   "private": true,
   "type": "module",
   "description": "TikTok Shop live sales monitor",
@@ -10,10 +10,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "build": "node esbuild.mjs",
-    "build:win": "node esbuild.mjs && electron-builder --win",
-    "publish": "node esbuild.mjs && electron-builder --publish always",
+    "build:win": "npm run verify && node esbuild.mjs && electron-builder --win",
+    "publish": "npm run verify && node esbuild.mjs && electron-builder --publish always",
     "dev": "node esbuild.mjs && electron .",
-    "publish:safe": "bash scripts/publish-safe.sh"
+    "publish:safe": "bash scripts/publish-safe.sh",
+    "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm run test"
   },
   "devDependencies": {
     "@types/node": "^22.19.20",

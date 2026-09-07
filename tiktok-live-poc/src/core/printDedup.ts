@@ -2,93 +2,102 @@
 // arbitrates between them: exactly one label per lot number, whatever source reports it
 // and whether or not the sources agree on the winner.
 //
-// Two rules, and they are easy to get backwards — both failure modes have shipped:
+// Three failure modes have shipped here. All of them are encoded below; read them before
+// changing the key.
 //
-//   1. Key on the LOT, not winner+lot. A snipe leaves the pin's last leader different from
-//      the auction_result winner (observed live: #252 printed twice — "Liz" via pin
-//      swap-close, "Amy891" via the order row), so a winner-keyed guard saw two distinct
-//      keys and both paths printed.
+//   1. Keying on winner+lot double-printed a snipe. The pin's last leader is not the
+//      auction_result winner when a lot is sniped (observed live: #252 printed twice —
+//      "Liz" via pin swap-close, "Amy891" via the order row), so a winner-keyed guard saw
+//      two distinct keys and both paths printed. Key on the LOT, never the winner.
 //
-//   2. Reset only on a real LISTING change, and take that id only from pin/roster.
-//      Lot numbers restart per listing (variant #1..#K under each auction product), so the
-//      set has to clear when the seller moves on — otherwise lot #3 of listing B looks like
-//      a re-fire of lot #3 of listing A and printing silently stops. But a close event's
-//      `auctionConfigId` is per-listing ONLY for pin-sourced closes: main sends auctionIm's
-//      `auctionId` for auction.end and `skuId` for result_update, both per-AUCTION (see
-//      core/auctionIm.ts — "NOT the roster's auction_config_id"). Resetting off a close
-//      event therefore saw a new id on EVERY close, wiped the set before every check, and
-//      deduped nothing: auction.end printed the label, result_update reprinted it ~5s
-//      later, and the order row could print a third. That was the v1.3.7–v1.3.14
-//      double-print. PinnedAuction.auctionConfigId is the per-listing id; use that.
-// A new listing starts at #1. Allow #2 as well, in case #1's close is missed entirely
-// (an empty-body stretch) and #2 is the first lot we actually see under the new listing.
-const RESTART_LOT = 2
-// ...but only treat it as a restart from a listing long enough that a backfilled low lot
-// number can't be confused for one. Below this, the ordinary listing-id reset covers it.
-const RESTART_MIN_MAX = 5
+//   2. Keying on the lot alone, with a reset driven by close events, deduped NOTHING.
+//      Lot numbers restart per listing (variant #1..#K under each auction product), so
+//      some reset is needed — but a close event's `auctionConfigId` is per-listing ONLY
+//      for pin-sourced closes. Main sends auctionIm's `auctionId` for auction.end and
+//      `skuId` for result_update, both per-AUCTION (core/auctionIm.ts: "NOT the roster's
+//      auction_config_id"). So the scope reset on EVERY close, before every check:
+//      auction.end printed the label and result_update reprinted it ~5s later, with the
+//      order row good for a third. That was the v1.3.7–v1.3.14 double-print.
+//
+//   3. Reset-on-listing-change, with a lot-number heuristic as backstop, had a hole in
+//      the exact case the backstop existed for. The listing id comes from pin/roster, and
+//      TikTok answers every poll with a bare {"code":0} while a verification puzzle is
+//      pending — so during that blackout no listing id arrives at all. The heuristic
+//      ("a return to lot #1 or #2 means a new listing") assumed the new listing's FIRST
+//      OBSERVED lot is #1 or #2, but the early closes are exactly what the blackout eats.
+//      A listing whose first seen lot was #3+ collided with the previous listing and every
+//      label was suppressed until pin recovered.
+//
+// The fix for (3) is to stop detecting restarts at all. Scope the key instead: a lot is
+// identified by the listing it belongs to, so lot #3 of listing B and lot #3 of listing A
+// are simply different keys and nothing ever has to be cleared. The scope comes from the
+// listing id when pin/roster has given us one, and falls back to the lot's product name —
+// which every print source carries (pin roster name, im Manager title, auction_result
+// product_name) and which changes when the seller moves to a new listing. Normalized, so
+// the same sale reported by different sources still collapses to one key.
+//
+// This is what the older `printKey` comment in the renderer already argued for; the
+// listing-reset design lost it. There is no clearing, no heuristic, and no blackout
+// window — the degraded case (no listing id AND no product name) falls back to a bare lot
+// number, which is the old behaviour and no worse.
+
+const norm = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, ' ')
 
 export class PrintDedup {
   private listingId = ''
-  private lots = new Set<string>()
+  private printed = new Set<string>()
   private orderIds = new Set<string>()
-  private maxLot: number | null = null
 
   /**
    * Point the guard at the current listing. Feed this ONLY from pin/roster
-   * (`PinnedAuction.auctionConfigId`), never from a close event.
-   * Returns true when the listing actually changed and the lot set was cleared, so the
-   * caller can drop anything else scoped to the old listing (e.g. held swap-close prints).
+   * (`PinnedAuction.auctionConfigId`), never from a close event — see (2) above.
+   * Unknown ids are ignored rather than treated as a new scope, so an empty
+   * `{"code":0}` body during a verification gate is a no-op, not a scope change.
    */
-  setListing(listingId?: string): boolean {
-    if (!listingId || listingId === this.listingId) return false
+  setListing(listingId?: string): void {
+    if (!listingId) return
     this.listingId = listingId
-    this.rollover()
+  }
+
+  /**
+   * The key a lot is remembered under: listing id when known, else the product name.
+   * Both identify the listing; the id is authoritative, the name is what survives a
+   * pin blackout. A lot with neither degrades to a bare lot number.
+   */
+  private keyFor(lot: string, productName?: string): string {
+    const scope = this.listingId || norm(productName ?? '')
+    return `${scope}|${lot}`
+  }
+
+  /**
+   * Claim a lot for printing. Returns true if the caller should print — that is, if no
+   * label has been produced for this lot under this listing yet — and records it.
+   *
+   * One atomic call rather than a `has()` predicate plus a separate `add()`: the previous
+   * split let a check and its record drift apart, and (worse) `has()` carried a
+   * destructive reset side effect, so asking whether a lot had printed could change the
+   * answer for every other lot. Claiming is the only mutation.
+   */
+  claim(lot: string, productName?: string): boolean {
+    const key = this.keyFor(lot, productName)
+    if (this.printed.has(key)) return false
+    this.printed.add(key)
     return true
   }
 
   /**
-   * Has this lot number already printed under the current listing?
-   *
-   * Backstop for a dead pin: pin/get is the listing-id source, and TikTok serves an empty
-   * `{"code":0}` for every REST poll while a verification puzzle is pending — so the reset
-   * above can go silent for minutes at a stretch. If it does, and the seller starts a new
-   * listing, its lots would be suppressed as already-printed and nothing would print at
-   * all. So a return to lot #1 also rolls the scope over: lot numbers run #1..#K per
-   * listing, and only a restart goes back to the start.
-   *
-   * Deliberately NOT "any lower number": the order-row path backfills newest-first (a real
-   * run queued #65, #64, #63 in that order), so a plain regression test would roll over on
-   * ordinary backfill and reprint the show. Requires a genuine return to the start, from a
-   * listing long enough that a restart is the only sane reading. A false rollover costs one
-   * duplicate label; a missed one costs every label until the next listing. Bias to print.
+   * Has this lot printed, WITHOUT claiming it? Only for the held swap-close timer, which
+   * must re-check just before firing to see whether a confirmed source got there first.
+   * Everything else calls claim().
    */
-  has(lot: string): boolean {
-    const n = Number(lot)
-    // n >= 1 matters: Number('') is 0, which would otherwise pass as a restart and wipe
-    // the scope on any lot-less close.
-    if (Number.isFinite(n) && n >= 1 && n <= RESTART_LOT && this.maxLot !== null && this.maxLot >= RESTART_MIN_MAX) {
-      this.rollover()
-      return false
-    }
-    return this.lots.has(lot)
-  }
-
-  /** Mark a lot as printed. */
-  add(lot: string): void {
-    this.lots.add(lot)
-    const n = Number(lot)
-    if (Number.isFinite(n) && (this.maxLot === null || n > this.maxLot)) this.maxLot = n
-  }
-
-  private rollover(): void {
-    this.lots.clear()
-    this.maxLot = null
+  printedAlready(lot: string, productName?: string): boolean {
+    return this.printed.has(this.keyFor(lot, productName))
   }
 
   /**
    * Fallback for order rows with no lot number: dedupe on the order id, which is globally
-   * unique, so it is NOT scoped to a listing and never cleared. Bounded, since a long show
-   * can produce thousands. Returns true if this order has been seen before.
+   * unique, so it is NOT listing-scoped. Bounded, since a long show produces thousands.
+   * Returns true if this order has been seen before.
    */
   seenOrder(orderId: string): boolean {
     if (this.orderIds.has(orderId)) return true
@@ -97,7 +106,7 @@ export class PrintDedup {
     return false
   }
 
-  /** Current listing id — exposed for diagnostics/tests. */
+  /** Current listing scope — for diagnostics and tests. */
   get listing(): string {
     return this.listingId
   }

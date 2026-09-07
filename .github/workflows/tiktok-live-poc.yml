@@ -1,0 +1,39 @@
+# Typecheck + tests for the TikTok Live Monitor app.
+#
+# Why this exists: v1.3.14 shipped a print-dedup regression that put two labels
+# out for every lot during a live show. `tsc` would not have caught it, and there
+# was no test covering the dedup at all — the release path was esbuild only, with
+# no gate of any kind. This runs the gate that publish-safe.sh now also enforces
+# locally, so a broken commit is caught before it reaches a build.
+name: tiktok-live-poc
+
+on:
+  push:
+    paths:
+      - 'tiktok-live-poc/**'
+      - '.github/workflows/tiktok-live-poc.yml'
+  pull_request:
+    paths:
+      - 'tiktok-live-poc/**'
+      - '.github/workflows/tiktok-live-poc.yml'
+
+defaults:
+  run:
+    working-directory: tiktok-live-poc
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: tiktok-live-poc/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test
+      # Catches a bundle-only break (a bad import, a missing define) that neither
+      # tsc nor vitest sees. Not the installer — electron-builder needs Windows.
+      - run: npm run build

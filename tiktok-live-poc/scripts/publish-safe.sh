@@ -31,6 +31,18 @@ AUTH="Authorization: token $GH_TOKEN"
 fail() { echo "✗ $1" >&2; exit 1; }
 sha512() { openssl dgst -sha512 -binary "$1" | openssl base64 -A; }
 
+# ── 0. quality gate — must run BEFORE anything is built or uploaded ──────────
+# `npm run publish` carries the same gate, but step 2 below swallows its exit
+# code with `|| echo` (electron-builder's upload is EXPECTED to fail here), so a
+# typecheck/test failure would slip through and — if a stale installer for this
+# version is still sitting in release/ — get published. Gate explicitly, and let
+# it kill the script. v1.3.14 shipped a print-dedup regression that `tsc` would
+# not have caught but the test suite now does; this is that lesson wired in.
+if [ "${1:-}" != "--verify" ]; then
+  echo "→ typecheck + tests"
+  npm run verify || fail "typecheck/tests failed — refusing to build or publish"
+fi
+
 # ── 1+2. build + electron-builder publish (unless --verify) ──────────────────
 if [ "${1:-}" != "--verify" ]; then
   rm -rf dist release/win-unpacked
