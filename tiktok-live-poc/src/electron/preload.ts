@@ -294,8 +294,14 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
   // 1.5s (was 3s): the order row is the signal that actually fires live (im decode can
   // go silent; pin only covers pinned lots) and it lands 0.3-3s after the sale — a 3s
   // timer added up to 3s of pure wait on every label for no savings that matter.
-  // Paced, so a verification gate stretches it to 12s instead of pounding a dead endpoint.
-  everyPaced(cycle, () => 1500)
+  // 3s, back up from the 1.5s that halved it for label latency. A challenged session is
+  // worth far more than 1.5s: the puzzle stops auto-printing ENTIRELY until a human solves
+  // it, and it was firing every minute or so at the old rate. roster+auction_result are
+  // ~70% of all requests, so this is the single biggest lever. Order rows still land
+  // 0.3-3s after a sale, and the pin/im close paths are unaffected.
+  const CYCLE_MS = 3000
+  // Paced, so a verification gate stretches it further instead of pounding a dead endpoint.
+  everyPaced(cycle, () => CYCLE_MS)
 
   // ── stats_type discovery sweep — REMOVED 2026-09-07 ────────────────────────
   // It walked stats_type ids 1..120 and 300..400 in chunks of 24 against trend/chart,
@@ -323,8 +329,8 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
   // waiting for can occur. Between lots (no auction card, or one already closed) there is
   // no edge to catch, so poll lazily and step back up the moment a lot goes live. Worst
   // case for detection is unchanged at 700ms; the idle case drops ~4×.
-  const PIN_LIVE_MS = 700 // a lot is bidding — this is the close-detection lag that matters
-  const PIN_IDLE_MS = 3000 // no live lot; nothing to detect until one starts
+  const PIN_LIVE_MS = 1200 // a lot is bidding — this is the close-detection lag that matters
+  const PIN_IDLE_MS = 6000 // no live lot; nothing to detect until one starts
   let pinLotLive = false
   const pinUrl =
     `https://shop.tiktok.com/api/v1/streamer_desktop/pin/get` +

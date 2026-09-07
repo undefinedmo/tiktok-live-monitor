@@ -3,6 +3,7 @@ import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuc
 import { labelHtml, LABEL_SIZES, basePt, parseItemNumber, extractCustom } from '../electron/label' // portable (no electron deps) — renders the real print HTML for the preview
 import { labelNeedsHtml } from '../electron/zplLabel' // preview-only: which print path this label would take
 import { PrintDedup } from '../core/printDedup'
+import { SaleSeed } from '../core/saleSeed'
 
 // Structured AI-transcript fields (was core/ledger's LedgerTranscript; the products
 // panel still stores per-product transcripts in memory for the session).
@@ -114,7 +115,7 @@ function setViewers(n: number | null) {
   $('viewers').textContent = text
   $('chatViewers').textContent = text
 }
-let seedMaxCreatedAt: number | null = null
+const saleSeed = new SaleSeed()
 const rosterProducts = new Map<string, RosterProduct>()
 let lastByProduct: ProductRollup[] = []
 const stats = { sales: '0', gmv: '$0.00', pace: '—', buyers: '0', failed: '0', gpm: '—' }
@@ -1327,25 +1328,18 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       // Dispatch labels before any rendering/DB work so a label never waits on
       // UI. printSale is async (IPC) — it fires immediately and the work happens
       // in main; everything below is rendering that can follow.
-      // Skip the initial backfill (seed on first poll), then act on genuinely-new sales.
-      const maxCreated = ev.recentSales.reduce((m, s) => Math.max(m, s.createdAt), 0)
+      // Which rows are genuinely NEW is decided by core/saleSeed.ts — auction_result/get
+      // returns history, not a feed, so a waterline has to be set at connect time. It is a
+      // core module because getting it wrong reprinted ~20 already-printed labels on every
+      // single app restart, and this file has no tests.
       let recentForRecap: Sale | undefined
-      if (seedMaxCreatedAt === null) {
-        seedMaxCreatedAt = maxCreated
-      } else {
-        // Auto-print every genuinely-new sale (skip the connect-time backlog). Print
-        // regardless of payment — label at the win, even if payment later fails. The roster's
-        // pinned card does NOT advance per lot, so auction_result newSales is the reliable
-        // per-sale signal (verified live: it emits +1 per sale; the pinned stays put).
-        const freshSales = ev.newSales.filter((s) => s.createdAt > seedMaxCreatedAt!)
-        // EVERY source auto-prints; PrintDedup arbitrates. Single-source modes
-        // proved fragile live 2026-07-24: the im auction decode went silent and
-        // pin only covers pinned lots, while order rows landed 0.3-3s after
-        // creation - so redundancy IS the latency strategy, not a fallback.
-        for (const s of freshSales) autoPrintSale(s)
-        recentForRecap = freshSales.find((s) => s.paymentStatus !== 'failed' && Date.now() - s.createdAt < 60000)
-        seedMaxCreatedAt = Math.max(seedMaxCreatedAt, maxCreated)
-      }
+      const freshSales = saleSeed.select(ev)
+      // EVERY source auto-prints; PrintDedup arbitrates. Single-source modes
+      // proved fragile live 2026-07-24: the im auction decode went silent and
+      // pin only covers pinned lots, while order rows landed 0.3-3s after
+      // creation - so redundancy IS the latency strategy, not a fallback.
+      for (const s of freshSales) autoPrintSale(s)
+      recentForRecap = freshSales.find((s) => s.paymentStatus !== 'failed' && Date.now() - s.createdAt < 60000)
 
       // ── THEN UI ──────────────────────────────────────────────────────────
       lastByProduct = ev.byProduct
