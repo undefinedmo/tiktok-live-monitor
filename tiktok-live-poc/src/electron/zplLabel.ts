@@ -13,19 +13,43 @@ const DPI = 203 // Arkscan 2054A (and most direct-thermal label printers) are 20
 const PT_TO_DOTS = DPI / 72 // pt → dots at 203 dpi (matches the HTML path's pt sizes)
 
 /** True if any character can't be rendered by ZPL's built-in font (emoji, CJK, symbols,
- *  anything above Latin-1). Callers fall back to the HTML print path when this is true. */
+ *  anything above Latin-1). */
 export function hasNonZplText(s: string | undefined): boolean {
   if (!s) return false
   for (const ch of s) if (ch.codePointAt(0)! > 0xff) return true
   return false
 }
 
-/** Whether this label must use the HTML path (a printable field has non-ZPL glyphs). */
+/**
+ * Drop the characters ZPL font 0 cannot draw, keeping the rest.
+ *
+ * Emoji are extremely common in TikTok display names — "Mercy💕", "Anabelle🌷",
+ * "Lisa Marie ⭐️" were 4 of 12 consecutive winners in one show. Treating a single emoji as
+ * grounds to abandon ZPL sent a THIRD of all labels down the HTML path: 5x slower (~1030ms
+ * vs ~200ms) and rendered by a completely different engine, so a third of the labels in a
+ * run did not match the other two thirds. Stripping the glyph keeps the name legible, the
+ * label consistent, and the fast path intact — "Mercy💕" prints as "Mercy".
+ */
+export function toZplText(s: string | undefined): string {
+  if (!s) return ''
+  let out = ''
+  for (const ch of s) if (ch.codePointAt(0)! <= 0xff) out += ch
+  return out.replace(/\s+/g, ' ').trim()
+}
+
+/** A field that is non-empty but strips to nothing — the whole value was unrenderable. */
+const strippedAway = (s: string | undefined): boolean => !!s && s.trim().length > 0 && toZplText(s).length === 0
+
+/**
+ * Whether this label must use the HTML path — now only when stripping would erase a
+ * printable field entirely (a name that is nothing BUT emoji, e.g. "💯"). Anything with
+ * some Latin content left keeps the ZPL path with the un-drawable characters removed.
+ */
 export function labelNeedsHtml(data: LabelData, template: LabelTemplate = DEFAULT_TEMPLATE): boolean {
-  if (template.buyer && hasNonZplText(data.buyer)) return true
-  if (template.productName && hasNonZplText(data.productName)) return true
-  if (template.custom.enabled && hasNonZplText(extractCustom(data.title ?? data.productName, template.custom.regex, template.custom.flags))) return true
-  if (template.price && hasNonZplText(data.price)) return true
+  if (template.buyer && strippedAway(data.buyer)) return true
+  if (template.productName && strippedAway(data.productName)) return true
+  if (template.custom.enabled && strippedAway(extractCustom(data.title ?? data.productName, template.custom.regex, template.custom.flags))) return true
+  if (template.price && strippedAway(data.price)) return true
   // item number is digits — never non-ZPL
   return false
 }
@@ -98,7 +122,10 @@ export function labelZpl(data: LabelData, template: LabelTemplate = DEFAULT_TEMP
   let zpl = `^XA\n^CI28\n^LH0,0\n^PW${W}\n^LL${H}\n^MNY\n`
   for (const l of placed) {
     // width param = height param → natural glyph aspect (see NARROW/WIDE above)
-    zpl += `^FO${l.x},${top + l.y}^A0N,${l.h},${l.h}^FD${esc(l.text)}^FS\n`
+    // toZplText here, not at the call sites: every line funnels through this one emit, so
+    // a field added later cannot forget to strip and silently emit glyphs the printer
+    // renders as garbage.
+    zpl += `^FO${l.x},${top + l.y}^A0N,${l.h},${l.h}^FD${esc(toZplText(l.text))}^FS\n`
   }
   return zpl + '^XZ\n'
 }

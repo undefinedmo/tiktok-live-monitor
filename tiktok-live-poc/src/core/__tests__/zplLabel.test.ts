@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { labelZpl, hasNonZplText, labelNeedsHtml } from '../../electron/zplLabel'
+import { labelZpl, hasNonZplText, labelNeedsHtml , toZplText } from '../../electron/zplLabel'
 import { DEFAULT_TEMPLATE, type LabelTemplate } from '../../electron/label'
 
 describe('hasNonZplText', () => {
@@ -20,8 +20,12 @@ describe('labelNeedsHtml (hybrid fallback)', () => {
   it('false for a clean label → uses fast ZPL path', () => {
     expect(labelNeedsHtml({ itemNumber: '165', buyer: 'Headrolock', productName: 'Alo Yoga Sample', price: '$27.00' })).toBe(false)
   })
-  it('true when the buyer name has emoji → falls back to HTML', () => {
-    expect(labelNeedsHtml({ itemNumber: '174', buyer: 'Sammy 🦋', productName: 'Alo Yoga Sample' })).toBe(true)
+  // Was: emoji anywhere → HTML. That sent a third of a live run's labels down the slow,
+  // differently-rendered path because TikTok names are full of emoji. An emoji alongside
+  // readable text is now stripped and the label stays on ZPL; only a field that is nothing
+  // BUT emoji still needs HTML (see the 'emoji in buyer names' block below).
+  it('stays on ZPL when the buyer name has emoji plus readable text', () => {
+    expect(labelNeedsHtml({ itemNumber: '174', buyer: 'Sammy 🦋', productName: 'Alo Yoga Sample' })).toBe(false)
   })
   it('ignores emoji in a field that is turned OFF in the template', () => {
     const noProduct: LabelTemplate = { ...DEFAULT_TEMPLATE, productName: false }
@@ -135,5 +139,40 @@ describe('labelZpl', () => {
     const z = labelZpl(data, big)
     expect(z).toContain('^PW406')
     expect(z).toContain('^LL406') // 2in * 203
+  })
+})
+
+// ── emoji handling ──────────────────────────────────────────────────────────
+// TikTok display names are full of emoji: "Mercy💕", "Anabelle🌷", "Lisa Marie ⭐️" and a
+// bare "💯" were 4 of 12 consecutive winners in one show. Treating any emoji as grounds to
+// abandon ZPL pushed a THIRD of all labels onto the HTML path — 5x slower and rendered by a
+// different engine, so a third of a run's labels did not match the rest.
+describe('emoji in buyer names', () => {
+  it('strips un-drawable glyphs but keeps the name', () => {
+    expect(toZplText('Mercy💕')).toBe('Mercy')
+    expect(toZplText('Anabelle🌷')).toBe('Anabelle')
+    expect(toZplText('Lisa Marie ⭐️')).toBe('Lisa Marie')
+  })
+
+  it('keeps Latin-1 accents, which font 0 can draw', () => {
+    expect(toZplText('José Núñez')).toBe('José Núñez')
+  })
+
+  it('collapses the whitespace a stripped glyph leaves behind', () => {
+    expect(toZplText('Kim 🌸 Lee')).toBe('Kim Lee')
+  })
+
+  it('stays on the ZPL path for a name with emoji', () => {
+    expect(labelNeedsHtml({ itemNumber: '41', buyer: 'Mercy💕' })).toBe(false)
+  })
+
+  it('falls back to HTML only when the field is nothing BUT emoji', () => {
+    expect(labelNeedsHtml({ itemNumber: '44', buyer: '💯' })).toBe(true)
+  })
+
+  it('emits the stripped name in the ZPL body, not the raw one', () => {
+    const zpl = labelZpl({ itemNumber: '41', buyer: 'Mercy💕' })
+    expect(zpl).toContain('Mercy')
+    expect(zpl).not.toContain('💕')
   })
 })
