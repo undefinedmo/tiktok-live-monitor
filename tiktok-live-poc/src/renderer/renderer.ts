@@ -2,6 +2,7 @@ import flvjs from 'flv.js'
 import type { LiveEvent, Sale, BuyerAgg, RosterProduct, ProductRollup, PinnedAuction, ChatMessage } from '../core/types'
 import { labelHtml, LABEL_SIZES, basePt, parseItemNumber, extractCustom } from '../electron/label' // portable (no electron deps) — renders the real print HTML for the preview
 import { labelNeedsHtml } from '../electron/zplLabel' // preview-only: which print path this label would take
+import { PrintDedup } from '../core/printDedup'
 
 // Structured AI-transcript fields (was core/ledger's LedgerTranscript; the products
 // panel still stores per-product transcripts in memory for the session).
@@ -372,12 +373,22 @@ function renderProductsTable() {
 // fresh bid state with stale — which is what left the overlay showing an ended lot.
 let lastPinRenderAt = 0
 const PIN_FRESH_MS = 3000
+// Per-bid paints (webcast stream, every bid, works unpinned) are fresher than the 3s
+// roster snapshot too — a roster paint must not clobber them either.
+let lastBidRenderAt = 0
+const freshestLotRenderAt = () => Math.max(lastPinRenderAt, lastBidRenderAt)
 
 // ── current auction ─────────────────────────────────────────────────────────
 function renderAuction(p?: PinnedAuction) {
-  if (!p || !p.winUsername) {
+  // Blank ONLY when there is genuinely no lot. A live lot with no bids yet has an empty
+  // win_username, and treating that as "no lot" left both panels stuck on "Waiting for
+  // current lot" for the whole bidding window — they only came alive at the gavel, when
+  // onAuctionClosed writes the DOM directly. Show the lot as soon as it exists; the buyer
+  // and bid fields carry the "no bids yet" state on their own.
+  if (!p) {
     pinnedEndMs = undefined
     // keep the overlay visible (it's always over the video); show placeholders until a lot is live
+    $('lotNum').textContent = 'CURRENT LOT'
     $('lotName').textContent = 'Waiting for current lot'
     $('lotBuyer').textContent = '—'
     $('lotBid').textContent = '—'
@@ -393,10 +404,11 @@ function renderAuction(p?: PinnedAuction) {
   // name, and the custom-regex field needs SOME descriptive text to extract a tag from.
   if (p.productName) lastLotName = p.productName
   $('lotOverlay').style.display = 'flex'
+  $('lotNum').textContent = p.variantDesc ?? 'CURRENT LOT'
   $('lotName').textContent = p.productName
   $('lotBid').textContent = p.maxBiddingPrice ?? '—'
   $('lotBids').textContent = String(p.numBids ?? 0)
-  $('lotBuyer').textContent = '@' + p.winUsername
+  $('lotBuyer').textContent = p.winUsername ? '@' + p.winUsername : 'no bids yet'
   document.getElementById('auctionPanelName')!.textContent = p.productName
   document.getElementById('auctionPanelBid')!.textContent = p.maxBiddingPrice ?? '--'
   document.getElementById('auctionPanelBids')!.textContent = String(p.numBids ?? 0)
@@ -663,9 +675,6 @@ void initRecap()
 // ── label printing ──────────────────────────────────────────────────────────
 let selectedPrinter = ''
 let autoPrint = false
-// Auction/item numbers already auto-printed. SHARED across both sources so flipping
-// the switch mid-show (or an observer re-fire) never prints the same win twice.
-const printedKeys = new Set<string>()
 let feedWinsSeen = 0 // "won" feed rows observed this session (lets you confirm the observer catches wins even before flipping to feed mode)
 let lastPrintedNumber: number | null = null
 const printQueue: { label: string; status: 'printing' | 'printed' | 'error' }[] = []
@@ -727,17 +736,16 @@ function printSale(s: Sale) {
 const printKey = (lot: string, winner?: string) =>
   `${(winner ?? '').trim().toLowerCase().replace(/\s+/g, ' ')}|${lot}`
 
-// Print dedup scoped to the current LISTING: exactly one label per lot number, whatever
-// source reports it and whether or not the sources agree on the winner. A snipe leaves the
-// pin's last leader != the auction_result winner (observed live: #252 printed twice — "Liz"
-// via pin swap-close, "Amy891" via the order row — because a winner-keyed guard saw two
-// distinct keys). Lot numbers restart per listing, so the set is cleared when the listing
-// (auctionConfigId) changes; auction-close events carry that id and lead the order rows.
-let printedListingId = ''
-const printedLots = new Set<string>()
-function lotPrinted(lot: string, listingId?: string): boolean {
-  if (listingId && listingId !== printedListingId) { printedListingId = listingId; printedLots.clear(); for (const t of pendingSwap.values()) clearTimeout(t); pendingSwap.clear() }
-  return printedLots.has(lot)
+// Which lots already printed — see core/printDedup.ts for the two rules and the two
+// regressions they encode. Fed the listing id from pin/roster ONLY; a close event's
+// auctionConfigId is per-auction on the im sources and resetting off it deduped nothing.
+const printed = new PrintDedup()
+/** Called from the pin/roster stream — the only sources carrying a real per-listing id. */
+function setPrintListing(listingId?: string): void {
+  if (!printed.setListing(listingId)) return
+  // Held swap-close guesses belong to the listing that just ended; drop them.
+  for (const t of pendingSwap.values()) clearTimeout(t)
+  pendingSwap.clear()
 }
 
 // Prefer the CONFIRMED winner: a pin swap-close only knows the last LEADER, which a snipe
@@ -754,10 +762,10 @@ function cancelPendingSwap(lot: string) { const t = pendingSwap.get(lot); if (t)
 function autoPrintSale(s: Sale) {
   if (!autoPrint || !selectedPrinter) return
   const lot = (s.skuDesc ?? '').replace(/^#/, '')
-  if (!lot) { if (printedKeys.has(s.orderId)) return; printedKeys.add(s.orderId); printSale(s); return }
-  if (lotPrinted(lot)) return
+  if (!lot) { if (printed.seenOrder(s.orderId)) return; printSale(s); return }
+  if (printed.has(lot)) return
   cancelPendingSwap(lot)
-  printedLots.add(lot)
+  printed.add(lot)
   printSale(s)
 }
 
@@ -770,7 +778,7 @@ function onWonFeed(ev: Extract<LiveEvent, { kind: 'won-feed' }>) {
 
 // Fast-close path: an auction closed, reported by pin/get (status 1→3, pinned lots
 // only) or by the im stream (auction.end for EVERY lot; im-result ~6s later with the
-// lot number). De-dup is shared with the other sources via printedKeys, so the slow
+// lot number). De-dup is shared with the other sources via PrintDedup, so the slow
 // path re-reporting the same sale later never double-prints.
 const priceCentsOf = (formatted?: string): number => {
   const m = /([\d,]+(?:\.\d{1,2})?)/.exec(formatted ?? '')
@@ -780,6 +788,7 @@ function onAuctionClosed(ev: Extract<LiveEvent, { kind: 'auction-closed' }>) {
   const lot = (ev.lotNumber ?? '').replace(/^#/, '')
   // Instant UI: paint the close on the lot overlay even when the lot number isn't
   // known yet (unpinned lots) — the sale is real, only its attribution is pending.
+  if (lot) $('lotNum').textContent = '#' + lot
   $('lotBuyer').textContent = '@' + ev.winner
   if (ev.price) $('lotBid').textContent = ev.price
   if (ev.productName) $('lotName').textContent = ev.productName
@@ -812,14 +821,14 @@ function onAuctionClosed(ev: Extract<LiveEvent, { kind: 'auction-closed' }>) {
   // No lot number yet (unattributed im auction.end): don't print a numberless label —
   // the im-result event carries the lot ~6s later and prints it then.
   if (!lot) return
-  if (lotPrinted(lot, ev.auctionConfigId)) return
+  if (printed.has(lot)) return
   // The custom-regex field extracts from `title` (falling back to productName), so the old
   // title of just "#23" could never match a rule like \b(NWT|RETURN)S?\b — the tag
   // extracted correctly in the settings preview and then never appeared on a live label,
   // because THIS is the path that prints during a show. Carry the lot's real product name
   // through, the way the slower auction_result path (printSale) already does.
   const doPrint = () => {
-    printedLots.add(lot)
+    printed.add(lot)
     const name = (ev.productName ?? lastLotName ?? '').trim()
     void printLabel({
       itemNumber: lot,
@@ -833,7 +842,7 @@ function onAuctionClosed(ev: Extract<LiveEvent, { kind: 'auction-closed' }>) {
   if (ev.source === 'pin-swap') {
     // Low-confidence guess (leader while bidding) — hold for a confirmed winner first.
     if (pendingSwap.has(lot)) return
-    pendingSwap.set(lot, setTimeout(() => { pendingSwap.delete(lot); if (!lotPrinted(lot)) doPrint() }, SWAP_PRINT_DELAY_MS))
+    pendingSwap.set(lot, setTimeout(() => { pendingSwap.delete(lot); if (!printed.has(lot)) doPrint() }, SWAP_PRINT_DELAY_MS))
     return
   }
   // Confirmed source (pin status=3 / im / im-result): print now, pre-empt any held guess.
@@ -1232,7 +1241,15 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       renderProductsTable()
       // Only let the 3s roster paint the lot when pin/get has gone quiet — otherwise
       // it clobbers the 700ms source with a snapshot that is up to 3s older.
-      if (Date.now() - lastPinRenderAt > PIN_FRESH_MS) renderAuction(ev.pinned)
+      // AND only when this roster body actually carries data: TikTok answers every poll
+      // with a bare {"code":0} while a verification puzzle is pending (1157 of 1194 roster
+      // responses in one show), which parses to no products and no pinned auction. Passing
+      // that through blanked the live lot back to "Waiting for current lot" every 1.5s.
+      // An empty body is missing evidence, not evidence there is no lot — hold the paint.
+      if (Date.now() - freshestLotRenderAt() > PIN_FRESH_MS && (ev.pinned || ev.products.length)) renderAuction(ev.pinned)
+      // Backstop for the print dedup's listing scope when pin/get is quiet: roster's
+      // pinned auction carries the same per-listing auction_config_id.
+      setPrintListing(ev.pinned?.auctionConfigId)
       stats.sales = String(ev.totalSold)
       renderStats()
       break
@@ -1240,7 +1257,33 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       // pin/get is the lower-latency current-auction source; capture its server-time anchor
       // for an accurate countdown, and refresh the lot's bid state when it carries a winner.
       if (typeof ev.serverTimeOffsetMs === 'number') serverTimeOffsetMs = ev.serverTimeOffsetMs
-      if (ev.current?.winUsername) { renderAuction(ev.current); lastPinRenderAt = Date.now() }
+      // Primary listing-change signal for the print dedup (700ms, and per-LISTING —
+      // unlike a close event's auctionConfigId, which is per-auction on the im sources).
+      setPrintListing(ev.current?.auctionConfigId)
+      // Paint as soon as there IS a lot, not only once it has a leader — that guard is
+      // what kept both panels blank through the entire bidding window. An empty pin body
+      // parses to no `current` at all, so this still holds the last paint rather than
+      // flickering when TikTok answers the poll with a bare {"code":0}.
+      if (ev.current) { renderAuction(ev.current); lastPinRenderAt = Date.now() }
+      break
+    case 'bid':
+      // Per-bid feed from the webcast stream (Manager message, EVERY bid, pinned or not) —
+      // the only real-time source when the host hasn't pinned the card. Painted straight
+      // onto the fast fields; the countdown is left alone (expectedEndMs is pin-only, so
+      // it keeps showing 'ended'/'--' until pin/get sees the lot, which is honest).
+      if (ev.lotNumber) $('lotNum').textContent = '#' + ev.lotNumber.replace(/^#/, '')
+      if (ev.productName) {
+        $('lotName').textContent = ev.productName
+        document.getElementById('auctionPanelName')!.textContent = ev.productName
+        lastLotName = ev.productName
+      }
+      if (ev.price) {
+        $('lotBid').textContent = ev.price
+        document.getElementById('auctionPanelBid')!.textContent = ev.price
+      }
+      $('lotBuyer').textContent = '@' + ev.leader
+      $('lotOverlay').style.display = 'flex'
+      lastBidRenderAt = Date.now() // hold this against the slower roster paint (PIN_FRESH_MS)
       break
     case 'sales': {
       // ── PRINT FIRST ──────────────────────────────────────────────────────
@@ -1258,7 +1301,7 @@ window.ttLive.onEvent((ev: LiveEvent) => {
         // pinned card does NOT advance per lot, so auction_result newSales is the reliable
         // per-sale signal (verified live: it emits +1 per sale; the pinned stays put).
         const freshSales = ev.newSales.filter((s) => s.createdAt > seedMaxCreatedAt!)
-        // EVERY source auto-prints; printedKeys arbitrates. Single-source modes
+        // EVERY source auto-prints; PrintDedup arbitrates. Single-source modes
         // proved fragile live 2026-07-24: the im auction decode went silent and
         // pin only covers pinned lots, while order rows landed 0.3-3s after
         // creation - so redundancy IS the latency strategy, not a fallback.

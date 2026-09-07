@@ -92,6 +92,20 @@ export interface AuctionClosedEvent {
   ts: number
 }
 
+/** Per-bid update from the webcast stream's Manager message — fires on EVERY bid,
+ *  for pinned AND unpinned lots (unlike pin/get, which only covers the pinned card).
+ *  Carries the lot currently being bid (number, product, leader, price) but no order
+ *  time and no countdown anchor (expected_end_time_ms is pin-only). */
+export interface BidUpdateEvent {
+  kind: 'bid'
+  lotNumber?: string // "17" — bare, no '#' prefix (variant_desc carries it)
+  productName?: string
+  leader: string // current high bidder (nickname)
+  username?: string // the leader's @handle
+  price?: string // formatted, e.g. "$27.00"
+  ts: number
+}
+
 /** Show-level counters from WS `live_core_stats`. */
 export interface CoreStatsEvent {
   kind: 'core_stats'
@@ -368,6 +382,7 @@ export type LiveEvent =
   | SaleEvent
   | WonFeedEvent
   | AuctionClosedEvent
+  | BidUpdateEvent
   | WatchdogEvent
   | CoreStatsEvent
   | SessionEvent

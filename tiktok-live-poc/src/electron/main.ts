@@ -283,6 +283,10 @@ function ingestAuctionBytes(raw: Uint8Array, now: number, via: 'im' | 'ws') {
       // without depending on pin/get.
       if (ev.orderCreateMs == null) {
         imCurrent = { lotNumber: ev.lotNumber, productName: ev.productName, leader: ev.winner, ts: now }
+        // The bid update is ALSO the only real-time feed for the current-lot cards when
+        // the host hasn't pinned the card (pin/get answers empty for unpinned lots) —
+        // forward it so the overlay/panel track every bid, not just the gavel.
+        send({ kind: 'bid', lotNumber: ev.lotNumber, productName: ev.productName, leader: ev.winner, username: ev.username, price: ev.price, ts: now })
         continue
       }
       const key = `result|${ev.lotNumber ?? ''}|${ev.winner}|${ev.orderCreateMs}`
@@ -879,7 +883,31 @@ function initAutoUpdate() {
   setTimeout(() => { autoUpdater.checkForUpdates().catch((e) => debug(`[update] ${e}`)) }, 3000)
 }
 
-app.whenReady().then(() => {
+// ── Single instance ─────────────────────────────────────────────────────────
+// A second copy is not a harmless duplicate window: it opens its OWN monitor, polls
+// the same session, and auto-prints every close independently. Print dedup (PrintDedup)
+// is per-process, so neither copy can see the other's labels — every lot prints twice,
+// and the newcomer's first REST sweep reprints the recent order history as a burst.
+// Observed live 2026-09-07: two instances 13s apart put out doubles for ~30 lots, and
+// read as a printer fault because each process's own log looked perfectly clean.
+// Claim the lock BEFORE whenReady so a losing copy exits without creating a run log,
+// a monitor window, or a poll loop.
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  // Someone launched the app again (desktop icon, updater restart). Surface the window
+  // that already exists — doing nothing visible is what makes people click a third time.
+  app.on('second-instance', () => {
+    flog('[app] second instance blocked — focusing the existing window')
+    if (!viewer || viewer.isDestroyed()) return
+    if (viewer.isMinimized()) viewer.restore()
+    viewer.show()
+    viewer.focus()
+  })
+  void app.whenReady().then(startApp)
+}
+
+function startApp() {
   initFlightLog(join(app.getPath('userData'), 'logs'), `TikTok Live Monitor v${app.getVersion()} · started ${new Date().toISOString()}`)
   app.userAgentFallback = CHROME_UA
   Menu.setApplicationMenu(null) // remove the native File/Edit/View/Window/Help menu bar
@@ -896,7 +924,7 @@ app.whenReady().then(() => {
     createMonitor()
   }
   initAutoUpdate()
-})
+}
 app.on('window-all-closed', () => app.quit())
 // On quit, force-close any window so a page-level beforeunload (TikTok registers
 // one) can't veto the exit and strand the process. destroy() skips beforeunload.
