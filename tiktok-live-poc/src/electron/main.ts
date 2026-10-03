@@ -660,8 +660,16 @@ function savePrinterConfig(cfg: PrinterConfig) {
 }
 // Cached so the print hot-path doesn't read the file per label.
 let rawZplEnabled = false
+// TT_DRY_PRINT=1 — run the whole print pipeline (triggers, holds, dedup, queue, logging)
+// with no label leaving the machine. For measuring a show from a second computer, or
+// trying a change without wasting stock. The only printer offered is a stand-in, and the
+// saved printer config is neither read nor written, so a dry run cannot disturb the real
+// setup on a machine that also prints.
+const DRY_PRINT = !!process.env.TT_DRY_PRINT
+const DRY_PRINTER = 'DRY RUN (no printing)'
 
 ipcMain.handle('get-printers', async () => {
+  if (DRY_PRINT) return { printers: [{ name: DRY_PRINTER, displayName: DRY_PRINTER, isDefault: true }], saved: DRY_PRINTER, rawZpl: false }
   const printers = (await viewer?.webContents.getPrintersAsync()) ?? []
   const cfg = loadPrinterConfig()
   return {
@@ -671,6 +679,7 @@ ipcMain.handle('get-printers', async () => {
   }
 })
 ipcMain.handle('save-printer', (_e, name: string) => {
+  if (DRY_PRINT) return true
   savePrinterConfig({ printer: name, rawZpl: rawZplEnabled })
   if (name && rawZplEnabled) warmRawPrinter(name)
   return true
@@ -678,6 +687,7 @@ ipcMain.handle('save-printer', (_e, name: string) => {
 // Opt-in fast printing: raw ZPL straight to the spooler. Only enable for ZPL-capable
 // printers (e.g. Arkscan 2054A) — a non-ZPL printer would print the commands as text.
 ipcMain.handle('set-raw-zpl', (_e, enabled: boolean) => {
+  if (DRY_PRINT) return true
   rawZplEnabled = !!enabled
   const cfg = loadPrinterConfig()
   savePrinterConfig({ printer: cfg.printer, rawZpl: rawZplEnabled })
@@ -847,6 +857,7 @@ function getPrintWindow(): BrowserWindow {
 }
 
 async function printLabelJob(args: { labelData: LabelData; printerName: string; template?: LabelTemplate }): Promise<{ success: boolean; error?: string }> {
+  if (DRY_PRINT) return { success: true } // QUEUED/DONE are still logged by the caller
   try {
     const template = args.template ?? DEFAULT_TEMPLATE
     // Fast path (opt-in): raw ZPL straight to the spooler (~50ms vs ~1s for the HTML
@@ -923,6 +934,7 @@ ipcMain.handle('print-label', (_e, args: { labelData: LabelData; printerName: st
 // is the only way a paused / paper-out / offline printer becomes visible BEFORE the labels
 // it silently swallowed reappear as a burst. ~50ms warm, once per watchdog tick.
 async function probePrinterState(): Promise<void> {
+  if (DRY_PRINT) return
   const cfg = loadPrinterConfig()
   if (!cfg.rawZpl || !cfg.printer) return // HTML path gives us no state to read
   const r = await probeRawPrinter(cfg.printer)
@@ -1054,13 +1066,13 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 function startApp() {
-  initFlightLog(join(app.getPath('userData'), 'logs'), `TikTok Live Monitor v${app.getVersion()} · started ${new Date().toISOString()}`)
+  initFlightLog(join(app.getPath('userData'), 'logs'), `TikTok Live Monitor v${app.getVersion()} · started ${new Date().toISOString()}${DRY_PRINT ? ' · DRY PRINT (no labels)' : ''}`)
   app.userAgentFallback = CHROME_UA
   Menu.setApplicationMenu(null) // remove the native File/Edit/View/Window/Help menu bar
   nativeTheme.themeSource = 'dark' // dark native title bar (min/max/close) to match the body
   // Raw-ZPL fast printing (opt-in): load the setting and warm the helper so the first
   // label isn't paying the ~900ms cold .NET start.
-  const pcfg = loadPrinterConfig()
+  const pcfg = DRY_PRINT ? { printer: '', rawZpl: false } : loadPrinterConfig()
   rawZplEnabled = pcfg.rawZpl
   if (pcfg.rawZpl && pcfg.printer) warmRawPrinter(pcfg.printer)
   createViewer()
