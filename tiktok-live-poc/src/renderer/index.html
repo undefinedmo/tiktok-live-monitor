@@ -2,300 +2,269 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>SellerFolio TikTok — Operations Terminal</title>
+    <title>SellerFolio — Live Monitor</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <style>
+      /* SellerFolio's tokens, copied from the web app's web/src/styles.css :root so this window
+         reads as the same product. Every colour below goes through one of these — the only
+         literals left are the scrim and text that sit ON the live video, which stay dark
+         whatever the theme because the picture behind them is. */
+      :root{
+        --canvas:#f3f3f5; --panel:#fff; --panel-2:#f1f1f3; --panel-3:#e9e9ec; --panel-hover:#f6f6f8;
+        --ink:#000; --ink-2:#303030; --ink-3:#5c5c5c; --ink-4:#8c8c8c;
+        --line:#dcdce0; --line-strong:#b4b4b8;
+        --accent:#0a58f0; --accent-2:#0040b8; --accent-tint:#e8f0ff;
+        --gain:#0a6b34; --gain-bg:#e3f4ea; --loss:#c91f14; --loss-bg:#fce9e7; --flag:#9a4708; --flag-bg:#f9eddf;
+        --onair:#be185d; --onair-bg:#fdf2f7;
+        --ui:'Inter',system-ui,-apple-system,sans-serif; --mono:'JetBrains Mono',ui-monospace,monospace;
+        /* on-video only */
+        --scrim:rgba(12,12,16,.82); --on-video:#fff; --on-video-2:#c9ccd4; --on-video-line:rgba(255,255,255,.18); --on-video-accent:#9dbcff;
+      }
       *{box-sizing:border-box;}
-      body{margin:0;height:100vh;overflow:hidden;background:#07080b;font-family:'Plus Jakarta Sans',system-ui,sans-serif;color:#eef1f7;font-size:14px;display:flex;flex-direction:column;}
-      .mono{font-family:'IBM Plex Mono',monospace;}
-      .grot{font-family:'Space Grotesk',sans-serif;}
+      body{margin:0;height:100vh;overflow:hidden;background:var(--canvas);font-family:var(--ui);color:var(--ink);font-size:13px;line-height:1.45;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;}
+      .mono{font-family:var(--mono);}
+      .grot{font-family:var(--ui);}
+      .num{font-variant-numeric:tabular-nums;}
       .sf-scroll::-webkit-scrollbar{width:8px;height:8px;}
-      .sf-scroll::-webkit-scrollbar-thumb{background:rgba(130,140,160,.28);border-radius:8px;}
+      .sf-scroll::-webkit-scrollbar-thumb{background:var(--line-strong);border-radius:8px;}
       .sf-scroll::-webkit-scrollbar-track{background:transparent;}
       @keyframes sfpulse{0%,100%{opacity:1;}50%{opacity:.35;}}
       @keyframes sfspin{to{transform:rotate(360deg);}}
-      #navSync.syncing{animation:sfspin .8s linear infinite;color:#7da8ff;}
+      #navSync.syncing{animation:sfspin .8s linear infinite;color:var(--accent);}
       button{cursor:pointer;font:inherit;}
-      .topbar{height:56px;flex:none;display:flex;align-items:center;gap:18px;padding:0 18px;border-bottom:1px solid #15181f;background:linear-gradient(180deg,#0c0e13,#08090d);}
-      .brand{display:flex;align-items:center;gap:10px;min-width:0;}
-      .brand img{width:24px;height:24px;display:block;}
-      .brand span{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;background:linear-gradient(110deg,#5cb0ff,#8a78ff 60%,#9b6cf6);-webkit-background-clip:text;background-clip:text;color:transparent;letter-spacing:.2px;white-space:nowrap;}
-      .livepill{display:flex;align-items:center;gap:8px;padding:5px 11px;border:1px solid #25303f;border-radius:7px;background:#0c1119;font-family:'IBM Plex Mono',monospace;font-size:12px;color:#c4ccd9;min-width:0;}
-      .livepill .sep{color:#5c6473;}
-      #dot{width:7px;height:7px;border-radius:50%;background:#5c6473;flex:none;}
-      #sessionName{max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-      .meter{display:flex;align-items:center;gap:9px;}
-      .meter .label{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1px;color:#5c6473;}
-      .meter .track{width:58px;height:5px;border-radius:3px;background:#1b1f28;overflow:hidden;}
-      .meter .fill{height:100%;background:linear-gradient(90deg,#4da3ff,#7c5cff);}
-      .meter .value{font-family:'IBM Plex Mono',monospace;font-size:12px;color:#aab2c0;}
-      .topicon{position:relative;display:flex;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid #20242e;border-radius:7px;color:#8b93a3;font-size:14px;background:transparent;}
-      .terminal-body{flex:1;display:flex;min-height:0;}
-      .rail{width:56px;flex:none;border-right:1px solid #15181f;display:flex;flex-direction:column;align-items:center;padding-top:14px;gap:6px;background:#090a0e;}
-      .rail-logo{position:relative;width:40px;height:40px;border-radius:9px;background:linear-gradient(135deg,#1a2740,#241d44);border:1px solid #33405c;display:flex;align-items:center;justify-content:center;}
-      .rail-logo img{width:24px;height:24px;display:block;}
-      .monitor{flex:1;display:flex;min-width:0;}
-      .video-col{flex:0 1 420px;min-width:300px;max-width:460px;display:flex;flex-direction:column;padding:14px;gap:12px;}
-      .stream-card{flex:1;position:relative;border-radius:10px;border:1px solid #1b1f28;overflow:hidden;background:radial-gradient(120% 90% at 30% 20%,#15202e 0%,#0a0d13 55%,#070809 100%);min-height:0;}
-      .stream-card::before{content:'';position:absolute;inset:0;background-image:repeating-linear-gradient(135deg,rgba(255,255,255,.018) 0 2px,transparent 2px 9px);pointer-events:none;z-index:1;}
-      #live{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:transparent;z-index:0;}
-      .stream-badge{position:absolute;top:14px;left:14px;display:flex;align-items:center;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:1px;color:#9aa4b5;background:rgba(8,10,14,.6);border:1px solid #232a36;padding:5px 9px;border-radius:6px;backdrop-filter:blur(6px);z-index:2;}
-      .stream-rate{position:absolute;top:14px;right:14px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#7e8696;background:rgba(8,10,14,.6);border:1px solid #232a36;padding:5px 9px;border-radius:6px;z-index:2;}
-      .stream-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;z-index:1;pointer-events:none;}
-      .stream-empty .thumb{width:128px;height:88px;border-radius:8px;background:repeating-linear-gradient(45deg,#1a2330 0 8px,#161e29 8px 16px);border:1px solid #2a3340;}
-      .stream-empty .hint{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:1.5px;color:#4a525f;}
-      .lot-card{position:absolute;left:16px;right:16px;bottom:16px;display:flex;align-items:center;flex-wrap:wrap;gap:14px;row-gap:10px;background:rgba(10,12,17,.84);border:1px solid #262c38;border-radius:10px;padding:13px 16px;backdrop-filter:blur(10px);z-index:2;}
-      .lot-thumb{width:56px;height:76px;border-radius:6px;background:repeating-linear-gradient(45deg,#243049 0 6px,#1c2740 6px 12px);border:1px solid #34405c;flex:none;}
-      .bid-cta{flex:none;height:62px;border:none;border-radius:10px;cursor:pointer;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:18px;letter-spacing:1px;color:#fff;background:linear-gradient(110deg,#3fa0ff,#6b56f0 55%,#8a5cf6);box-shadow:0 8px 24px rgba(86,80,240,.4),inset 0 1px 0 rgba(255,255,255,.25);}
-      .chat-col{flex:1 1 360px;min-width:280px;max-width:700px;border-left:1px solid #15181f;border-right:1px solid #15181f;display:flex;flex-direction:column;background:#08090d;}
-      .section-head{height:50px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid #15181f;}
-      .section-title{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:1.5px;color:#8b93a3;}
-      .chat-input{flex:none;padding:12px 14px;border-top:1px solid #15181f;display:flex;align-items:center;gap:8px;}
-      .chat-placeholder{flex:1;height:36px;border:1px solid #20242e;border-radius:8px;background:#0c0e13;display:flex;align-items:center;padding:0 12px;font-size:13px;color:#5c6473;}
-      input.chat-placeholder{outline:none;color:#e6e9ef;}
-      input.chat-placeholder::placeholder{color:#5c6473;}
-      input.chat-placeholder:focus{border-color:#3a4150;}
-      .chat-send{width:36px;height:36px;border:none;border-radius:8px;background:linear-gradient(135deg,#3fa0ff,#8a5cf6);display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;cursor:pointer;}
-      .chat-send:disabled{opacity:.5;cursor:default;}
-      .rightpanel{flex:2 1 480px;min-width:360px;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;background:#070809;}
-      .panel{background:#0f131a;border:1px solid #1d212b;border-radius:9px;overflow:hidden;}
-      .panel.pad{padding:14px;}
-      .panel-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #1a1e27;}
-      .footerbar{height:30px;flex:none;display:flex;align-items:center;gap:18px;padding:0 18px;border-top:1px solid #15181f;background:#090a0e;font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.5px;color:#5c6473;}
-      .desktop-screen{flex:1;min-width:0;padding:14px;gap:12px;overflow:hidden;background:#07080b;}
       .visually-hidden{position:absolute!important;width:1px!important;height:1px!important;overflow:hidden!important;clip:rect(0 0 0 0)!important;white-space:nowrap!important;}
-      .stat{background:#0f131a;border:1px solid #1d212b;border-radius:9px;padding:13px 14px;}
-      .stat .l{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1.5px;color:#707a8c;}
-      .stat .v{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:28px;line-height:1.15;margin-top:4px;}
-      .stat .v.red{color:#ff5c5c;}
-      .stat .s{font-size:11px;color:#8b93a3;margin-top:2px;}
-      .rightpanel > div{flex:0 0 auto;}
-      .bidfeed{max-height:360px;overflow-y:auto;}
-      /* large screens: TikTok live is 9:16 portrait, so cap the video and give the freed
-         width to a larger chat + a wider ops panel (multi-column feed). Smaller screens
-         keep the default proportions. */
-      /* the column flex above already keeps the video small + chat large at every size;
-         on wide screens, flow the feed into multiple columns to use the extra width */
-      @media (min-width:1700px){
-        .bidfeed{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:8px;padding:8px;max-height:600px;}
-        .bidfeed .bidrow{border-bottom:none;border:1px solid #1a1e27;border-radius:9px;}
-      }
+
+      /* ── chrome ─────────────────────────────────────────────────────────────── */
+      .topbar{height:52px;flex:none;display:flex;align-items:center;gap:16px;padding:0 18px;border-bottom:1px solid var(--line);background:var(--panel);}
+      .brand{display:flex;align-items:center;gap:10px;min-width:0;}
+      .brand img{width:22px;height:22px;display:block;}
+      .brand span{font-weight:700;font-size:15px;letter-spacing:-.01em;color:var(--ink);white-space:nowrap;}
+      .livepill{display:flex;align-items:center;gap:8px;height:26px;padding:0 11px;border:1px solid var(--line);border-radius:20px;background:var(--panel-2);font-family:var(--mono);font-size:11px;color:var(--ink-2);}
+      .livepill .sep{color:var(--ink-4);}
+      #dot{width:7px;height:7px;border-radius:50%;background:var(--ink-4);flex:none;}
+      #sessionName{max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+      .topmeters{display:flex;align-items:center;gap:18px;}
+      .topmeter{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-4);}
+      .topmeter b{font-weight:600;letter-spacing:0;font-size:12px;color:var(--ink);margin-left:6px;}
+      .topmeter.onair{padding-left:18px;border-left:1px solid var(--line);}
+      .topmeter.onair b{color:var(--onair);}
+      #watchdogBar{display:none;align-items:center;gap:8px;padding:8px 18px;background:var(--loss-bg);border-bottom:1px solid var(--loss);color:var(--loss);font-size:12.5px;font-weight:600;}
+      .terminal-body{flex:1;display:flex;min-height:0;}
+      .rail{width:56px;flex:none;border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding-top:12px;gap:6px;background:var(--panel);}
+      .navicon{width:38px;height:38px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:var(--ink-4);font-size:16px;cursor:pointer;}
+      .navicon:hover{color:var(--ink-2);background:var(--panel-2);}
+      .navicon.active{color:var(--accent);background:var(--accent-tint);}
+      .navgrid{display:grid;grid-template-columns:1fr 1fr;gap:3px;width:16px;height:16px;}
+      .navgrid i{background:currentColor;border-radius:1.5px;}
+      .monitor{flex:1;display:flex;min-width:0;}
+
+      /* ── live video (stays dark: it is a picture) ───────────────────────────── */
+      .video-col{flex:0 1 420px;min-width:300px;max-width:460px;display:flex;flex-direction:column;padding:16px;gap:12px;}
+      .stream-card{flex:1;position:relative;border-radius:12px;border:1px solid var(--line);overflow:hidden;background:#0b0b0f;min-height:0;}
+      #live{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:transparent;z-index:0;}
+      .stream-badge{position:absolute;top:12px;left:12px;display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.1em;color:var(--on-video);background:var(--scrim);padding:5px 9px;border-radius:20px;z-index:2;}
+      .stream-badge i{width:7px;height:7px;border-radius:50%;background:#ff4d6d;animation:sfpulse 1.4s infinite;}
+      .lot-card{position:absolute;left:12px;right:12px;bottom:12px;display:flex;align-items:center;flex-wrap:wrap;gap:14px;row-gap:10px;background:var(--scrim);border:1px solid var(--on-video-line);border-radius:10px;padding:12px 14px;z-index:2;backdrop-filter:blur(8px);}
+      .lot-thumb{display:none;}
+      .lot-eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--on-video-2);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .lot-eyebrow #lotNum{color:var(--on-video);font-weight:600;}
+      .lot-eyebrow #lotBuyer{color:var(--on-video-accent);text-transform:none;letter-spacing:0;}
+      #lotName{font-weight:600;font-size:16px;color:var(--on-video);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .lot-fig{text-align:right;flex:none;}
+      .lot-fig + .lot-fig{border-left:1px solid var(--on-video-line);padding-left:14px;}
+      .lot-fig .k{font-size:11px;color:var(--on-video-2);}
+      .lot-fig .v{font-family:var(--mono);font-weight:600;font-size:22px;color:var(--on-video);font-variant-numeric:tabular-nums;}
+      .lot-fig .v.ends{color:#ffb38a;}
+
+      /* ── chat ───────────────────────────────────────────────────────────────── */
+      .chat-col{flex:1 1 360px;min-width:280px;max-width:700px;border-left:1px solid var(--line);border-right:1px solid var(--line);display:flex;flex-direction:column;background:var(--panel);}
+      .section-head{height:46px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid var(--line);}
+      .section-title,.eyebrow{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);font-weight:500;}
+      .livecount{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--gain);}
+      .livecount i{width:6px;height:6px;border-radius:50%;background:var(--gain);}
+      #chatList{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:12px;}
+      .placeholder{font-family:var(--mono);font-size:11px;color:var(--ink-4);}
+      #chatList .placeholder{margin:auto;text-align:center;letter-spacing:.06em;}
       .chatrow{font-size:13px;line-height:1.45;}
       .chatname{font-weight:600;}
-      .chattext{color:#cdd4e0;}
-      .recap-entry{padding:11px 14px;border-bottom:1px solid #1a1e27;}
-      .recap-head{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.5px;color:#7da8ff;margin-bottom:5px;}
-      .recap-text{font-size:12.5px;line-height:1.45;color:#cdd4e0;}
-      .recap-text.transcribing{color:#ffc56b;font-style:italic;}
-      .recap-text.error{color:#ff8f8f;}
-      .navicon{width:40px;height:40px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:#5c6473;font-size:16px;cursor:pointer;}
-      .navicon:hover{color:#aab2c0;background:#11151c;}
-      .navicon.active{color:#fff;background:linear-gradient(135deg,#1a2740,#241d44);border:1px solid #33405c;}
-      .ledger-head,.ledger-row{display:grid;grid-template-columns:24px 1.2fr 1.5fr 1.4fr 2fr .9fr .9fr 1.1fr 1fr;align-items:center;padding:9px 14px;border-bottom:1px solid #1a1e27;gap:8px;}
-      .ledger-head{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1px;color:#707a8c;text-transform:uppercase;flex:none;}
-      .ledger-head span{cursor:pointer;user-select:none;}
-      .ledger-head span:hover{color:#aab2c0;}
-      .ledger-head .r,.ledger-row .r{text-align:right;justify-self:end;}
-      .ledger-row{cursor:pointer;font-size:13px;}
-      .ledger-row:hover{background:#0c0f16;}
-      .lc-id{font-family:'IBM Plex Mono',monospace;font-size:12px;color:#dfe4ec;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-      .lc-date{color:#aab2c0;font-size:12px;}
-      .lc-buyer .n{font-weight:600;color:#eef1f7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;} .lc-buyer .h{color:#707a8c;font-size:11px;}
-      .lc-prod{color:#dfe4ec;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;} .lc-prod .v{color:#707a8c;font-size:11px;}
-      .lc-total,.lc-cost,.lc-profit{font-family:'IBM Plex Mono',monospace;}
-      .lc-cost{color:#aab2c0;} .lc-cost.empty{color:#4a525f;}
-      .lc-profit .m{display:block;font-size:10px;color:#707a8c;}
-      .lc-profit.pos{color:#5fe3bb;} .lc-profit.neg{color:#ff8f8f;} .lc-profit.nul{color:#5c6473;}
-      .lc-cost-input{width:62px;background:#0c0e13;color:#eef1f7;border:1px solid #4a5b86;border-radius:5px;padding:2px 5px;font:inherit;text-align:right;}
-      .statuspill{font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.5px;padding:3px 8px;border-radius:5px;background:#161b24;color:#aab2c0;border:1px solid #262c38;justify-self:start;}
-      .statuspill.bad{background:rgba(255,92,92,.16);color:#ff8f8f;border-color:rgba(255,92,92,.34);}
-      .statuspill .ai{color:#b9adff;margin-left:6px;}
-      .statuspill .urg{margin-left:6px;font-size:9px;padding:1px 6px;border-radius:4px;letter-spacing:.4px;}
-      .statuspill .urg.overdue,.statuspill .urg.cancel{background:rgba(255,92,92,.18);color:#ff8f8f;border:1px solid rgba(255,92,92,.36);}
-      .statuspill .urg.soon{background:rgba(245,181,74,.16);color:#f5c172;border:1px solid rgba(245,181,74,.34);}
-      .statuspill .lc-exc{margin-left:6px;color:#f5c172;cursor:help;}
-      .flag-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
-      .flag-chip{font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.4px;padding:2px 8px;border-radius:5px;background:#161b24;color:#aab2c0;border:1px solid #262c38;}
-      .flag-chip.fail,.flag-chip.risk{background:rgba(255,92,92,.14);color:#ff8f8f;border-color:rgba(255,92,92,.3);}
-      .flag-chip.warn{background:rgba(245,181,74,.14);color:#f5c172;border-color:rgba(245,181,74,.3);}
-      .flag-chip.note{background:rgba(124,131,255,.14);color:#b9adff;border-color:rgba(124,131,255,.3);}
-      .flag-chip.ok{background:rgba(74,200,140,.13);color:#7fd6a6;border-color:rgba(74,200,140,.3);}
-      .ledger-detail{padding:14px 16px;background:#0a0d13;border-bottom:1px solid #1a1e27;display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:18px;}
-      .ledger-detail h5{margin:0 0 8px;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1px;color:#707a8c;font-weight:500;}
-      .ledger-detail .kv{font-size:12px;color:#cdd4e0;line-height:1.7;} .ledger-detail .kv b{color:#8b93a3;font-weight:500;}
-      .ledger-detail .txbox{background:#0f131a;border:1px solid #1d212b;border-radius:7px;padding:10px;font-size:12px;color:#cdd4e0;line-height:1.5;margin-top:6px;}
-      .ledger-detail .detail-full{grid-column:1/-1;}
-      .ledger-detail .detail-strip{display:flex;align-items:center;gap:12px;padding-top:8px;border-top:1px solid #1d212b;}
-      .detail-livetag{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.5px;padding:3px 9px;border-radius:5px;background:rgba(255,92,92,.12);color:#ff8f8f;border:1px solid rgba(255,92,92,.3);}
-      .detail-link{font-family:'IBM Plex Mono',monospace;font-size:11px;color:#7da8ff;text-decoration:none;}
-      .detail-link:hover{text-decoration:underline;}
-      .ledger-detail .aival{border-bottom:1px dashed #2a3140;cursor:text;}
-      .ledger-detail .aival.empty{color:#4a525f;}
-      .ledger-detail .txbox.aival{border-bottom:1px solid #1d212b;}
-      .ai-edit{width:100%;max-width:300px;background:#0c0e13;color:#eef1f7;border:1px solid #4a5b86;border-radius:5px;padding:3px 6px;font:inherit;font-size:12px;}
-      textarea.ai-edit{max-width:none;resize:vertical;line-height:1.5;}
-      .videocol{flex:1.6;min-width:0;display:flex;flex-direction:column;padding:14px;}
-      /* dynamic bid-feed rows */
-      .bidrow{position:relative;display:flex;align-items:center;gap:12px;padding:13px 14px;border-bottom:1px solid #1a1e27;}
-      .bidrow.fresh{background:linear-gradient(90deg,rgba(86,80,240,.16),rgba(86,80,240,.03));}
-      .bidrow.fresh::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(180deg,#4da3ff,#8a5cf6);}
-      .bidrow.failed{background:rgba(255,92,92,.06);}
-      .bidav{width:34px;height:34px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-size:13px;color:#cdd4e0;background:#1a1f2a;border:1px solid #2a3140;object-fit:cover;}
-      .bidrow.fresh .bidav{background:linear-gradient(135deg,#2a3a5c,#3a2f5e);border-color:#4a5b86;}
+      .chattext{color:var(--ink-2);}
+      .chat-input{flex:none;padding:12px 14px;border-top:1px solid var(--line);display:flex;align-items:center;gap:8px;}
+      input.chat-placeholder{flex:1;height:36px;border:1px solid var(--line);border-radius:9px;background:var(--panel);padding:0 12px;font:inherit;font-size:13px;color:var(--ink);outline:none;transition:border-color .15s,box-shadow .15s;}
+      input.chat-placeholder::placeholder{color:var(--ink-4);}
+      input.chat-placeholder:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-tint);}
+      .chat-send{width:36px;height:36px;border:none;border-radius:9px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;}
+      .chat-send:hover{background:var(--accent-2);}
+      .chat-send:disabled{opacity:.5;cursor:default;}
+
+      /* ── right column: cards ────────────────────────────────────────────────── */
+      .rightpanel{flex:2 1 480px;min-width:360px;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px;background:var(--canvas);}
+      .rightpanel > div{flex:0 0 auto;}
+      .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;}
+      .panel.pad{padding:14px 16px;}
+      .panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 16px;border-bottom:1px solid var(--line);}
+      .panel-head .eyebrow.bad{color:var(--loss);}
+      .panel-head .meta{font-family:var(--mono);font-size:11px;color:var(--ink-4);display:flex;align-items:center;gap:8px;}
+      #updateReady{font-size:10.5px;color:var(--gain);}
+      #statsGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
+      .stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px 16px;}
+      .stat .l{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);}
+      .stat .v{font-weight:700;font-size:26px;line-height:1.15;letter-spacing:-.02em;margin-top:4px;font-variant-numeric:tabular-nums;}
+      .stat .v.red{color:var(--loss);}
+      .stat .s{font-size:11px;color:var(--ink-3);margin-top:2px;}
+      .chip{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border:0;border-radius:5px;font-family:var(--ui);font-size:11px;font-weight:600;white-space:nowrap;background:var(--panel-2);color:var(--ink-2);}
+      .chip.amber{background:var(--accent-tint);color:var(--accent-2);}
+      .chip.bad{background:var(--loss-bg);color:var(--loss);}
+      button.chip{cursor:pointer;}
+      button.chip:hover{filter:brightness(.97);}
+      button.chip:disabled{opacity:.5;cursor:default;}
+
+      /* bid feed */
+      .bidfeed{max-height:360px;overflow-y:auto;}
+      /* wide screens: flow the feed into columns to use the extra width */
+      @media (min-width:1700px){
+        .bidfeed{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:8px;padding:8px;max-height:600px;}
+        .bidfeed .bidrow{border-bottom:none;border:1px solid var(--line);border-radius:9px;}
+      }
+      .bidrow{position:relative;display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--line);}
+      .bidrow:last-child{border-bottom:0;}
+      .bidrow.fresh{background:var(--accent-tint);}
+      .bidrow.fresh::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent);}
+      .bidrow.failed{background:var(--loss-bg);}
+      .bidav{width:32px;height:32px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--ink-3);background:var(--panel-2);border:1px solid var(--line);object-fit:cover;}
       .bidwho{flex:1;min-width:0;}
-      .bidname{font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-      .bidsub{font-family:'IBM Plex Mono',monospace;font-size:11px;color:#707a8c;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-      .tag{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.5px;padding:2px 7px;border-radius:4px;margin-right:6px;}
-      .tag.whale{background:rgba(138,120,255,.22);color:#b9adff;border:1px solid rgba(138,120,255,.4);}
-      .tag.failed{background:rgba(255,92,92,.16);color:#ff8f8f;border:1px solid rgba(255,92,92,.34);}
-      .tag.pending{background:rgba(255,178,62,.14);color:#ffc56b;border:1px solid rgba(255,178,62,.32);}
+      .bidname{font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .bidsub{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .tag{display:inline-block;font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:2px 8px;border-radius:20px;border:1px solid;margin-right:6px;}
+      .tag.whale{color:var(--accent-2);background:var(--accent-tint);border-color:var(--accent);}
+      .tag.failed{color:var(--loss);background:var(--loss-bg);border-color:var(--loss);}
+      .tag.pending{color:var(--flag);background:var(--flag-bg);border-color:var(--flag);}
       .bidright{text-align:right;}
-      .bidprice{font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:17px;color:#fff;}
-      .bidprice.failed{color:#ff5c5c;text-decoration:line-through;}
-      .bidtime{font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8a78ff;margin-top:2px;}
-      .printmini{margin-left:10px;flex:none;height:28px;padding:0 10px;border-radius:6px;border:1px solid #2a3140;background:#161b24;color:#7da8ff;font-family:'IBM Plex Mono',monospace;font-size:11px;}
-      /* print queue rows */
-      .qrow{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid #1a1e27;}
-      .qbtn{height:28px;padding:0 12px;border-radius:6px;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;}
-      .qbtn.print{border:none;background:linear-gradient(135deg,#3fa0ff,#7c5cff);color:#fff;}
-      .qbtn.void{border:1px solid #2a3140;background:#161b24;color:#aab2c0;}
-      .qbtn.on{background:rgba(138,120,255,.16);color:#b9adff;border-color:#4a5b86;}
-      .seg{display:inline-flex;border:1px solid #2a3140;border-radius:6px;overflow:hidden;height:30px;}
-      .seg .qbtn{border:none;border-radius:0;border-right:1px solid #2a3140;background:#0f131b;height:100%;}
-      .seg .qbtn:last-child{border-right:none;}
-      .ledger-head input[type=checkbox],.ledger-row input[type=checkbox]{accent-color:#7c5cff;cursor:pointer;width:14px;height:14px;}
-      .lc-check{display:flex;align-items:center;justify-content:center;}
-      .ledger-row.sel{background:rgba(124,92,255,.08);}
-      .ledger-row.transcribing{background:rgba(124,92,255,.10);box-shadow:inset 3px 0 0 #7c5cff;}
-      .ledger-row.transcribing .lc-check::after{content:'◴';position:absolute;color:#b9adff;font-size:12px;animation:sfspin .8s linear infinite;}
-      .ledger-row.transcribing .lc-check input{visibility:hidden;}
-      .lc-cost.tmpl{color:#7da8ff;}
-      .lc-cost.tmpl::before{content:'⤳ ';opacity:.7;}
-      .pick-card{background:#0f131a;border:1px solid #1d212b;border-radius:10px;overflow:hidden;flex:none;}
-      .pick-card.complete{border-color:#1f4d3e;}
-      .pick-head{display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid #1a1e27;background:#0c0f16;}
-      .pick-head .pl{font-size:14px;color:#eef1f7;font-weight:600;}
-      .pick-head .ps{font-size:11px;color:#5c6473;letter-spacing:.5px;}
-      .pick-head .pct{margin-left:auto;font-size:11px;color:#36d9a4;}
-      .pick-item{display:grid;grid-template-columns:22px 1fr auto;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid #14171f;}
-      .pick-item:last-child{border-bottom:none;}
-      .pick-item.done{opacity:.5;}
-      .pick-item.done .pi-name{text-decoration:line-through;}
-      .pick-item input[type=checkbox]{accent-color:#36d9a4;width:15px;height:15px;cursor:pointer;}
-      .pi-name{color:#dfe4ec;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-      .pi-sku{color:#7da8ff;}
-      .pi-price{color:#cdd4e0;justify-self:end;}
-      /* products rows */
-      .prow{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid #1a1e27;font-family:'IBM Plex Mono',monospace;font-size:12px;}
-      .prow .pn{flex:1;min-width:0;font-family:'Plus Jakarta Sans',sans-serif;color:#dfe4ec;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-      .prow .pc{width:42px;text-align:right;color:#aab2c0;}
-      .prow .ptx{width:18px;flex:none;text-align:center;cursor:pointer;color:#3a4150;}
-      .prow .ptx.has{color:#8a78ff;}
-      .prow .ptx.busy{color:#ffc56b;cursor:default;}
-      .prow .ptx:hover{color:#b9adff;}
-      .chip{font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.5px;padding:3px 8px;border-radius:5px;background:rgba(54,217,164,.14);color:#5fe3bb;border:1px solid rgba(54,217,164,.32);}
-      .chip.amber{background:rgba(255,178,62,.14);color:#ffc56b;border-color:rgba(255,178,62,.32);}
-      .modal{position:fixed;inset:0;background:rgba(4,5,8,.66);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;z-index:100;}
+      .bidprice{font-family:var(--mono);font-weight:600;font-size:15px;color:var(--ink);font-variant-numeric:tabular-nums;}
+      .bidprice.failed{color:var(--loss);text-decoration:line-through;}
+      .bidtime{font-family:var(--mono);font-size:10px;color:var(--ink-4);margin-top:2px;}
+      .printmini{margin-left:10px;flex:none;height:28px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink-2);font-size:12px;}
+      .printmini:hover{background:var(--panel-hover);border-color:var(--line-strong);}
+
+      /* top buyers (rows are built in renderer.ts) */
+      #topBuyersList{margin-top:10px;display:flex;flex-direction:column;gap:7px;}
+      #failedList{max-height:230px;overflow-y:auto;}
+
+      /* current auction */
+      .auction-name{font-weight:700;font-size:18px;letter-spacing:-.01em;margin-top:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .auction-figs{display:flex;justify-content:space-between;align-items:flex-end;margin-top:12px;}
+      .auction-figs .k{font-size:11px;color:var(--ink-3);}
+      .auction-figs .v{font-family:var(--mono);font-weight:600;font-size:26px;margin-top:2px;font-variant-numeric:tabular-nums;}
+      .auction-figs .v.bid{color:var(--accent);}
+      .auction-figs .v.ends{color:var(--flag);}
+      .auction-bar{height:6px;border-radius:4px;background:var(--panel-3);overflow:hidden;margin-top:14px;}
+      .auction-bar i{display:block;height:100%;width:64%;background:var(--accent);transition:width 1s linear;}
+
+      /* print queue */
+      .qrow{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--line);}
+      .qrow:last-child{border-bottom:0;}
+      .qbtn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink-2);font-size:12.5px;font-weight:600;}
+      .qbtn:hover{background:var(--panel-hover);border-color:var(--line-strong);}
+      .qbtn.print{border-color:var(--accent);background:var(--accent);color:#fff;}
+      .qbtn.on{background:var(--accent-tint);color:var(--accent-2);border-color:var(--accent);}
+      .seg{display:inline-flex;background:var(--panel-2);border:1px solid var(--line);border-radius:9px;padding:3px;gap:2px;}
+      .seg .qbtn{border:0;height:26px;background:transparent;}
+
+      /* capture strip */
+      .capture{display:flex;align-items:center;gap:16px;}
+      .capture .sig{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--ink-3);}
+      .capture .sig i{width:6px;height:6px;border-radius:50%;background:var(--gain);}
+      .capture .sig.alt i{background:var(--accent);}
+      .capture .bars{display:flex;align-items:flex-end;gap:2px;height:20px;margin-left:auto;}
+      .capture .bars i{width:3px;border-radius:1px;background:var(--line-strong);}
+      .capture .bars i.hi{background:var(--accent);}
+
+      /* products + recap (hidden in the current build, styled so they stay legible if shown) */
+      .prow{display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:12px;}
+      .prow .pn{flex:1;min-width:0;font-family:var(--ui);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .prow .pc{width:42px;text-align:right;color:var(--ink-3);}
+      .prow .ptx{width:18px;flex:none;text-align:center;cursor:pointer;color:var(--line-strong);}
+      .prow .ptx.has,.prow .ptx:hover{color:var(--accent);}
+      .prow .ptx.busy{color:var(--flag);cursor:default;}
+      .recap-entry{padding:11px 16px;border-bottom:1px solid var(--line);}
+      .recap-head{font-family:var(--mono);font-size:10px;color:var(--accent-2);margin-bottom:5px;}
+      .recap-text{font-size:12.5px;line-height:1.45;color:var(--ink-2);}
+      .recap-text.transcribing{color:var(--flag);font-style:italic;}
+      .recap-text.error{color:var(--loss);}
+
+      /* ── settings screen ────────────────────────────────────────────────────── */
+      #settingsScreen{flex:1;display:none;flex-direction:column;min-width:0;padding:24px 28px;gap:14px;overflow:hidden;}
+      .screen-title{font-weight:700;font-size:20px;letter-spacing:-.02em;flex:none;}
+      .modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:100;}
       .modal.hidden{display:none;}
-      .modal-box{background:#0f131a;border:1px solid #2a3142;border-radius:12px;padding:20px 22px;width:460px;max-width:92%;}
-      .modal-box h3{margin:0 0 16px;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;}
-      .modal-box label{display:block;margin:8px 0;color:#dfe4ec;}
+      .modal-box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;width:460px;max-width:92%;}
+      .set-card{max-width:620px;width:auto;margin:0 0 12px;}
+      .modal-box h3{margin:0 0 14px;font-weight:700;font-size:15px;}
+      .modal-box label{display:block;margin:8px 0;color:var(--ink);font-weight:500;}
+      .modal-box label.check{display:flex;gap:8px;align-items:center;margin-top:10px;font-weight:400;}
+      .modal-box input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;}
       .modal-box .fields{margin:12px 0;display:flex;flex-direction:column;gap:2px;}
-      .modal-box .fields label{display:flex;gap:8px;align-items:center;margin:0;}
+      .modal-box .fields label{display:flex;gap:8px;align-items:center;margin:0;font-weight:400;}
       .field-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:3px 0;}
       .sizestep{display:flex;align-items:center;gap:6px;flex:none;}
-      .sizestep button{width:22px;height:22px;border-radius:5px;border:1px solid #2a3140;background:#161b24;color:#cdd4e0;cursor:pointer;font-size:14px;line-height:1;padding:0;display:flex;align-items:center;justify-content:center;}
-      .sizestep button:hover{background:#1d232e;border-color:#3a4150;}
-      .sizestep b{font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8b93a3;min-width:38px;text-align:center;}
-      .modal-box select,.modal-box input[type=text]{background:#0c0e13;color:#eef1f7;border:1px solid #20242e;border-radius:7px;padding:6px 9px;font:inherit;}
-      .modal-box .custom-row{display:flex;gap:8px;margin:8px 0;}
-      .modal-box .custom-row #setRegex{flex:1;font-family:'IBM Plex Mono',monospace;}
-      .modal-box .custom-row #setFlags{width:72px;font-family:'IBM Plex Mono',monospace;}
-      .modal-box .preview{background:#0c0e13;border:1px solid #1d212b;border-radius:7px;padding:10px 12px;font-family:'IBM Plex Mono',monospace;font-size:12px;color:#8b93a3;margin:12px 0 4px;}
-      .modal-box .preview b{color:#5fe3bb;}
+      .sizestep button{width:24px;height:24px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink-2);font-size:14px;line-height:1;padding:0;display:flex;align-items:center;justify-content:center;}
+      .sizestep button:hover{background:var(--panel-hover);border-color:var(--line-strong);}
+      .sizestep b{font-family:var(--mono);font-size:10px;font-weight:500;color:var(--ink-3);min-width:38px;text-align:center;}
+      .modal-box select,.modal-box input[type=text],.ai-edit{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:7px 10px;font:inherit;outline:none;transition:border-color .15s,box-shadow .15s;}
+      .modal-box select:focus,.modal-box input[type=text]:focus,.ai-edit:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-tint);}
+      .modal-box label > select{margin-left:8px;}
+      .modal-box .custom-row{display:flex;gap:8px;margin:8px 0;align-items:center;}
+      .modal-box .custom-row #setRegex{flex:1;font-family:var(--mono);}
+      .modal-box .custom-row #setFlags{width:72px;font-family:var(--mono);}
+      .ai-edit{width:100%;max-width:300px;font-size:12px;padding:5px 8px;}
+      .modal-box .preview{background:var(--panel-2);border-radius:8px;padding:9px 12px;font-size:12px;color:var(--ink-3);margin:10px 0 4px;}
+      .modal-box .preview b{color:var(--gain);font-family:var(--mono);}
+      .set-note h4{margin:0 0 5px;font-size:13px;font-weight:600;}
+      .set-note h4 span{font-weight:400;color:var(--ink-3);}
+      .set-note p{margin:0;color:var(--ink-3);font-size:12px;}
+      .ok-text{color:var(--gain);}
+      .muted{color:var(--ink-4);}
       .modal-actions{text-align:right;margin-top:16px;}
-      .modal-actions button{background:linear-gradient(110deg,#3fa0ff,#6b56f0 55%,#8a5cf6);color:#fff;border:none;border-radius:7px;padding:7px 18px;font-weight:600;}
-      .ledger-row.cancelled{opacity:.5;}
-      .ledger-row.cancelled .lc-buyer .n, .ledger-row.cancelled .lc-prod, .ledger-row.cancelled .lc-total{text-decoration:line-through;}
-      .health-pill{display:inline-flex;align-items:center;gap:6px;background:#0c0f16;border:1px solid #20242e;border-radius:999px;padding:4px 10px;color:#aab2c0;font-size:11px;cursor:pointer;}
-      .health-pill:hover{border-color:#3a4150;}
-      .health-pill.on{border-color:#8a78ff;color:#cfc6ff;background:#171528;}
-      .health-pill .hp-count{font-weight:700;color:#eef1f7;}
-      .health-pill.on .hp-count{color:#cfc6ff;}
-      #ledgerChips .chips-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#5c6473;}
-      .filter-chip{display:inline-flex;align-items:center;gap:6px;background:#171528;border:1px solid #2a2745;border-radius:999px;padding:3px 6px 3px 10px;color:#cfc6ff;font-size:11px;}
-      .filter-chip .chip-x{background:none;border:none;color:#9b8fd6;cursor:pointer;font-size:14px;line-height:1;padding:0 2px;}
-      .filter-chip .chip-x:hover{color:#fff;}
-      .ctxmenu{position:fixed;z-index:9999;min-width:200px;background:#12151c;border:1px solid #2a3142;border-radius:9px;padding:5px;box-shadow:0 10px 30px rgba(0,0,0,.5);}
-      .ctxmenu .item{padding:7px 10px;border-radius:6px;font-size:12px;color:#cdd4e0;cursor:pointer;white-space:nowrap;}
-      .ctxmenu .item:hover{background:#1c2230;}
-      .ctxmenu .item.disabled{color:#4a5160;cursor:default;}
-      .ctxmenu .sep{height:1px;background:#222838;margin:5px 4px;}
-      .ledger-row.dup{background:#2a230b;border-left:3px solid #d9a341;}
-      #ledgerJump{position:absolute;top:38px;left:0;width:380px;max-width:90vw;z-index:9998;background:#12151c;border:1px solid #2a3142;border-radius:8px;padding:4px;box-shadow:0 10px 30px rgba(0,0,0,.5);}
-      #ledgerJump .jump-item{padding:6px 9px;border-radius:6px;font-size:12px;color:#cdd4e0;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-      #ledgerJump .jump-item:hover{background:#1c2230;}
-      #ledgerJump .ji-buyer{font-weight:600;color:#eef1f7;} #ledgerJump .ji-prod{color:#9aa3b2;} #ledgerJump .ji-id{color:#5c6473;}
-      @keyframes lrFlash{0%{background:rgba(217,163,65,.35);}100%{background:transparent;}}
-      .ledger-row.flash{animation:lrFlash 1.8s ease-out;}
-      .lc-cost{position:relative;}
-      .cost-suggest{position:absolute;top:100%;right:0;z-index:9997;min-width:150px;background:#12151c;border:1px solid #2a3142;border-radius:8px;padding:4px;box-shadow:0 10px 30px rgba(0,0,0,.5);}
-      .cost-suggest .cs-item{display:flex;justify-content:space-between;gap:12px;padding:5px 9px;border-radius:6px;font-size:12px;cursor:pointer;}
-      .cost-suggest .cs-item:hover{background:#1c2230;}
-      .cost-suggest .cs-val{color:#eef1f7;font-variant-numeric:tabular-nums;}
-      .cost-suggest .cs-meta{color:#6b7488;}
-      .show-modal { position:fixed; inset:0; background:rgba(0,0,0,.66); backdrop-filter:blur(2px); display:flex; align-items:center; justify-content:center; z-index:1000; }
-      .show-modal-card { width:560px; max-width:92vw; max-height:80vh; overflow:hidden; display:flex; flex-direction:column; background:#1a1e27; border:1px solid #3a4150; border-radius:10px; box-shadow:0 16px 48px rgba(0,0,0,.6); }
-      .show-modal-top { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; border-bottom:1px solid #2f3440; background:#222734; font-weight:600; }
-      .show-modal-x { background:none; border:none; color:#7b8090; cursor:pointer; font-size:14px; }
-      .show-modal-full { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:#161a22; border-bottom:1px solid #2a2d36; cursor:pointer; }
-      .show-modal-full:hover { background:#1b2030; }
-      .sm-lbl { font-weight:600; } .sm-sub { color:#7b8090; font-size:11px; } .sm-go { color:#6ea8ff; font-size:11px; }
-      .show-modal-list { overflow:auto; }
-      .sm-row { padding:9px 14px; border-bottom:1px solid #20232b; display:flex; align-items:center; gap:10px; cursor:pointer; }
-      .sm-row:hover { background:#161a22; }
-      .sm-nm { font-weight:600; } .sm-meta { color:#8a90a0; font-size:11px; }
-      .sm-right { margin-left:auto; text-align:right; white-space:nowrap; }
-      .sm-synced { color:#4ec98a; font-size:11px; } .sm-empty { padding:20px 14px; color:#8a90a0; }
-      /* ── Label Picklist screen (#picklist) ─────────────────────────────────── */
-      .picklist-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:none;padding-bottom:10px;border-bottom:1px solid #1a1e27;}
-      .picklist-toolbar select{background:#0c0e13;color:#aab2c0;border:1px solid #20242e;border-radius:7px;padding:6px 9px;font:inherit;font-size:12px;}
-      .picklist-toolbar button{height:30px;padding:0 12px;border-radius:6px;border:1px solid #2a3140;background:#161b24;color:#aab2c0;font-family:'IBM Plex Mono',monospace;font-size:11px;cursor:pointer;}
-      .picklist-toolbar button:hover{border-color:#3a4150;color:#eef1f7;}
-      #picklist .warnings{background:rgba(245,181,74,.10);border:1px solid rgba(245,181,74,.28);border-radius:7px;padding:8px 12px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#f5c172;flex:none;}
-      #picklist .warnings div+div{margin-top:4px;}
-      #picklist table.picklist{width:100%;border-collapse:collapse;font-size:13px;}
-      #picklist table.picklist thead tr{background:#0c0f16;}
-      #picklist table.picklist th{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1px;color:#707a8c;text-transform:uppercase;padding:9px 12px;border-bottom:1px solid #1a1e27;text-align:left;font-weight:500;}
-      #picklist table.picklist td{padding:8px 12px;border-bottom:1px solid #14171f;color:#dfe4ec;vertical-align:middle;}
-      #picklist table.picklist tr.multi td{background:rgba(138,120,255,.06);}
-      #picklist table.picklist tbody tr:hover td{background:#0c0f16;}
-      #picklist table.picklist button{height:26px;padding:0 10px;border-radius:5px;border:1px solid #2a3140;background:#161b24;color:#7da8ff;font-family:'IBM Plex Mono',monospace;font-size:11px;cursor:pointer;}
-      #picklist table.picklist input[type=checkbox]{accent-color:#36d9a4;width:15px;height:15px;cursor:pointer;}
-      #picklist p.empty{color:#4a525f;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:18px 0;}
+      .modal-actions button{background:var(--accent);color:#fff;border:none;border-radius:8px;height:32px;padding:0 16px;font-weight:600;}
+      #labelPreviewWrap{background:#fff;border:1px solid var(--line);border-radius:6px;box-shadow:0 1px 6px rgba(0,0,0,.08);overflow:hidden;}
+      #labelPreview{border:0;display:block;background:#fff;}
+
+      /* ── show picker modal ──────────────────────────────────────────────────── */
+      .show-modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:1000;}
+      .show-modal-card{width:560px;max-width:92vw;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.18);}
+      .show-modal-top{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line);font-weight:600;}
+      .show-modal-x{background:none;border:none;color:var(--ink-4);font-size:14px;}
+      .show-modal-full{display:flex;align-items:center;justify-content:space-between;padding:11px 16px;background:var(--panel-2);border-bottom:1px solid var(--line);cursor:pointer;}
+      .show-modal-full:hover{background:var(--panel-3);}
+      .sm-lbl{font-weight:600;} .sm-sub{color:var(--ink-3);font-size:11px;} .sm-go{color:var(--accent);font-size:11px;font-weight:600;}
+      .show-modal-list{overflow:auto;}
+      .sm-row{padding:10px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;cursor:pointer;}
+      .sm-row:hover{background:var(--panel-hover);}
+      .sm-nm{font-weight:600;} .sm-meta{color:var(--ink-3);font-size:11px;}
+      .sm-right{margin-left:auto;text-align:right;white-space:nowrap;}
+      .sm-synced{color:var(--gain);font-size:11px;} .sm-empty{padding:20px 16px;color:var(--ink-3);}
     </style>
   </head>
   <body>
     <div class="topbar">
-      <div class="brand"><img src="./sf-logo.png" alt="SellerFolio" /><span>SellerFolio TikTok</span></div>
+      <div class="brand"><img src="./sf-logo.png" alt="SellerFolio" /><span>SellerFolio Live</span></div>
       <div class="livepill" id="livePill"><span id="status">connecting…</span><span class="sep">&middot;</span><span id="sessionName">—</span></div>
       <div style="flex:1;"></div>
-      <div id="liveMeters" style="display:flex;align-items:center;gap:18px;">
-        <div class="mono" style="font-size:12px;color:#7e8696;">ROOM&nbsp;<span id="room" style="color:#c4ccd9;">—</span></div>
-        <div class="mono" style="font-size:12px;color:#7e8696;">VIEWERS&nbsp;<span id="viewers" style="color:#fff;">—</span></div>
-        <div class="mono" style="font-size:12px;color:#7e8696;padding-left:8px;border-left:1px solid #1f242e;">LIVE&nbsp;<span id="elapsed" style="color:#36d9a4;">—</span></div>
+      <div id="liveMeters" class="topmeters">
+        <div class="topmeter">Room<b id="room">—</b></div>
+        <div class="topmeter">Viewers<b id="viewers">—</b></div>
+        <div class="topmeter onair">Live<b id="elapsed">—</b></div>
       </div>
     </div>
     <!-- #dot kept hidden (orange status dot removed); the JS still updates it -->
     <div id="liveStats" class="visually-hidden"><span id="dot"></span></div>
     <!-- watchdog: degraded signal paths (raised/cleared by main's 15s check) -->
-    <div id="watchdogBar" style="display:none;align-items:center;gap:8px;padding:7px 16px;background:#2a1215;border-bottom:1px solid #5c2a2e;color:#ff9b9b;font-size:12.5px;font-weight:600;"></div>
+    <div id="watchdogBar"></div>
 
     <div class="terminal-body">
       <div class="rail">
-        <div class="navicon active" id="navMonitor" title="Live Monitor"><div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;width:16px;height:16px;"><div style="background:#7da8ff;border-radius:1px;"></div><div style="background:#8a78ff;border-radius:1px;"></div><div style="background:#8a78ff;border-radius:1px;"></div><div style="background:#9b6cf6;border-radius:1px;"></div></div></div>
+        <div class="navicon active" id="navMonitor" title="Live Monitor"><div class="navgrid"><i></i><i></i><i></i><i></i></div></div>
         <div style="flex:1;"></div>
         <div class="navicon" id="navSettings2" title="Label settings">⚙</div>
         <div style="height:8px;"></div>
@@ -305,16 +274,16 @@
         <div class="video-col">
           <div class="stream-card">
             <video id="live" muted autoplay playsinline controls></video>
-            <div class="stream-badge"><span style="width:7px;height:7px;border-radius:50%;background:#ff5c5c;box-shadow:0 0 8px #ff5c5c;animation:sfpulse 1.4s infinite;"></span>REC &middot; LIVE STREAM</div>
+            <div class="stream-badge"><i></i>LIVE</div>
             <div id="lotOverlay" class="lot-card">
               <div class="lot-thumb"></div>
               <div style="flex:1 1 120px;min-width:0;overflow:hidden;">
-                <div class="mono" style="font-size:10px;letter-spacing:1.5px;color:#7da8ff;margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><span id="lotNum">CURRENT LOT</span> &middot; high bidder <span id="lotBuyer" style="color:#8a78ff;">--</span></div>
-                <div class="grot" id="lotName" style="font-weight:600;font-size:18px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">--</div>
+                <div class="lot-eyebrow"><span id="lotNum">CURRENT LOT</span> &middot; high bidder <span id="lotBuyer">--</span></div>
+                <div id="lotName">--</div>
               </div>
               <div style="display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:14px;row-gap:6px;flex:0 1 auto;margin-left:auto;">
-                <div style="text-align:right;flex:none;"><div style="font-size:11px;color:#8b93a3;">Current Bid &middot; <span id="lotBids">0</span> bids</div><div class="mono" id="lotBid" style="font-weight:600;font-size:24px;background:linear-gradient(110deg,#5cb0ff,#9b6cf6);-webkit-background-clip:text;background-clip:text;color:transparent;">--</div></div>
-                <div style="text-align:right;flex:none;border-left:1px solid #2a3140;padding-left:14px;"><div style="font-size:11px;color:#8b93a3;">Ends in</div><div class="mono" id="lotEnds" style="font-weight:600;font-size:24px;color:#ff9b6b;">--</div></div>
+                <div class="lot-fig"><div class="k">Current bid &middot; <span id="lotBids">0</span> bids</div><div class="v" id="lotBid">--</div></div>
+                <div class="lot-fig"><div class="k">Ends in</div><div class="v ends" id="lotEnds">--</div></div>
               </div>
             </div>
           </div>
@@ -322,26 +291,26 @@
 
         <div class="chat-col">
           <div class="section-head">
-            <span class="section-title">LIVE CHAT</span>
-            <span class="mono" style="display:flex;align-items:center;gap:6px;font-size:11px;color:#36d9a4;"><span style="width:6px;height:6px;border-radius:50%;background:#36d9a4;"></span><span id="chatViewers">--</span></span>
+            <span class="section-title">Live chat</span>
+            <span class="livecount"><i></i><span id="chatViewers">--</span></span>
           </div>
-          <div id="chatList" class="sf-scroll" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:16px;">
-            <span class="mono" style="margin:auto;font-size:11px;letter-spacing:1px;color:#3a4150;text-align:center;">waiting for comments...</span>
+          <div id="chatList" class="sf-scroll">
+            <span class="mono placeholder">waiting for comments...</span>
           </div>
           <div class="chat-input"><input id="chatInput" class="chat-placeholder" type="text" placeholder="Message..." maxlength="200" autocomplete="off" /><button id="chatSend" class="chat-send" title="Send to live chat">➤</button></div>
         </div>
 
         <div class="sf-scroll rightpanel">
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;" id="statsGrid"></div>
+          <div id="statsGrid"></div>
           <div class="panel">
             <div class="panel-head">
-              <span class="mono" style="display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:1.5px;color:#c4ccd9;"><span style="color:#8a78ff;">⚡</span>LIVE BID FEED</span>
-              <span class="mono" style="display:flex;align-items:center;gap:8px;">
-                <span id="updateReady" title="" style="display:none;font-size:10px;color:#5fe3bb;">Update ready ↻</span>
-                <span id="feedCount" style="font-size:11px;color:#5c6473;"></span>
+              <span class="eyebrow">Live bid feed</span>
+              <span class="meta">
+                <span id="updateReady" title="" style="display:none;">Update ready ↻</span>
+                <span id="feedCount"></span>
               </span>
             </div>
-            <div id="bidFeed" class="sf-scroll bidfeed"><div class="mono" style="padding:18px 14px;color:#3a4150;font-size:11px;">Waiting for sales...</div></div>
+            <div id="bidFeed" class="sf-scroll bidfeed"><div class="mono placeholder" style="padding:18px 16px;">Waiting for sales...</div></div>
             <div class="visually-hidden">
               <select id="feedSize"><option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option></select>
               <button id="feedPrev"></button><span id="feedPage">1/1</span><button id="feedNext"></button>
@@ -349,38 +318,38 @@
           </div>
           <div class="panel pad">
             <div style="display:flex;align-items:center;justify-content:space-between;">
-              <span class="mono" style="font-size:10px;letter-spacing:1px;color:#707a8c;">TOP BUYERS &middot; THIS SHOW</span>
-              <span id="topBuyersCount" class="mono" style="font-size:9.5px;letter-spacing:.5px;color:#5c6473;"></span>
+              <span class="eyebrow">Top buyers &middot; this show</span>
+              <span id="topBuyersCount" class="mono muted" style="font-size:10px;"></span>
             </div>
-            <div id="topBuyersList" style="margin-top:11px;display:flex;flex-direction:column;gap:7px;"></div>
+            <div id="topBuyersList"></div>
           </div>
           <div class="panel" id="failedPanel" style="display:none;">
             <div class="panel-head">
-              <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#ff8f8f;">PAYMENT ISSUES</span>
-              <span id="failedCount" class="chip" style="border-color:#5a2a2a;background:#1c1113;color:#ff8f8f;">0</span>
+              <span class="eyebrow bad">Payment issues</span>
+              <span id="failedCount" class="chip bad">0</span>
             </div>
-            <div id="failedList" class="sf-scroll" style="max-height:230px;"></div>
+            <div id="failedList" class="sf-scroll"></div>
           </div>
-          <div class="panel" style="padding:15px;background:linear-gradient(180deg,#10131b,#0c0f16);border-color:#2a3142;">
+          <div class="panel pad">
             <div style="display:flex;align-items:center;justify-content:space-between;">
-              <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#c4ccd9;">CURRENT AUCTION ITEM</span>
+              <span class="eyebrow">Current auction item</span>
               <span class="chip" id="recapStatus">AI EXTRACTION &middot; 99%</span>
             </div>
-            <div class="grot" id="auctionPanelName" style="font-weight:600;font-size:21px;color:#fff;margin-top:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Waiting for current lot</div>
-            <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:14px;">
-              <div><div style="font-size:11px;color:#8b93a3;">Current Bid</div><div class="mono" id="auctionPanelBid" style="font-weight:600;font-size:30px;background:linear-gradient(110deg,#5cb0ff,#9b6cf6);-webkit-background-clip:text;background-clip:text;color:transparent;margin-top:3px;">--</div></div>
-              <div><div style="font-size:11px;color:#8b93a3;">Bids</div><div class="mono" id="auctionPanelBids" style="font-weight:600;font-size:30px;color:#fff;margin-top:3px;">0</div></div>
-              <div style="text-align:right;"><div style="font-size:11px;color:#8b93a3;">Ends in</div><div class="mono" id="auctionPanelEnds" style="font-weight:600;font-size:30px;color:#ff9b6b;margin-top:3px;">--</div></div>
+            <div class="auction-name" id="auctionPanelName">Waiting for current lot</div>
+            <div class="auction-figs">
+              <div><div class="k">Current bid</div><div class="v bid" id="auctionPanelBid">--</div></div>
+              <div><div class="k">Bids</div><div class="v" id="auctionPanelBids">0</div></div>
+              <div style="text-align:right;"><div class="k">Ends in</div><div class="v ends" id="auctionPanelEnds">--</div></div>
             </div>
-            <div style="height:7px;border-radius:4px;background:#1a1f2a;overflow:hidden;margin-top:14px;"><div style="height:100%;width:64%;background:linear-gradient(90deg,#ff7a59,#ff9b6b);transition:width 1s linear;"></div></div>
+            <div class="auction-bar"><i></i></div>
             <div id="recapList" class="visually-hidden"></div>
           </div>
           <div class="panel">
             <div class="panel-head">
-              <span class="mono" style="font-size:11px;letter-spacing:1.5px;color:#c4ccd9;">THERMAL PRINT QUEUE</span>
-              <button id="labelSettingsFooter" class="chip amber" style="cursor:pointer;">LABEL SETTINGS</button>
+              <span class="eyebrow">Thermal print queue</span>
+              <button id="labelSettingsFooter" class="chip amber">LABEL SETTINGS</button>
             </div>
-            <div id="printQueue"><div class="mono" style="padding:14px;color:#3a4150;font-size:11px;">No labels yet</div></div>
+            <div id="printQueue"><div class="mono placeholder" style="padding:14px 16px;">No labels yet</div></div>
             <div class="visually-hidden">
               <button id="printNext" disabled></button>
               <input id="customNum" />
@@ -391,39 +360,36 @@
               <div id="products"></div>
             </div>
           </div>
-          <div class="panel pad" style="display:flex;align-items:center;gap:16px;">
-            <div><div class="mono" style="font-size:10px;letter-spacing:1px;color:#707a8c;">CAPTURE</div><div class="mono" style="font-size:10px;letter-spacing:1px;color:#707a8c;">ENGINE</div></div>
-            <div style="display:flex;gap:14px;">
-              <span class="mono" style="display:flex;align-items:center;gap:6px;font-size:11px;color:#aab2c0;"><span style="width:6px;height:6px;border-radius:50%;background:#36d9a4;"></span>AUDIO</span>
-              <span class="mono" style="display:flex;align-items:center;gap:6px;font-size:11px;color:#aab2c0;"><span style="width:6px;height:6px;border-radius:50%;background:#36d9a4;"></span>VIDEO</span>
-              <span class="mono" style="display:flex;align-items:center;gap:6px;font-size:11px;color:#aab2c0;"><span style="width:6px;height:6px;border-radius:50%;background:#8a78ff;"></span>VISION</span>
-            </div>
-            <div style="flex:1;"></div>
-            <div style="display:flex;align-items:end;gap:2px;height:22px;"><div style="width:3px;height:40%;background:#3a4252;border-radius:1px;"></div><div style="width:3px;height:80%;background:#5a6bf0;border-radius:1px;"></div><div style="width:3px;height:55%;background:#3a4252;border-radius:1px;"></div><div style="width:3px;height:100%;background:#8a78ff;border-radius:1px;"></div><div style="width:3px;height:65%;background:#3a4252;border-radius:1px;"></div></div>
+          <div class="panel pad capture">
+            <span class="eyebrow">Capture engine</span>
+            <span class="sig"><i></i>AUDIO</span>
+            <span class="sig"><i></i>VIDEO</span>
+            <span class="sig alt"><i></i>VISION</span>
+            <div class="bars"><i style="height:40%;"></i><i class="hi" style="height:80%;"></i><i style="height:55%;"></i><i class="hi" style="height:100%;"></i><i style="height:65%;"></i></div>
           </div>
         </div>
       </div>
 
       <!-- ============ SETTINGS SCREEN ============ -->
-      <div id="settingsScreen" style="flex:1;display:none;flex-direction:column;min-width:0;padding:14px;gap:12px;overflow:hidden;">
-        <span class="grot" style="font-weight:600;font-size:18px;flex:none;">Printing &amp; Labels</span>
+      <div id="settingsScreen">
+        <span class="screen-title">Printing &amp; labels</span>
         <div class="body sf-scroll" style="flex:1;min-height:0;overflow-y:auto;">
-          <div class="modal-box" style="max-width:620px;margin:0 0 12px;box-shadow:none;">
+          <div class="modal-box set-card">
             <label>Printer
               <select id="printerSel"><option value="">No printer</option></select>
             </label>
-            <div class="preview" style="margin-top:2px;">Default printer is preselected; your choice is saved. <span id="printerSaved" style="color:#7fd6a6;"></span></div>
-            <button id="diagBtn" class="qbtn void" style="margin-top:10px;height:30px;" title="Opens the flight-recorder log folder; the last 200 lines are also copied to the clipboard">🩺 Diagnostics log</button>
-            <label style="display:flex;gap:8px;align-items:center;margin-top:10px;"><input type="checkbox" id="autoPrint" /> Auto-print a label when an item sells</label>
-            <label style="display:flex;gap:8px;align-items:center;margin-top:8px;"><input type="checkbox" id="rawZpl" /> Fast printing (raw ZPL) — ~20× faster spool</label>
+            <div class="preview" style="margin-top:2px;">Default printer is preselected; your choice is saved. <span id="printerSaved" class="ok-text"></span></div>
+            <button id="diagBtn" class="qbtn" style="margin-top:10px;" title="Opens the flight-recorder log folder; the last 200 lines are also copied to the clipboard">🩺 Diagnostics log</button>
+            <label class="check"><input type="checkbox" id="autoPrint" /> Auto-print a label when an item sells</label>
+            <label class="check"><input type="checkbox" id="rawZpl" /> Fast printing (raw ZPL) — ~20× faster spool</label>
             <div class="preview" style="margin-top:2px;">Sends ZPL straight to the printer, skipping the slow render. Only for ZPL-capable label printers (e.g. Arkscan 2054A). Names with emoji auto-fall-back to normal printing.</div>
-            <div style="margin-top:12px;">
-              <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Print source <span style="font-weight:400;color:#7a8296;">(auto-print signal)</span></div>
-              <div style="color:#7a8296;font-size:12px;">Every signal prints: live auction-close (~1s after the gavel) and the order record (~2–5s), whichever reports a sale first — duplicates are filtered automatically. No single TikTok feed going quiet can stop labels.</div>
-              <div id="feedWinsSeen" style="margin-top:7px;font-size:11px;color:#7fd6a6;"></div>
+            <div class="set-note" style="margin-top:12px;">
+              <h4>Print source <span>(auto-print signal)</span></h4>
+              <p>Every signal prints: live auction-close (~1s after the gavel) and the order record (~2–5s), whichever reports a sale first — duplicates are filtered automatically. No single TikTok feed going quiet can stop labels.</p>
+              <div id="feedWinsSeen" class="ok-text" style="margin-top:7px;font-size:11px;"></div>
             </div>
           </div>
-          <div class="modal-box" style="max-width:620px;margin:0 0 12px;box-shadow:none;">
+          <div class="modal-box set-card">
             <label>Label size
               <select id="setSize">
                 <option value="1x1">1 × 1 in</option>
@@ -445,13 +411,13 @@
               <input type="text" id="setRegex" placeholder="regex, e.g. (#\d+)" />
               <input type="text" id="setFlags" placeholder="flags" />
             </div>
-            <div class="custom-row" style="margin-top:6px;align-items:center;">
-              <select id="presetSel" style="flex:1 1 190px;background:#0c0e13;color:#eef1f7;border:1px solid #2a3140;border-radius:5px;padding:4px 6px;font:inherit;font-size:12px;">
+            <div class="custom-row" style="margin-top:6px;">
+              <select id="presetSel" style="flex:1 1 190px;font-size:12px;">
                 <option value="">— saved patterns —</option>
               </select>
               <input type="text" id="presetName" placeholder="name to save as…" style="flex:1 1 150px;" />
-              <button type="button" id="presetSave" class="chip amber" style="cursor:pointer;flex:none;">Save</button>
-              <button type="button" id="presetDelete" class="chip" style="cursor:pointer;flex:none;" disabled>Delete</button>
+              <button type="button" id="presetSave" class="chip amber" style="flex:none;">Save</button>
+              <button type="button" id="presetDelete" class="chip" style="flex:none;" disabled>Delete</button>
             </div>
             <div class="preview" style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
               <span style="flex:none;">Sample:</span>
@@ -461,16 +427,16 @@
             <div class="preview" style="display:flex;align-items:center;gap:7px;margin-top:6px;">
               <span style="flex:none;">Buyer:</span>
               <input id="sampleBuyer" class="ai-edit" style="flex:1 1 160px;max-width:220px;" spellcheck="false" placeholder="buyer name…" />
-              <span id="samplePathHint" style="flex:none;color:#5c6473;"></span>
+              <span id="samplePathHint" class="muted" style="flex:none;"></span>
             </div>
           </div>
-          <div class="modal-box" style="max-width:620px;margin:0;box-shadow:none;">
+          <div class="modal-box set-card" style="margin-bottom:0;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:12px;">
-              <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1px;color:#707a8c;">PRINT PREVIEW — exactly how this label prints <span id="labelPreviewSize" style="color:#5c6473;margin-left:6px;"></span></span>
-              <button id="printSample" class="chip amber" type="button" style="cursor:pointer;flex:none;" disabled>Print sample</button>
+              <span class="eyebrow">Print preview — exactly how this label prints <span id="labelPreviewSize" class="muted" style="margin-left:6px;"></span></span>
+              <button id="printSample" class="chip amber" type="button" style="flex:none;" disabled>Print sample</button>
             </div>
-            <div id="labelPreviewWrap" style="background:#fff;border-radius:4px;box-shadow:0 2px 12px rgba(0,0,0,.45);overflow:hidden;">
-              <iframe id="labelPreview" title="label preview" scrolling="no" style="border:0;display:block;background:#fff;"></iframe>
+            <div id="labelPreviewWrap">
+              <iframe id="labelPreview" title="label preview" scrolling="no"></iframe>
             </div>
           </div>
         </div>

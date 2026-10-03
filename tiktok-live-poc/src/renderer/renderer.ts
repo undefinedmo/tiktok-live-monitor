@@ -227,7 +227,9 @@ function setupFeed() {
 
 // ── live chat (decoded comments) ────────────────────────────────────────────
 const chatSeen = new Set<string>()
-const NAME_COLORS = ['#7da8ff', '#8a78ff', '#36d9a4', '#ffb23e', '#9b6cf6', '#5fe3bb']
+// Chat-name hues, picked to hold 4.5:1 on the white chat column (the old set was tuned for a
+// dark background and washed out on light). The first is the app accent.
+const NAME_COLORS = ['#0a58f0', '#be185d', '#0a6b34', '#9a4708', '#6d28d9', '#0e7490']
 function nameColor(n: string): string {
   let h = 0
   for (let i = 0; i < n.length; i++) h = (h * 31 + n.charCodeAt(i)) >>> 0
@@ -268,7 +270,7 @@ function appendOwnChat(text: string) {
   if (list.querySelector('.mono')) list.replaceChildren() // clear placeholder
   const row = el('div', 'chatrow')
   const nm = el('span', 'chatname', 'You')
-  nm.style.color = '#8a5cf6'
+  nm.style.color = 'var(--accent-2)'
   row.appendChild(nm)
   row.appendChild(el('span', 'chattext', ' ' + text))
   list.appendChild(row)
@@ -324,7 +326,7 @@ function renderTopBuyer(buyers: BuyerAgg[]) {
   $('topBuyersCount').textContent = buyers.length ? `${buyers.length} buyer${buyers.length === 1 ? '' : 's'}` : ''
   if (!buyers.length) {
     const empty = el('div', 'mono', 'No sales yet')
-    empty.style.cssText = 'font-size:11px;color:#5c6473;'
+    empty.style.cssText = 'font-size:11px;color:var(--ink-4);'
     list.appendChild(empty)
     return
   }
@@ -334,13 +336,13 @@ function renderTopBuyer(buyers: BuyerAgg[]) {
     const row = el('div')
     row.style.cssText = 'display:flex;align-items:center;gap:9px;'
     const rk = el('div', 'mono', String(rank))
-    rk.style.cssText = `width:15px;text-align:center;font-size:11px;font-weight:${lead ? '700' : '400'};color:${lead ? '#9b6cf6' : '#5c6473'};`
+    rk.style.cssText = `width:15px;text-align:center;font-size:11px;font-weight:${lead ? '700' : '400'};color:${lead ? 'var(--accent)' : 'var(--ink-4)'};`
     const name = el('div', '', '@' + (b.handle ?? (b.username || '—')))
-    name.style.cssText = `flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;font-weight:${lead ? '600' : '400'};color:${lead ? '#fff' : '#c4ccd9'};`
+    name.style.cssText = `flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;font-weight:${lead ? '600' : '400'};color:${lead ? 'var(--ink)' : 'var(--ink-2)'};`
     const spend = el('div', 'mono', `$${(b.totalCents / 100).toFixed(0)}`)
-    spend.style.cssText = 'font-size:12.5px;font-weight:600;color:#9b6cf6;'
+    spend.style.cssText = 'font-size:12.5px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;'
     const items = el('div', 'mono', `·${b.itemCount}`)
-    items.style.cssText = 'width:26px;text-align:right;font-size:11px;color:#5c6473;'
+    items.style.cssText = 'width:26px;text-align:right;font-size:11px;color:var(--ink-4);'
     row.append(rk, name, spend, items)
     list.appendChild(row)
   })
@@ -611,7 +613,7 @@ function renderRecap() {
   list.replaceChildren()
   if (!recaps.length) {
     const e = el('div', 'mono', recapEnabled ? 'transcripts appear as items sell…' : 'set GEMINI_API_KEY to enable')
-    e.style.cssText = 'padding:14px;color:#3a4150;font-size:11px;'
+    e.style.cssText = 'padding:14px 16px;color:var(--ink-4);font-size:11px;'
     list.appendChild(e)
     return
   }
@@ -698,11 +700,11 @@ function renderQueue() {
   const printing = printQueue.filter((i) => i.status === 'printing').length
   const badge = document.getElementById('labelSettingsFooter')
   if (badge) badge.textContent = printing > 0 ? `${printing} PRINTING` : selectedPrinter ? 'LABEL SETTINGS' : 'SET PRINTER'
-  if (!printQueue.length) { q.appendChild(el('div', 'mono', 'No labels yet')); q.firstElementChild!.setAttribute('style', 'padding:14px;color:#3a4150;font-size:11px;'); return }
+  if (!printQueue.length) { q.appendChild(el('div', 'mono', 'No labels yet')); q.firstElementChild!.setAttribute('style', 'padding:14px 16px;color:var(--ink-4);font-size:11px;'); return }
   for (const item of printQueue.slice(0, 8)) {
     const row = el('div', 'qrow')
     const icon = item.status === 'printed' ? '✓' : item.status === 'error' ? '✗' : '…'
-    const color = item.status === 'printed' ? '#5fe3bb' : item.status === 'error' ? '#ff5c5c' : '#ffc56b'
+    const color = item.status === 'printed' ? 'var(--gain)' : item.status === 'error' ? 'var(--loss)' : 'var(--flag)'
     const who = el('div', 'bidwho')
     who.appendChild(el('div', 'bidname', item.label))
     who.appendChild(el('div', 'bidsub', item.status))
@@ -1244,8 +1246,8 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       const label = `${ev.status}${ev.detail ? ' — ' + ev.detail : ''}`
       $('status').textContent = ev.status === 'connected' ? 'LIVE' : ev.status
       $('dot').title = label
-      $('dot').style.background = ev.status === 'connected' ? '#36d9a4' : '#5c6473'
-      $('dot').style.boxShadow = ev.status === 'connected' ? '0 0 8px #36d9a4' : 'none'
+      $('dot').style.background = ev.status === 'connected' ? 'var(--gain)' : 'var(--ink-4)'
+      $('dot').style.boxShadow = 'none'
       break
     }
     case 'room':
