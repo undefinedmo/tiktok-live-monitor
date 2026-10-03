@@ -60,6 +60,7 @@ export class AuctionWatch {
           auctionConfigId: prev.lot.auctionConfigId!, // defined: lastBidding is only set past the `!id` guard
           lotNumber: prev.lot.variantDesc,
           productName: prev.lot.productName,
+          skuId: prev.lot.skuId,
           winner: prev.lot.winUsername,
           price: prev.lot.maxBiddingPrice,
           source: 'pin-swap',
@@ -101,6 +102,7 @@ export class AuctionWatch {
         auctionConfigId: id,
         lotNumber: c.variantDesc,
         productName: c.productName,
+        skuId: c.skuId,
         winner: c.winUsername,
         price: c.maxBiddingPrice,
         source: 'pin',
@@ -122,6 +124,7 @@ export class AuctionWatch {
       auctionConfigId: id,
       lotNumber: c.variantDesc,
       productName: c.productName,
+      skuId: c.skuId,
       winner: c.winUsername,
       price: c.maxBiddingPrice,
       source: 'pin',

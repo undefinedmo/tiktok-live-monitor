@@ -86,10 +86,31 @@ export class PrintDedup {
    * Both identify the listing; the id is authoritative, the name is what survives a
    * pin blackout. A lot with neither degrades to a bare lot number.
    */
-  private keyFor(lot: string, productName: string | undefined, now: number): string {
+  /**
+   * Every scope this lot could be remembered under — listing id AND product name, not one
+   * or the other.
+   *
+   * Picking a single scope per call looked right and duplicated labels live. During a gate
+   * the id goes stale and a lot is claimed under its product name; pin then recovers, the
+   * id becomes authoritative again, and the SAME lot reported seconds later computes a
+   * different key and prints a second time. Observed at 22:03:58 → 22:04:00, two seconds
+   * apart, with gating around 25% — so a "recovery boundary" is not a rare edge, it is
+   * every couple of minutes.
+   *
+   * Recording and checking both scopes makes the guard immune to which source happened to
+   * be available. The cost: if the seller relists a product under the SAME name later in
+   * the session, its lots match the old name key and are suppressed. That needs an
+   * identical product name in one session, against a duplicate every gate recovery.
+   */
+  private keysFor(lot: string, productName: string | undefined, now: number): string[] {
+    const keys: string[] = []
     const fresh = !!this.listingId && now - this.listingSeenAt <= LISTING_TTL_MS
-    const scope = fresh ? this.listingId : norm(productName ?? '')
-    return `${scope}|${lot}`
+    if (fresh) keys.push(`${this.listingId}|${lot}`)
+    const name = norm(productName ?? '')
+    if (name) keys.push(`${name}|${lot}`)
+    // Neither known: degrade to the bare lot number, the old behaviour and no worse.
+    if (!keys.length) keys.push(`|${lot}`)
+    return keys
   }
 
   /**
@@ -102,9 +123,12 @@ export class PrintDedup {
    * answer for every other lot. Claiming is the only mutation.
    */
   claim(lot: string, productName: string | undefined, now: number): boolean {
-    const key = this.keyFor(lot, productName, now)
-    if (this.printed.has(key)) return false
-    this.printed.add(key)
+    const keys = this.keysFor(lot, productName, now)
+    // Seen under ANY scope means a label exists, whichever source reported it.
+    if (keys.some((k) => this.printed.has(k))) return false
+    // Record under ALL of them, so the same lot is still recognised after the scope
+    // changes underneath us — which it does every time a gate lifts.
+    for (const k of keys) this.printed.add(k)
     return true
   }
 
@@ -114,7 +138,7 @@ export class PrintDedup {
    * Everything else calls claim().
    */
   printedAlready(lot: string, productName: string | undefined, now: number): boolean {
-    return this.printed.has(this.keyFor(lot, productName, now))
+    return this.keysFor(lot, productName, now).some((k) => this.printed.has(k))
   }
 
   /**

@@ -147,14 +147,37 @@ describe('PrintDedup', () => {
       expect(d.claim('1', NAME_B, later + 5000)).toBe(false) // ws-end then ws-result
     })
 
-    it('resumes id scoping the moment pin re-confirms', () => {
+    // Regression, observed live on v1.3.26 and caused by the TTL fix above.
+    //   22:02:58  pin goes bare (gate up)
+    //   22:03:58  #267 prints from an order row — id stale, so scoped by product name
+    //   22:04:00  pin recovers, id becomes authoritative again
+    //   22:04:00  A3 pin #267 close — new scope, new key, SECOND label
+    // Two seconds apart. With gating around 25% a "recovery boundary" happens every couple
+    // of minutes, so this was not the rare edge the earlier version of this test accepted.
+    it('does not reprint a lot when pin recovers between its two reports', () => {
       const d = new PrintDedup()
       d.setListing(LISTING_A, T)
+      const gateUp = T + 60000 // id now stale
+      expect(d.claim('267', NAME_A, gateUp)).toBe(true) // order row, name-scoped
+      d.setListing(LISTING_A, gateUp + 2000) // pin recovers, id fresh again
+      expect(d.claim('267', NAME_A, gateUp + 2100)).toBe(false) // close event — must NOT reprint
+    })
+
+    it('does not reprint when the gate falls between a lot\'s two reports either', () => {
+      const d = new PrintDedup()
+      d.setListing(LISTING_A, T)
+      expect(d.claim('300', NAME_A, T)).toBe(true) // id-scoped
+      // gate arrives; 60s later the id is stale and the scope falls back to the name
+      expect(d.claim('300', NAME_A, T + 60000)).toBe(false) // must NOT reprint
+    })
+
+    it('still separates listings across a recovery', () => {
+      const d = new PrintDedup()
+      d.setListing(LISTING_A, T)
+      d.claim('1', NAME_A, T)
       const later = T + 45000
-      d.claim('1', NAME_B, later) // scoped by name during the gate
-      d.setListing(LISTING_B, later) // pin recovers and names the new listing
-      // One extra label at the boundary is the accepted cost of never suppressing a listing.
-      expect(d.claim('1', NAME_B, later)).toBe(true)
+      d.setListing(LISTING_B, later) // new listing, new product
+      expect(d.claim('1', NAME_B, later)).toBe(true) // different lot, must print
       expect(d.claim('1', NAME_B, later)).toBe(false)
     })
   })

@@ -2,12 +2,15 @@
 // The user configures which fields print + an optional regex that extracts a
 // short bit from the title (e.g. /(Bin [A-Z])/ on "#141 Bin A - Alo Yoga…" → "Bin A").
 
+import { qrModules, QR_QUIET } from '../core/labelCode'
+
 export interface LabelData {
   itemNumber: string
   buyer?: string
   productName?: string
   price?: string
   title?: string // full title for the regex (e.g. "#54 Bin A - Alo Yoga…")
+  code?: string // QR payload from core/labelCode ("SF1:T:<sku_id>"); absent on manual prints
 }
 
 /** Per-field text-size multipliers (1 = the field's default size). */
@@ -27,6 +30,7 @@ export interface LabelTemplate {
   price: boolean
   custom: { enabled: boolean; regex: string; flags?: string }
   scale?: LabelScale // per-field text-size multipliers; absent/undefined ⇒ 1×
+  qr?: boolean // print the pack-station QR (when the label has a code); absent ⇒ off
 }
 
 export const DEFAULT_TEMPLATE: LabelTemplate = {
@@ -35,6 +39,9 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
   buyer: true,
   productName: true,
   price: false,
+  // Off by default: saved templates are merged over this, so turning it on here would
+  // silently rearrange every existing user's label (text shifts right to make room).
+  qr: false,
   custom: { enabled: false, regex: '', flags: '' },
   scale: { itemNumber: 1, custom: 1, buyer: 1, productName: 1, price: 1 },
 }
@@ -55,6 +62,48 @@ const FIELD_PT: Record<Exclude<keyof LabelScale, 'itemNumber'>, number> = { cust
 /** The 1× point size of `field` on `labelSize` (before the user's scale multiplier). */
 export function basePt(field: keyof LabelScale, labelSize: LabelTemplate['labelSize']): number {
   return field === 'itemNumber' ? (LABEL_SIZES[labelSize] ?? LABEL_SIZES['2x1']).num : FIELD_PT[field]
+}
+
+type LabelSize = (typeof LABEL_SIZES)[LabelTemplate['labelSize']]
+
+/** Where the QR goes, shared by the HTML and ZPL paths so both print the same layout:
+ *  BESIDE the text (left) on rectangular stock, UNDER it on square stock — square is
+ *  treated as a die-cut round label, where the corners of a side-placed QR fall off the
+ *  curved edge. */
+export const qrBeside = (size: LabelSize): boolean => size.widthIn - size.heightIn >= 0.25
+
+/** The QR's edge in inches, quiet zone included. Beside: nearly the label height. Under:
+ *  a share of the height small enough to leave the number and buyer legible above it. */
+// 0.44 of the side on 1" stock is 89 dots — exactly room for 3-dot modules on a 29-module
+// symbol (25 + quiet zone). At 0.42 the ZPL path fell to 2-dot (0.25 mm) modules, which
+// thermal heads blur and scanners start to miss.
+export const qrSizeIn = (size: LabelSize): number =>
+  qrBeside(size) ? size.heightIn * 0.9 : Math.min(size.widthIn, size.heightIn) * 0.44
+
+/**
+ * Whether the QR displaces the product-name line. On square stock under ~1.25" the number,
+ * buyer, product name AND a scannable QR cannot all fit (rendered: the stack overflowed a
+ * 1" label and the QR shrank to 2-dot modules). The name is the line to give up — the QR
+ * already identifies the item, and the number + buyer are what the packer reads by eye.
+ */
+export const qrHidesProduct = (data: LabelData, template: LabelTemplate): boolean => {
+  const size = LABEL_SIZES[template.labelSize] ?? LABEL_SIZES['2x1']
+  return wantsQr(data, template) && !qrBeside(size) && Math.min(size.widthIn, size.heightIn) < 1.25
+}
+
+/** Gap between a beside-QR and the text column, in inches. */
+export const QR_GAP_IN = 0.04
+
+/** Whether this label prints a QR: the template asks for one AND the sale has a code. */
+export const wantsQr = (data: LabelData, template: LabelTemplate): boolean => !!template.qr && !!data.code
+
+/** The code as a crisp SVG (one path, quiet zone included) for the HTML path. */
+function qrSvg(code: string): string {
+  const m = qrModules(code)
+  const v = m.length + QR_QUIET * 2
+  let d = ''
+  m.forEach((row, r) => row.forEach((dark, c) => { if (dark) d += `M${c + QR_QUIET} ${r + QR_QUIET}h1v1h-1z` }))
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${v} ${v}" shape-rendering="crispEdges"><rect width="${v}" height="${v}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`
 }
 
 /** Item number from a sku_desc ("#34") / title; strips the leading '#'. */
@@ -97,8 +146,25 @@ export function labelHtml(data: LabelData, template: LabelTemplate = DEFAULT_TEM
     if (v) rows.push(`<div class="custom">${esc(v)}</div>`)
   }
   if (template.buyer && data.buyer) rows.push(`<div class="buyer">${esc(data.buyer)}</div>`)
-  if (template.productName && data.productName) rows.push(`<div class="prod">${esc(data.productName)}</div>`)
+  if (template.productName && data.productName && !qrHidesProduct(data, template)) rows.push(`<div class="prod">${esc(data.productName)}</div>`)
   if (template.price && data.price) rows.push(`<div class="price">${esc(data.price)}</div>`)
+
+  // Without a QR the markup is unchanged: rows straight in the centered body column.
+  let body = rows.join('')
+  let qrCss = ''
+  if (wantsQr(data, template)) {
+    const q = qrSizeIn(size)
+    const box = `<div class="qr">${qrSvg(data.code!)}</div>`
+    if (qrBeside(size)) {
+      body = `${box}<div class="txt">${body}</div>`
+      qrCss = `body { flex-direction:row; justify-content:flex-start; padding-left:${((size.heightIn - q) / 2).toFixed(3)}in; box-sizing:border-box; }
+  .txt { flex:1; min-width:0; height:100%; margin-left:${QR_GAP_IN}in; display:flex; flex-direction:column; align-items:center; justify-content:center; }`
+    } else {
+      body += box
+    }
+    qrCss += `\n  .qr { width:${q.toFixed(3)}in; height:${q.toFixed(3)}in; flex-shrink:0; }
+  .qr svg { display:block; width:100%; height:100%; }`
+  }
 
   return `<!doctype html><html><head><meta charset="utf-8"><style>
   @page { size: ${size.widthIn}in ${size.heightIn}in; margin: 0; }
@@ -108,6 +174,6 @@ export function labelHtml(data: LabelData, template: LabelTemplate = DEFAULT_TEM
   .custom { font-size:${pt('custom')}pt; font-weight:700; margin-top:2pt; }
   .buyer { font-size:${pt('buyer')}pt; font-weight:600; margin-top:2pt; max-width:96%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   .prod { font-size:${pt('productName')}pt; color:#333; max-width:96%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-  .price { font-size:${pt('price')}pt; font-weight:700; margin-top:1pt; }
-  </style></head><body>${rows.join('')}</body></html>`
+  .price { font-size:${pt('price')}pt; font-weight:700; margin-top:1pt; }${qrCss ? '\n  ' + qrCss : ''}
+  </style></head><body>${body}</body></html>`
 }

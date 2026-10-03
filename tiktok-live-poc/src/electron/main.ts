@@ -24,8 +24,19 @@ const DASHBOARD = 'https://shop.tiktok.com/streamer/live/event/dashboard'
 // its TikTok SSO session also covers the streamer dashboard.
 const START_URL = process.env.TT_START_URL || DASHBOARD
 const LOGIN_RE = /\/(login|passport|account\/login)/
-const CHROME_UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36'
+// Advertise the Chromium we ACTUALLY run. This used to claim Chrome/148 while Electron
+// 33.4.11 ships Chromium 130.0.6723.191 — an eighteen-major-version lie that any page can
+// catch for free, because userAgentFallback only rewrites the UA *string*: navigator
+// .userAgentData is filled in by Chromium and still says 130. A page comparing the two
+// sees a browser misrepresenting itself, which is one of the cheapest automation signals
+// there is, and it is present on every request regardless of how slowly we poll.
+//
+// Built from process.versions.chrome so it cannot drift out of date the next time Electron
+// is upgraded — the previous string was hand-written and simply went stale.
+const CHROME_UA = (() => {
+  const major = (process.versions.chrome ?? '130').split('.')[0]
+  return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`
+})()
 
 let viewer: BrowserWindow | null = null
 let monitor: BrowserWindow | null = null
@@ -42,7 +53,7 @@ const statsProbeSeen = new Set<number>() // stats_type ids already reported by t
 const imSeen = new Set<string>() // dedupe im auction events across cursor replays/reconnects
 // The lot currently being bid, from im Manager bid messages (leader + lot# per bid).
 // auction.end carries no lot number — this attributes it without depending on pin/get.
-let imCurrent: { lotNumber?: string; productName?: string; leader: string; ts: number } | null = null
+let imCurrent: { lotNumber?: string; productName?: string; skuId?: string; leader: string; ts: number } | null = null
 let connected = false
 
 // The monitor window uses a persisted session (persist:tiktok), so TikTok's auth
@@ -280,12 +291,14 @@ function ingestAuctionBytes(raw: Uint8Array, now: number, via: 'im' | 'ws') {
         (c.status === 1 || c.status === 3)
       const lotNumber = cur?.lotNumber ?? (pinMatch ? c?.variantDesc : undefined)
       const productName = cur?.productName ?? (pinMatch ? c?.productName : undefined)
+      const skuId = cur?.skuId ?? (pinMatch ? c?.skuId : undefined)
       lat(`A4 ${via}-end ${lotNumber ? `#${lotNumber} ` : ''}${ev.winner} ${ev.price ?? ''}${lotNumber ? '' : ' (lot unattributed)'}`)
       send({
         kind: 'auction-closed',
         auctionConfigId: ev.auctionId || `${via}-${ev.endMs ?? now}`,
         lotNumber,
         productName,
+        skuId,
         winner: ev.winner,
         price: ev.price,
         source: 'im',
@@ -298,7 +311,7 @@ function ingestAuctionBytes(raw: Uint8Array, now: number, via: 'im' | 'ws') {
       // being auctioned, which is how auction.end (no lot number) gets attributed
       // without depending on pin/get.
       if (ev.orderCreateMs == null) {
-        imCurrent = { lotNumber: ev.lotNumber, productName: ev.productName, leader: ev.winner, ts: now }
+        imCurrent = { lotNumber: ev.lotNumber, productName: ev.productName, skuId: ev.skuId, leader: ev.winner, ts: now }
         // The bid update is ALSO the only real-time feed for the current-lot cards when
         // the host hasn't pinned the card (pin/get answers empty for unpinned lots) —
         // forward it so the overlay/panel track every bid, not just the gavel.
@@ -314,6 +327,7 @@ function ingestAuctionBytes(raw: Uint8Array, now: number, via: 'im' | 'ws') {
         auctionConfigId: ev.skuId || `${via}r-${ev.orderCreateMs ?? now}`,
         lotNumber: ev.lotNumber,
         productName: ev.productName,
+        skuId: ev.skuId,
         winner: ev.winner,
         price: ev.price,
         username: ev.username,

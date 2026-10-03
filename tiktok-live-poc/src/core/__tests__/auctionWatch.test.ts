@@ -39,6 +39,12 @@ describe('AuctionWatch', () => {
     })
   })
 
+  it("carries the lot's sku_id — the label QR's key", () => {
+    const w = new AuctionWatch()
+    w.ingest(pin({ status: 1, skuId: '1732451642461557731' }, 1000))
+    expect(w.ingest(pin({ status: 3, skuId: '1732451642461557731' }, 1500))[0]?.skuId).toBe('1732451642461557731')
+  })
+
   it('emits only once while the lot stays closed', () => {
     const w = new AuctionWatch()
     w.ingest(pin({ status: 1 }, 1000))

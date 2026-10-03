@@ -1,6 +1,6 @@
 {
   "name": "tiktok-live-monitor",
-  "version": "1.3.26",
+  "version": "1.3.28",
   "private": true,
   "type": "module",
   "description": "TikTok Shop live sales monitor",
@@ -27,7 +27,8 @@
   },
   "dependencies": {
     "electron-updater": "^6.8.3",
-    "flv.js": "^1.6.2"
+    "flv.js": "^1.6.2",
+    "qrcode-generator": "^1.5.2"
   },
   "build": {
     "appId": "com.sellerfolio.tiktokmonitor",

@@ -85,6 +85,7 @@ export interface AuctionClosedEvent {
   auctionConfigId: string
   lotNumber?: string // variant_desc ("#17") from pin; bare ("17") from im-result
   productName?: string
+  skuId?: string // the lot's sku_id — the label QR's key (core/labelCode); absent when unattributed
   winner: string
   price?: string
   username?: string // im-result only: the winner's @handle

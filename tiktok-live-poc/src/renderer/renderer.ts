@@ -4,12 +4,13 @@ import { labelHtml, LABEL_SIZES, basePt, parseItemNumber, extractCustom } from '
 import { labelNeedsHtml } from '../electron/zplLabel' // preview-only: which print path this label would take
 import { PrintDedup } from '../core/printDedup'
 import { SaleSeed } from '../core/saleSeed'
+import { labelCode } from '../core/labelCode'
 
 // Structured AI-transcript fields (was core/ledger's LedgerTranscript; the products
 // panel still stores per-product transcripts in memory for the session).
 interface LedgerTranscript { brand?: string; item?: string; color?: string; size?: string; retailPrice?: string; summary?: string }
 
-interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string; title?: string }
+interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string; title?: string; code?: string }
 type LabelField = 'itemNumber' | 'custom' | 'buyer' | 'productName' | 'price'
 interface LabelTemplate {
   labelSize: '1x1' | '1.5x1.5' | '2x1' | '2x2' | '2.25x1.25'
@@ -19,6 +20,7 @@ interface LabelTemplate {
   price: boolean
   custom: { enabled: boolean; regex: string; flags: string }
   scale?: Partial<Record<LabelField, number>>
+  qr?: boolean
 }
 declare global {
   interface Window {
@@ -81,6 +83,7 @@ const DEFAULT_TEMPLATE: LabelTemplate = {
   labelSize: '2x1', itemNumber: true, buyer: true, productName: true, price: false,
   custom: { enabled: false, regex: '', flags: '' },
   scale: { itemNumber: 1, custom: 1, buyer: 1, productName: 1, price: 1 },
+  qr: false, // off until chosen — see electron/label.ts DEFAULT_TEMPLATE
 }
 let labelTemplate: LabelTemplate = (() => {
   try { return { ...DEFAULT_TEMPLATE, ...JSON.parse(localStorage.getItem('tt-label-template') || '{}') } } catch { return DEFAULT_TEMPLATE }
@@ -750,7 +753,7 @@ async function printLabel(data: LabelData, { register = false }: { register?: bo
 function printSale(s: Sale) {
   const num = (s.skuDesc ?? '').replace(/^#/, '')
   const title = `${s.skuDesc ? s.skuDesc + ' ' : ''}${s.productName}`
-  printLabel({ itemNumber: num, buyer: s.buyer.username || s.buyer.handle, productName: s.productName, price: s.price.formatted, title })
+  printLabel({ itemNumber: num, buyer: s.buyer.username || s.buyer.handle, productName: s.productName, price: s.price.formatted, title, code: labelCode(s.skuId) })
 }
 
 // Lot numbers restart per LISTING (variant #1..#K under each auction product), so a
@@ -865,6 +868,7 @@ function onAuctionClosed(ev: Extract<LiveEvent, { kind: 'auction-closed' }>) {
       ...(name ? { productName: name } : {}),
       // roster names already carry their own "#79 " prefix; don't double it
       title: name ? (name.startsWith('#') ? name : `#${lot} ${name}`) : `#${lot}`,
+      code: labelCode(ev.skuId),
     })
   }
   if (ev.source === 'pin-swap') {
@@ -955,6 +959,7 @@ function sampleLabelData(): LabelData {
     productName: title.replace(/^\s*#?\s*\d+\s*[-–—]?\s*/, '').trim() || title,
     price: '$82.00',
     title,
+    code: labelCode('1732451642461557731'), // a real sku_id shape, so the preview QR is full size
   }
 }
 function renderLabelPreview() {
@@ -1033,6 +1038,7 @@ function setupSettings() {
   inp('setBuyer').checked = labelTemplate.buyer
   inp('setProductName').checked = labelTemplate.productName
   inp('setPrice').checked = labelTemplate.price
+  inp('setQr').checked = !!labelTemplate.qr
   inp('setCustom').checked = labelTemplate.custom.enabled
   inp('setRegex').value = labelTemplate.custom.regex
   inp('setFlags').value = labelTemplate.custom.flags
@@ -1078,6 +1084,7 @@ function setupSettings() {
       labelSize: sel('setSize').value as LabelTemplate['labelSize'],
       itemNumber: inp('setItemNumber').checked, buyer: inp('setBuyer').checked,
       productName: inp('setProductName').checked, price: inp('setPrice').checked,
+      qr: inp('setQr').checked,
       custom: { enabled: inp('setCustom').checked, regex: inp('setRegex').value, flags: inp('setFlags').value },
       scale: labelTemplate.scale, // carry the per-field sizes over — rebuilding without
       // them reset every field to 1× whenever any checkbox/size/regex changed
@@ -1085,7 +1092,7 @@ function setupSettings() {
     // the item number's 1× default is per label size, so the pt readout can move here too
     saveTemplate(); preview(); renderLabelPreview(); updateScaleLabels(); pathHint()
   }
-  for (const id of ['setSize', 'setItemNumber', 'setBuyer', 'setProductName', 'setPrice', 'setCustom', 'setRegex', 'setFlags']) {
+  for (const id of ['setSize', 'setItemNumber', 'setBuyer', 'setProductName', 'setPrice', 'setQr', 'setCustom', 'setRegex', 'setFlags']) {
     document.getElementById(id)?.addEventListener('input', apply)
     document.getElementById(id)?.addEventListener('change', apply)
   }
