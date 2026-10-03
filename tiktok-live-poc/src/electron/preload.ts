@@ -1,6 +1,7 @@
 import { ipcRenderer } from 'electron'
 import { webcastState, ecStreamerKey } from '../core/chat'
 import { parseWonFeedRow } from '../core/wonFeed'
+import { nextPinDelayMs, FINALIZE_LAG_MS } from '../core/pinSchedule'
 
 // Runs in the monitor window (contextIsolation:false, so this shares the page's
 // main world and can wrap the page's own WebSocket + XHR/fetch). Forwards three
@@ -198,6 +199,7 @@ const bootTimer = setInterval(() => {
 // fetch hook above forwards the responses to main like any dashboard-issued poll.
 let polling = false
 let runCycle: (() => Promise<void>) | null = null // set once polling starts; lets a manual Sync force a cycle
+let kickPin: (() => void) | null = null // set once polling starts; pulls the next pin poll forward
 ipcRenderer.on('tt-poll-now', () => { void runCycle?.() })
 
 // ── Request budget ───────────────────────────────────────────────────────────
@@ -260,7 +262,12 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
   let trendTick = 0
   let resultSweep = 0
   const cycle = async () => {
-    void window.fetch(`${base}/added_auction_product/list${q}`, post({ room_id: cfg.roomId, session_id: cfg.sessionId, page_scene: 1, offset: 0, count: 100, auction_page_type: 0 })).catch(() => {})
+    void window.fetch(`${base}/added_auction_product/list${q}`, post({ room_id: cfg.roomId, session_id: cfg.sessionId, page_scene: 1, offset: 0, count: 100, auction_page_type: 0 }))
+      .then((r) => r.clone().json())
+      .then((j: { pinned_auction_config?: { latest_auction_item?: { status?: unknown } } }) => {
+        if (Number(j?.pinned_auction_config?.latest_auction_item?.status) === 1) kickPin?.()
+      })
+      .catch(() => {})
     // refresh the live video URL every ~10 cycles (~15s) — it is signed/expiring.
     if (statusTick++ % 10 === 0) {
       void window.fetch(statusUrl, post({ request: { room_filter: { room_id: cfg.roomId } } })).catch(() => {})
@@ -329,9 +336,14 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
   // waiting for can occur. Between lots (no auction card, or one already closed) there is
   // no edge to catch, so poll lazily and step back up the moment a lot goes live. Worst
   // case for detection is unchanged at 700ms; the idle case drops ~4×.
-  const PIN_LIVE_MS = 1200 // a lot is bidding — this is the close-detection lag that matters
-  const PIN_IDLE_MS = 6000 // no live lot; nothing to detect until one starts
+  // The cadence itself now lives in core/pinSchedule (tested): flat while the end is far off,
+  // then one poll aimed at expected end + TikTok's ~1s finalize lag, so the ended state is
+  // caught when it first exists instead of up to an interval later.
   let pinLotLive = false
+  let pinExpectedEndMs: number | undefined // server clock; only while a lot is bidding
+  let pinServerOffsetMs: number | undefined // resp_server_time − local receive time
+  let pinLateTries = 0
+  let pinTimer: ReturnType<typeof setTimeout> | undefined
   const pinUrl =
     `https://shop.tiktok.com/api/v1/streamer_desktop/pin/get` +
     `?room_id=${cfg.roomId}&aid=253642&app_name=i18n_ecom_alliance&device_platform=web` +
@@ -357,15 +369,38 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
         // status 1 = bidding. Only then is a close edge possible, so only then is the fast
         // cadence worth its request cost. Anything else (no card, already closed, gated
         // empty body) drops us to the idle rate until a lot goes live again.
-        pinLotLive = Number(json?.auction_config?.latest_auction_item?.status) === 1
+        const item = json?.auction_config?.latest_auction_item
+        pinLotLive = Number(item?.status) === 1
+        const exp = Number(item?.expected_end_time_ms)
+        pinExpectedEndMs = pinLotLive && exp > 0 ? exp : undefined
+        const srv = Number(json?.resp_meta_data?.resp_server_time)
+        if (srv > 0) pinServerOffsetMs = srv - Date.now()
       }
     } catch (e) {
       pinErr++
       ipcRenderer.send('tt-pin-diag', { kind: 'throw', error: String((e as Error)?.message ?? e), n: pinErr })
     } finally { pinInFlight = false }
   }
-  void pinCycle()
-  everyPaced(pinCycle, () => (pinLotLive ? PIN_LIVE_MS : PIN_IDLE_MS))
+  // Self-scheduling like everyPaced, but with a handle: a roster response that shows a lot
+  // going live can pull the next poll forward (kickPin) instead of waiting out the idle gap.
+  const pinLoop = async () => {
+    try { await pinCycle() } catch { /* a failed cycle must not stop the loop */ }
+    const serverNowMs = pinServerOffsetMs === undefined ? undefined : Date.now() + pinServerOffsetMs
+    const delay = nextPinDelayMs({ live: pinLotLive, expectedEndMs: pinExpectedEndMs, serverNowMs, lateTries: pinLateTries })
+    const pastDue = pinLotLive && pinExpectedEndMs !== undefined && serverNowMs !== undefined &&
+      serverNowMs >= pinExpectedEndMs + FINALIZE_LAG_MS
+    pinLateTries = pastDue ? pinLateTries + 1 : 0
+    pinTimer = setTimeout(() => void pinLoop(), paced(delay))
+  }
+  void pinLoop()
+  // The roster rides the 3s cycle and carries the pinned lot's status too. When it shows a
+  // lot bidding while we still think nothing is live, the idle poll could be up to 6s away —
+  // most of a 7s auction. Bring it forward; no request is added, one is moved.
+  kickPin = () => {
+    if (pinLotLive || pinInFlight || gated) return
+    if (pinTimer) clearTimeout(pinTimer)
+    void pinLoop()
+  }
 
   // ── Chat poll ──────────────────────────────────────────────────────────────
   // webcast/im/fetch is params-only (no cookies/signing — verified), so we poll it

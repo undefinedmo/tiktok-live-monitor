@@ -99,6 +99,13 @@ let wdGateSent = false // last throttle state pushed to the poll loops
 let wdLastAlertsJson = ''
 let wdLastSentAt = 0
 let endPollSig = '' // auctionConfigId|expectedEndMs the timer is armed for
+/** Expected end → the confirmed order row can be fetched. Order creation was measured at
+ *  1.8-2.2s past the timer; the margin covers the row reaching auction_result/get. */
+const ORDER_ROW_LAG_MS = 2500
+/** After a swap-close guess: one more order poll, inside the renderer's hold on the guess. */
+const SWAP_ROW_POLL_MS = 3000
+// Swap-close guesses awaiting their order row, keyed by sku_id (per lot) or lot number.
+const swapGuess = new Map<string, { lot: string; winner: string; at: number }>()
 function maybeStartPolling() {
   if (pollSent || !pollRoomId || !pollSessionId || !monitor) return
   pollSent = true
@@ -490,7 +497,16 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
           saleSeenAt.set(item, now)
           if (saleSeenAt.size > 500) saleSeenAt.delete(saleSeenAt.keys().next().value!) // bound the debug map
         }
-        lat(`  C.row #${item} created=${now - s.createdAt}ms-ago paid=${s.paymentStatus}`)
+        lat(`  C.row #${item} ${s.buyer.username} created=${now - s.createdAt}ms-ago paid=${s.paymentStatus}`)
+        // The one comparison that says whether a swap-close guess named the right buyer.
+        // sku_id is per lot and is on both the pin card and the order row, so it is the
+        // exact join; the bare lot number is the fallback when the pin carried no sku.
+        const guess = (s.skuId && swapGuess.get(s.skuId)) || (item ? swapGuess.get(item) : undefined)
+        if (guess && guess.lot === item) {
+          const same = guess.winner === s.buyer.username
+          lat(`  C.guess #${item} ${same ? 'MATCH' : 'MISMATCH'} guess=${guess.winner} confirmed=${s.buyer.username} row-after-guess=${now - guess.at}ms`)
+          swapGuess.delete(s.skuId && swapGuess.has(s.skuId) ? s.skuId : item)
+        }
       }
     }
     send(update)
@@ -575,19 +591,39 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
     for (const closed of auctionWatch.ingest(pin)) {
       lat(`A3 ${closed.source} ${closed.lotNumber ?? '?'} ${closed.winner} ${closed.price ?? ''}`)
       send(closed)
+      if (closed.source === 'pin-swap') {
+        // A swap-close names the leader at the last poll, not the winner. Remember it so
+        // the confirmed order row can be checked against it (see C.guess below), and ask
+        // for that row once more in case the end-of-lot poll was armed for a stale end.
+        const lot = (closed.lotNumber ?? '').replace(/^#/, '')
+        if (lot) {
+          swapGuess.set(closed.skuId || lot, { lot, winner: closed.winner, at: now })
+          if (swapGuess.size > 200) swapGuess.delete(swapGuess.keys().next().value!)
+        }
+        setTimeout(() => {
+          lat(`B poll-now AFTER-SWAP lot=${closed.lotNumber ?? '?'}`)
+          monitor?.webContents.send('tt-poll-now')
+        }, SWAP_ROW_POLL_MS)
+      }
     }
-    // The order row is born ~at the gavel but our order poll only looks every 1.5s.
-    // We KNOW when the gavel will fall (expectedEndMs, server clock) — schedule one
-    // extra poll right after it so the confirmed row is fetched the moment it exists,
-    // instead of up to a poll-interval later. Re-armed whenever the end time moves
-    // (anti-snipe extensions) or the lot changes; skipped for absurd delays.
+    // We KNOW when the gavel will fall (expectedEndMs, server clock) — schedule one extra
+    // order poll for when the confirmed row can first exist, instead of up to a poll
+    // interval later. Re-armed whenever the end time moves (anti-snipe extensions) or the
+    // lot changes; skipped for absurd delays.
+    //
+    // This used to fire at end + 600ms on the belief that the row is born at the gavel. It
+    // is not: TikTok finalizes ~1s after the timer and creates the order ~1s after that
+    // (measured 2026-10-03: order_create_time 1.8-2.2s past expected end on the live
+    // console and in a HAR). A poll at +600ms asked before the row existed, every time, and
+    // the row then waited for the next 3s cycle — which is how a held pin-swap guess came to
+    // print ahead of the confirmed winner.
     const cur = pin.current
     if (cur?.status === 1 && cur.expectedEndMs && cur.auctionConfigId) {
       const sig = `${cur.auctionConfigId}|${cur.expectedEndMs}`
       if (sig !== endPollSig) {
         endPollSig = sig
         if (endPollTimer) clearTimeout(endPollTimer)
-        const delay = cur.expectedEndMs - (Date.now() + (pin.serverTimeOffsetMs ?? 0)) + 600
+        const delay = cur.expectedEndMs - (Date.now() + (pin.serverTimeOffsetMs ?? 0)) + ORDER_ROW_LAG_MS
         if (delay > 0 && delay < 600000) {
           endPollTimer = setTimeout(() => {
             lat(`B poll-now AT-EXPECTED-END lot=${cur.variantDesc ?? '?'}`)
@@ -870,7 +906,7 @@ ipcMain.handle('print-label', (_e, args: { labelData: LabelData; printerName: st
   const item = String(args?.labelData?.itemNumber ?? '')
   const seen = saleSeenAt.get(item)
   const queuedAt = Date.now()
-  lat(`E print QUEUED #${item}${seen ? ` (Δrest→queue=${queuedAt - seen}ms, Δws-tick=${lastWsTickAt ? queuedAt - lastWsTickAt : '?'}ms)` : ' (no live origin — manual/range)'}`)
+  lat(`E print QUEUED #${item} ${args?.labelData?.buyer ?? '-'}${seen ? ` (Δrest→queue=${queuedAt - seen}ms, Δws-tick=${lastWsTickAt ? queuedAt - lastWsTickAt : '?'}ms)` : ' (no live origin — manual/range)'}`)
   const run = printChain.then(() => printLabelJob(args))
   printChain = run.catch(() => {})
   return run.then((r) => {
