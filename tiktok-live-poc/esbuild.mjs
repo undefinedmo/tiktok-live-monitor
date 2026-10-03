@@ -10,7 +10,12 @@ const SOURCEMAP = 'linked'
 
 const common = { bundle: true, platform: 'node', target: 'node20', format: 'cjs', sourcemap: SOURCEMAP, external: ['electron', 'electron-updater'] }
 
-await build({ ...common, entryPoints: ['src/electron/main.ts'], outfile: 'dist/main.cjs' })
+// The journal worker is bundled to a STRING and inlined into main (new Worker(src, { eval: true })),
+// so the packaged app has no worker file to locate inside app.asar. No sourcemap: it is eval'd.
+const journalWorker = await build({ ...common, sourcemap: false, entryPoints: ['src/electron/journalWorker.ts'], write: false })
+const JOURNAL_WORKER_SRC = journalWorker.outputFiles[0].text
+
+await build({ ...common, entryPoints: ['src/electron/main.ts'], outfile: 'dist/main.cjs', define: { __JOURNAL_WORKER_SRC__: JSON.stringify(JOURNAL_WORKER_SRC) } })
 await build({ ...common, entryPoints: ['src/electron/preload.ts'], outfile: 'dist/preload.cjs' })
 await build({ ...common, entryPoints: ['src/electron/preload-viewer.ts'], outfile: 'dist/preload-viewer.cjs' })
 await build({

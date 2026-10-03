@@ -204,7 +204,12 @@ export interface PinnedAuction {
   skuId?: string
   actualStartMs?: number // latest_auction_item.actual_start_time (sec→ms; 0 = not started)
   actualEndMs?: number // latest_auction_item.actual_end_time (sec→ms)
-  auctionBidTimestampMs?: number // latest_auction_item.auction_bid_timestamp (ms)
+  auctionBidTimestampMs?: number // latest_auction_item.auction_bid_timestamp (ms) — the START while bids = 0, then the last bid
+  // ── per-run identity + terms (pin/get) ──
+  auctionItemId?: string // auction_config_v2.latest_auction_item.auction_item_id — unique per auction RUN
+  startingBid?: string // formatted_starting_bid_price, e.g. "$22.00"
+  durationSec?: number // auction window length
+  extendedDurationSec?: number // extension granted on a late bid
 }
 
 /** Current-auction state from `pin/get`, with a server-time anchor for countdown accuracy. */

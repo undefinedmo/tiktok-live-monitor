@@ -9,10 +9,12 @@ import { parseRoster } from '../core/roster'
 import { parsePin } from '../core/pin'
 import { AuctionResults } from '../core/auctionResults'
 import { AuctionWatch } from '../core/auctionWatch'
+import { AuctionJournal } from '../core/auctionJournal'
 import { parseTrend, paceCentsPerHour, formatCents, STATS_GMV, STATS_ORDERS } from '../core/liveTrend'
 import { decodeChat } from '../core/chat'
 import { evaluateWatchdog } from '../core/watchdog'
 import { initFlightLog, flightLogPath, flog, flushFlightLogSync } from './flightlog'
+import { initJournal, setJournalContext, record, flushJournal } from './journal'
 import { decodeAuctionIm, extractMessagePayloads } from '../core/auctionIm'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
 import { labelZpl, labelNeedsHtml } from './zplLabel'
@@ -43,6 +45,11 @@ let monitor: BrowserWindow | null = null
 const feed = new LiveFeed()
 const auctionResults = new AuctionResults()
 const auctionWatch = new AuctionWatch()
+// Start/end of every auction run, sold or not, for the show journal (see ./journal).
+const auctionJournal = new AuctionJournal()
+/** The bundled journal worker, inlined by esbuild.mjs so it needs no file inside app.asar. */
+declare const __JOURNAL_WORKER_SRC__: string
+const journaledFailed = new Set<string>() // order ids already journaled as payment_failed
 let lastPin: PinState | null = null // latest pin/get — attributes im auction.end closes to a lot number
 // Whole-show aggregates (insights trend/chart + room/status), NOT derived from the sales
 // we happened to capture — so they stay right when the app attaches to a show in progress.
@@ -111,6 +118,8 @@ function maybeStartPolling() {
   if (pollSent || !pollRoomId || !pollSessionId || !monitor) return
   pollSent = true
   wdPollStartedAt = Date.now()
+  setJournalContext({ room: pollRoomId, session: pollSessionId })
+  record('attach', { version: app.getVersion() })
   debug(`[tt] start polling room=${pollRoomId} session=${pollSessionId}`)
   monitor.webContents.send('tt-poll-config', { roomId: pollRoomId, sessionId: pollSessionId })
 }
@@ -152,7 +161,10 @@ function viewerSend(channel: string, ...args: unknown[]) {
   }
 }
 function send(ev: LiveEvent) {
-  if (ev.kind === 'auction-closed') wdSalesSinceClose = 0
+  if (ev.kind === 'auction-closed') {
+    wdSalesSinceClose = 0
+    record('close', { source: ev.source, lot: ev.lotNumber, skuId: ev.skuId, winner: ev.winner, price: ev.price, productName: ev.productName })
+  }
   else if (ev.kind === 'sales' && wdPollStartedAt && Date.now() - wdPollStartedAt > 20000) {
     // skip the connect-time backlog (first ~20s of ingests are history, not gavels)
     wdSalesSinceClose += ev.newSales.length
@@ -499,6 +511,7 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
           if (saleSeenAt.size > 500) saleSeenAt.delete(saleSeenAt.keys().next().value!) // bound the debug map
         }
         lat(`  C.row #${item} ${s.buyer.username} created=${now - s.createdAt}ms-ago paid=${s.paymentStatus}`)
+        record('sale', { orderId: s.orderId, lot: s.skuDesc, skuId: s.skuId, productId: s.productId, productName: s.productName, buyer: s.buyer.username, handle: s.buyer.handle, buyerId: s.buyer.ttuid, price: s.price.formatted, cents: s.price.cents, payment: s.paymentStatus, createdAt: s.createdAt })
         // The one comparison that says whether a swap-close guess named the right buyer.
         // sku_id is per lot and is on both the pin card and the order row, so it is the
         // exact join; the bare lot number is the fallback when the pin carried no sku.
@@ -510,6 +523,13 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
         }
       }
     }
+    // A payment that fails after the sale was journaled: one record per order, when first seen.
+    for (const f of update.failedPayments) {
+      if (journaledFailed.has(f.orderId)) continue
+      journaledFailed.add(f.orderId)
+      record('payment_failed', { orderId: f.orderId, lot: f.skuDesc, skuId: f.skuId, buyer: f.buyer.username, price: f.price.formatted })
+    }
+    if (journaledFailed.size > 5000) journaledFailed.clear()
     send(update)
   } else if (msg?.endpoint === 'room_status') {
     const d = (json as { data?: { live_stream_url?: string; duration?: number } })?.data
@@ -567,6 +587,7 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
     if (!connected) { connected = true; send({ kind: 'status', status: 'connected', detail: `room ${d.room_id} (live_room_info)` }) }
     send({ kind: 'session', name: sess.name, id: sess.id, ts: now })
     maybeStartPolling()
+    record('session', { name: sess.name })
   } else if (msg?.endpoint === 'pin') {
     const pin = parsePin(json, now)
     lastPin = pin
@@ -589,6 +610,7 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
     // pin/get flips status 1→3 within ~0.5s of the gavel — measured 6.0s and 7.3s
     // AHEAD of the same sale landing in auction_result/get. This is what drives the
     // label now; auction_result stays authoritative and backfills order/payment.
+    for (const { type, ...rec } of auctionJournal.ingest(pin)) record(type, rec)
     for (const closed of auctionWatch.ingest(pin)) {
       lat(`A3 ${closed.source} ${closed.lotNumber ?? '?'} ${closed.winner} ${closed.price ?? ''}`)
       send(closed)
@@ -925,6 +947,8 @@ ipcMain.handle('print-label', (_e, args: { labelData: LabelData; printerName: st
     if (!r.success) wdPrintErrors.push(Date.now())
     const done = Date.now()
     lat(`E print DONE #${item} ok=${r.success} spool=${done - queuedAt}ms${seen ? ` · total(rest→label)=${done - seen}ms` : ''}`)
+    // After the label is out, and only a postMessage: recording cannot delay a print.
+    record('print', { lot: item, buyer: args?.labelData?.buyer, productName: args?.labelData?.productName, price: args?.labelData?.price, code: args?.labelData?.code, ok: r.success, error: r.error, queuedAt, spoolMs: done - queuedAt, dry: DRY_PRINT || undefined })
     saleSeenAt.delete(item)
     return r
   })
@@ -1076,6 +1100,8 @@ function startApp() {
   const pcfg = DRY_PRINT ? { printer: '', rawZpl: false } : loadPrinterConfig()
   rawZplEnabled = pcfg.rawZpl
   if (pcfg.rawZpl && pcfg.printer) warmRawPrinter(pcfg.printer)
+  // The show journal, written on its own thread. Skipped in replay: fixtures are not a show.
+  if (!process.env.TT_REPLAY) initJournal(join(app.getPath('userData'), 'journal'), __JOURNAL_WORKER_SRC__, flog)
   createViewer()
   if (process.env.TT_REPLAY) {
     setTimeout(replayFixtures, 1200)
@@ -1089,6 +1115,8 @@ app.on('window-all-closed', () => app.quit())
 // one) can't veto the exit and strand the process. destroy() skips beforeunload.
 app.on('before-quit', () => {
   flog('[app] quit')
+  record('app_quit')
+  void flushJournal(300) // best-effort: the worker also flushes every 250ms on its own
   flushFlightLogSync()
   for (const w of BrowserWindow.getAllWindows()) {
     try { if (!w.isDestroyed()) w.destroy() } catch { /* ignore */ }
