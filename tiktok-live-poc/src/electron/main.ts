@@ -99,9 +99,10 @@ let wdGateSent = false // last throttle state pushed to the poll loops
 let wdLastAlertsJson = ''
 let wdLastSentAt = 0
 let endPollSig = '' // auctionConfigId|expectedEndMs the timer is armed for
-/** Expected end → the confirmed order row can be fetched. Order creation was measured at
- *  1.8-2.2s past the timer; the margin covers the row reaching auction_result/get. */
-const ORDER_ROW_LAG_MS = 2500
+/** Expected end → the confirmed order row can be fetched. A dry run on a live show
+ *  (2026-10-03, 18 closes) put order creation at 2.45-3.26s past the timer, median 2.58s;
+ *  a first cut at 2500ms caught only about half and left the rest to the 3s cycle. */
+const ORDER_ROW_LAG_MS = 3100
 /** After a swap-close guess: one more order poll, inside the renderer's hold on the guess. */
 const SWAP_ROW_POLL_MS = 3000
 // Swap-close guesses awaiting their order row, keyed by sku_id (per lot) or lot number.
@@ -613,8 +614,8 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
     //
     // This used to fire at end + 600ms on the belief that the row is born at the gavel. It
     // is not: TikTok finalizes ~1s after the timer and creates the order ~1s after that
-    // (measured 2026-10-03: order_create_time 1.8-2.2s past expected end on the live
-    // console and in a HAR). A poll at +600ms asked before the row existed, every time, and
+    // (measured 2026-10-03: order_create_time 1.8-3.3s past expected end across the live
+    // console, a HAR and a dry run). A poll at +600ms asked before the row existed, every time, and
     // the row then waited for the next 3s cycle — which is how a held pin-swap guess came to
     // print ahead of the confirmed winner.
     const cur = pin.current

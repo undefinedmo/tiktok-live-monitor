@@ -781,13 +781,13 @@ function setPrintListing(listingId?: string): void {
 // winner) prints the lot first, the held guess is cancelled. If nothing confirms in the
 // window, the guess prints (better than no label). Confirmed sources are never delayed.
 // 8s, up from 4s. The hold has to outlast the confirmed row, and 4s did not: the order is
-// created ~2s after the timer and reaches auction_result/get at +3.7-4.3s (measured on the
-// live console 2026-10-03), so the guess and the truth arrived together and the guess often
+// created 2-3s after the timer and reaches auction_result/get at +2.7-6s (measured on the
+// live console and in a dry run, 2026-10-03), so the guess and the truth arrived together and the guess often
 // won — after which the correct label was refused as a duplicate of the lot. On a 7s
 // auction the last poll can be over a second stale and bids bunch in the final second, so
 // "leader at the last poll" is wrong often enough to matter (seen live: 1 bid / leader A at
 // the last sample, 2 bids / winner B at the close, timer not extended). Main now asks for
-// the row at end + 2.5s and again 3s after the swap, so a healthy session prints the
+// the row at end + 3.1s and again 3s after the swap, so a healthy session prints the
 // confirmed name well inside this window; the guess is only the fallback for a session
 // that cannot fetch rows at all.
 const SWAP_PRINT_DELAY_MS = 8000
