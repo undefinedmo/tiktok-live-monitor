@@ -199,7 +199,29 @@
       .modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:100;}
       .modal.hidden{display:none;}
       .modal-box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;width:460px;max-width:92%;}
-      .set-card{max-width:620px;width:auto;margin:0 0 12px;}
+      .set-card{max-width:none;width:auto;margin:0 0 12px;}
+      /* Settings left, the label preview pinned beside them — a change to a field is seen
+         without scrolling to the bottom of the page. One column when the window is narrow. */
+      .set-grid{display:grid;grid-template-columns:minmax(420px,640px) minmax(300px,440px);gap:16px;align-items:start;}
+      .set-side{position:sticky;top:0;}
+      @media (max-width:1080px){ .set-grid{grid-template-columns:minmax(0,640px);} .set-side{position:static;} }
+      .switch-row{display:flex!important;align-items:center;justify-content:space-between;gap:16px;margin:0 0 14px!important;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2);cursor:pointer;}
+      .switch-row b{display:block;font-weight:600;}
+      .switch-row small{display:block;font-size:12px;font-weight:400;color:var(--ink-3);margin-top:2px;}
+      .modal-box input[type=checkbox].switch{appearance:none;-webkit-appearance:none;width:38px;height:22px;border-radius:20px;background:var(--line-strong);position:relative;flex:none;cursor:pointer;transition:background .15s;margin:0;}
+      .modal-box input[type=checkbox].switch::after{content:'';position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:transform .15s;box-shadow:0 1px 2px rgba(0,0,0,.25);}
+      .modal-box input[type=checkbox].switch:checked{background:var(--accent);}
+      .modal-box input[type=checkbox].switch:checked::after{transform:translateX(16px);}
+      .modal-box input[type=checkbox].switch:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+      .field{display:block;margin:0 0 4px;}
+      .field input[type=text],.field input[type=password]{width:100%;}
+      .field-pair{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;}
+      .modal-box .f-lbl{display:block;margin:0 0 6px;font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:600;}
+      .state{font-size:12px;margin-top:8px;}
+      .kv{display:flex;align-items:baseline;gap:10px;padding:4px 0;font-size:13px;}
+      .kv > span:first-child{width:110px;flex:none;color:var(--ink-3);}
+      .kv b{font-weight:600;}
+      #dryBanner{display:none;align-items:center;gap:8px;padding:8px 18px;background:var(--flag-bg);border-bottom:1px solid var(--flag);color:var(--flag);font-size:12.5px;font-weight:600;}
       .modal-box h3{margin:0 0 14px;font-weight:700;font-size:15px;}
       .modal-box label{display:block;margin:8px 0;color:var(--ink);font-weight:500;}
       .modal-box label.check{display:flex;gap:8px;align-items:center;margin-top:10px;font-weight:400;}
@@ -265,6 +287,8 @@
     <div id="liveStats" class="visually-hidden"><span id="dot"></span></div>
     <!-- watchdog: degraded signal paths (raised/cleared by main's 15s check) -->
     <div id="watchdogBar"></div>
+    <!-- shown only in TT_DRY_PRINT mode -->
+    <div id="dryBanner">Dry run &mdash; the app is following the show, but no labels will print.</div>
 
     <div class="terminal-body">
       <div class="rail">
@@ -376,82 +400,116 @@
 
       <!-- ============ SETTINGS SCREEN ============ -->
       <div id="settingsScreen">
-        <span class="screen-title">Printing &amp; labels</span>
+        <span class="screen-title">Settings</span>
         <div class="body sf-scroll" style="flex:1;min-height:0;overflow-y:auto;">
-          <div class="modal-box set-card">
-            <label>Printer
-              <select id="printerSel"><option value="">No printer</option></select>
-            </label>
-            <div class="preview" style="margin-top:2px;">Default printer is preselected; your choice is saved. <span id="printerSaved" class="ok-text"></span></div>
-            <button id="diagBtn" class="qbtn" style="margin-top:10px;" title="Opens the flight-recorder log folder; the last 200 lines are also copied to the clipboard">🩺 Diagnostics log</button>
-            <label class="check"><input type="checkbox" id="autoPrint" /> Auto-print a label when an item sells</label>
-            <label class="check"><input type="checkbox" id="rawZpl" /> Fast printing (raw ZPL) — ~20× faster spool</label>
-            <div class="preview" style="margin-top:2px;">Sends ZPL straight to the printer, skipping the slow render. Only for ZPL-capable label printers (e.g. Arkscan 2054A). Names with emoji auto-fall-back to normal printing.</div>
-            <div class="set-note" style="margin-top:12px;">
-              <h4>Print source <span>(auto-print signal)</span></h4>
-              <p>Every signal prints: live auction-close (~1s after the gavel) and the order record (~2–5s), whichever reports a sale first — duplicates are filtered automatically. No single TikTok feed going quiet can stop labels.</p>
-              <div id="feedWinsSeen" class="ok-text" style="margin-top:7px;font-size:11px;"></div>
+          <div class="set-grid">
+            <div class="set-col">
+
+              <div class="modal-box set-card">
+                <h3>Printer</h3>
+                <label class="switch-row" for="autoPrint">
+                  <span><b>Print a label when an item sells</b><small>The app&rsquo;s main job. Turn it off to watch a show without printing.</small></span>
+                  <input type="checkbox" id="autoPrint" class="switch" />
+                </label>
+                <div class="field">
+                  <span class="f-lbl">Printer</span>
+                  <div class="custom-row" style="margin:0;">
+                    <select id="printerSel" style="flex:1 1 240px;min-width:0;"><option value="">No printer</option></select>
+                    <button id="printTest" class="qbtn" type="button" style="flex:none;" disabled>Print test label</button>
+                  </div>
+                  <div id="printerState" class="state muted">&mdash;</div>
+                </div>
+                <label class="check"><input type="checkbox" id="rawZpl" /> Fast printing (raw ZPL) &mdash; ~20&times; faster spool</label>
+                <div class="preview" style="margin-top:2px;">Sends ZPL straight to the printer, skipping the slow render. Only for ZPL-capable label printers (e.g. Arkscan 2054A). Names with emoji auto-fall-back to normal printing.</div>
+                <div class="set-note" style="margin-top:12px;">
+                  <h4>Print source <span>(auto-print signal)</span></h4>
+                  <p>Every signal prints: live auction-close (~1s after the gavel) and the order record (~2&ndash;5s), whichever reports a sale first &mdash; duplicates are filtered automatically. No single TikTok feed going quiet can stop labels.</p>
+                  <div id="feedWinsSeen" class="ok-text" style="margin-top:7px;font-size:11px;"></div>
+                </div>
+              </div>
+
+              <div class="modal-box set-card">
+                <h3>Label layout</h3>
+                <label>Label size
+                  <select id="setSize">
+                    <option value="1x1">1 &times; 1 in</option>
+                    <option value="1.5x1.5">1.5 &times; 1.5 in</option>
+                    <option value="2x1">2 &times; 1 in</option>
+                    <option value="2x2">2 &times; 2 in</option>
+                    <option value="2.25x1.25">2.25 &times; 1.25 in</option>
+                  </select>
+                </label>
+                <div class="fields">
+                  <div class="field-row"><label><input type="checkbox" id="setItemNumber" /> Item number (#)</label><span class="sizestep"><button type="button" data-size="itemNumber" data-d="-1">&minus;</button><b id="sz-itemNumber">&mdash;</b><button type="button" data-size="itemNumber" data-d="1">+</button></span></div>
+                  <div class="field-row"><label><input type="checkbox" id="setBuyer" /> Buyer</label><span class="sizestep"><button type="button" data-size="buyer" data-d="-1">&minus;</button><b id="sz-buyer">&mdash;</b><button type="button" data-size="buyer" data-d="1">+</button></span></div>
+                  <div class="field-row"><label><input type="checkbox" id="setProductName" /> Product name (full)</label><span class="sizestep"><button type="button" data-size="productName" data-d="-1">&minus;</button><b id="sz-productName">&mdash;</b><button type="button" data-size="productName" data-d="1">+</button></span></div>
+                  <div class="field-row"><label><input type="checkbox" id="setPrice" /> Price</label><span class="sizestep"><button type="button" data-size="price" data-d="-1">&minus;</button><b id="sz-price">&mdash;</b><button type="button" data-size="price" data-d="1">+</button></span></div>
+                  <div class="field-row"><label title="SF1:T:&lt;sku_id&gt; — scanned at the pack station to match the item to its order. Printed only on sale labels (not manual Next/Custom/Range)."><input type="checkbox" id="setQr" /> QR code (pack station)</label></div>
+                  <div class="field-row"><label><input type="checkbox" id="setCustom" /> Custom (regex extract)</label><span class="sizestep"><button type="button" data-size="custom" data-d="-1">&minus;</button><b id="sz-custom">&mdash;</b><button type="button" data-size="custom" data-d="1">+</button></span></div>
+                </div>
+                <div class="custom-row">
+                  <input type="text" id="setRegex" placeholder="regex, e.g. (#\d+)" />
+                  <input type="text" id="setFlags" placeholder="flags" />
+                </div>
+                <div class="custom-row" style="margin-top:6px;">
+                  <select id="presetSel" style="flex:1 1 190px;font-size:12px;">
+                    <option value="">&mdash; saved patterns &mdash;</option>
+                  </select>
+                  <input type="text" id="presetName" placeholder="name to save as&hellip;" style="flex:1 1 150px;" />
+                  <button type="button" id="presetSave" class="chip amber" style="flex:none;">Save</button>
+                  <button type="button" id="presetDelete" class="chip" style="flex:none;" disabled>Delete</button>
+                </div>
+                <div class="preview" style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
+                  <span style="flex:none;">Sample:</span>
+                  <input id="sampleTitle" class="ai-edit" style="flex:1 1 260px;max-width:none;" spellcheck="false" placeholder="paste a real listing title&hellip;" />
+                  <span style="flex:none;">&rarr; extracts <b id="extractPreview">&mdash;</b></span>
+                </div>
+                <div class="preview" style="display:flex;align-items:center;gap:7px;margin-top:6px;">
+                  <span style="flex:none;">Buyer:</span>
+                  <input id="sampleBuyer" class="ai-edit" style="flex:1 1 160px;max-width:220px;" spellcheck="false" placeholder="buyer name&hellip;" />
+                  <span id="samplePathHint" class="muted" style="flex:none;"></span>
+                </div>
+              </div>
+
+              <div class="modal-box set-card">
+                <h3>SellerFolio sync</h3>
+                <div class="set-note"><p>Every show is saved on this computer as it happens. With a token, it is also uploaded to SellerFolio &mdash; in the background, on its own thread, so it can never slow a label.</p></div>
+                <div class="field-pair">
+                  <div class="field">
+                    <label class="f-lbl" for="sfUrl">Server address</label>
+                    <input type="text" id="sfUrl" placeholder="https://hq.luxesenseedit.com" spellcheck="false" />
+                  </div>
+                  <div class="field">
+                    <label class="f-lbl" for="sfToken">Capture token</label>
+                    <input type="password" id="sfToken" autocomplete="off" spellcheck="false" />
+                  </div>
+                </div>
+                <div class="custom-row" style="margin:12px 0 0;">
+                  <button type="button" id="sfSave" class="qbtn print" style="flex:none;">Save</button>
+                  <button type="button" id="sfOff" class="qbtn" style="flex:none;display:none;" title="Remove the saved token and stop uploading">Turn off</button>
+                  <span id="sfState" class="state muted" style="margin:0;">&mdash;</span>
+                </div>
+              </div>
+
+              <div class="modal-box set-card" style="margin-bottom:0;">
+                <h3>About</h3>
+                <div class="kv"><span>Version</span><b id="aboutVersion">&mdash;</b><span id="aboutUpdate" class="muted">No update waiting</span></div>
+                <div class="kv"><span>This computer</span><b id="aboutDevice" class="mono">&mdash;</b></div>
+                <button id="diagBtn" class="qbtn" type="button" style="margin-top:12px;" title="Opens the flight-recorder log folder; the last 200 lines are also copied to the clipboard">Open diagnostics log</button>
+              </div>
+
             </div>
-          </div>
-          <div class="modal-box set-card">
-            <h3>SellerFolio sync</h3>
-            <div class="set-note"><p>Every show is saved on this computer as it happens. With a token, it is also uploaded to SellerFolio — in the background, on its own thread, so it can never slow a label.</p></div>
-            <div class="custom-row" style="margin-top:12px;">
-              <input type="text" id="sfUrl" placeholder="https://hq.luxesenseedit.com" spellcheck="false" style="flex:1 1 240px;" />
-              <input type="password" id="sfToken" autocomplete="off" spellcheck="false" style="flex:1 1 220px;" />
-              <button type="button" id="sfSave" class="qbtn print" style="flex:none;">Save</button>
-              <button type="button" id="sfOff" class="qbtn" style="flex:none;" title="Remove the saved token and stop uploading">Turn off</button>
-            </div>
-            <div class="preview"><span id="sfState" class="muted">—</span></div>
-          </div>
-          <div class="modal-box set-card">
-            <label>Label size
-              <select id="setSize">
-                <option value="1x1">1 × 1 in</option>
-                <option value="1.5x1.5">1.5 × 1.5 in</option>
-                <option value="2x1">2 × 1 in</option>
-                <option value="2x2">2 × 2 in</option>
-                <option value="2.25x1.25">2.25 × 1.25 in</option>
-              </select>
-            </label>
-            <div class="fields">
-              <div class="field-row"><label><input type="checkbox" id="setItemNumber" /> Item number (#)</label><span class="sizestep"><button type="button" data-size="itemNumber" data-d="-1">−</button><b id="sz-itemNumber">—</b><button type="button" data-size="itemNumber" data-d="1">+</button></span></div>
-              <div class="field-row"><label><input type="checkbox" id="setBuyer" /> Buyer</label><span class="sizestep"><button type="button" data-size="buyer" data-d="-1">−</button><b id="sz-buyer">—</b><button type="button" data-size="buyer" data-d="1">+</button></span></div>
-              <div class="field-row"><label><input type="checkbox" id="setProductName" /> Product name (full)</label><span class="sizestep"><button type="button" data-size="productName" data-d="-1">−</button><b id="sz-productName">—</b><button type="button" data-size="productName" data-d="1">+</button></span></div>
-              <div class="field-row"><label><input type="checkbox" id="setPrice" /> Price</label><span class="sizestep"><button type="button" data-size="price" data-d="-1">−</button><b id="sz-price">—</b><button type="button" data-size="price" data-d="1">+</button></span></div>
-              <div class="field-row"><label title="SF1:T:&lt;sku_id&gt; — scanned at the pack station to match the item to its order. Printed only on sale labels (not manual Next/Custom/Range)."><input type="checkbox" id="setQr" /> QR code (pack station)</label></div>
-              <div class="field-row"><label><input type="checkbox" id="setCustom" /> Custom (regex extract)</label><span class="sizestep"><button type="button" data-size="custom" data-d="-1">−</button><b id="sz-custom">—</b><button type="button" data-size="custom" data-d="1">+</button></span></div>
-            </div>
-            <div class="custom-row">
-              <input type="text" id="setRegex" placeholder="regex, e.g. (#\d+)" />
-              <input type="text" id="setFlags" placeholder="flags" />
-            </div>
-            <div class="custom-row" style="margin-top:6px;">
-              <select id="presetSel" style="flex:1 1 190px;font-size:12px;">
-                <option value="">— saved patterns —</option>
-              </select>
-              <input type="text" id="presetName" placeholder="name to save as…" style="flex:1 1 150px;" />
-              <button type="button" id="presetSave" class="chip amber" style="flex:none;">Save</button>
-              <button type="button" id="presetDelete" class="chip" style="flex:none;" disabled>Delete</button>
-            </div>
-            <div class="preview" style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
-              <span style="flex:none;">Sample:</span>
-              <input id="sampleTitle" class="ai-edit" style="flex:1 1 260px;max-width:none;" spellcheck="false" placeholder="paste a real listing title…" />
-              <span style="flex:none;">→ extracts <b id="extractPreview">—</b></span>
-            </div>
-            <div class="preview" style="display:flex;align-items:center;gap:7px;margin-top:6px;">
-              <span style="flex:none;">Buyer:</span>
-              <input id="sampleBuyer" class="ai-edit" style="flex:1 1 160px;max-width:220px;" spellcheck="false" placeholder="buyer name…" />
-              <span id="samplePathHint" class="muted" style="flex:none;"></span>
-            </div>
-          </div>
-          <div class="modal-box set-card" style="margin-bottom:0;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:12px;">
-              <span class="eyebrow">Print preview — exactly how this label prints <span id="labelPreviewSize" class="muted" style="margin-left:6px;"></span></span>
-              <button id="printSample" class="chip amber" type="button" style="flex:none;" disabled>Print sample</button>
-            </div>
-            <div id="labelPreviewWrap">
-              <iframe id="labelPreview" title="label preview" scrolling="no"></iframe>
+            <div class="set-side">
+              <div class="modal-box set-card" style="margin-bottom:0;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;">
+                  <h3 style="margin:0;">Preview <span id="labelPreviewSize" class="muted" style="font-weight:400;margin-left:4px;"></span></h3>
+                  <button id="printSample" class="chip amber" type="button" style="flex:none;" disabled>Print sample</button>
+                </div>
+                <div id="labelPreviewWrap">
+                  <iframe id="labelPreview" title="label preview" scrolling="no"></iframe>
+                </div>
+                <p class="muted" style="margin:10px 0 0;font-size:12px;">Exactly how this label prints.</p>
+              </div>
             </div>
           </div>
         </div>

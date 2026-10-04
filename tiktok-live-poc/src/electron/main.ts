@@ -750,7 +750,7 @@ const DRY_PRINT = !!process.env.TT_DRY_PRINT
 const DRY_PRINTER = 'DRY RUN (no printing)'
 
 ipcMain.handle('get-printers', async () => {
-  if (DRY_PRINT) return { printers: [{ name: DRY_PRINTER, displayName: DRY_PRINTER, isDefault: true }], saved: DRY_PRINTER, rawZpl: false }
+  if (DRY_PRINT) return { printers: [{ name: DRY_PRINTER, displayName: DRY_PRINTER, isDefault: true }], saved: DRY_PRINTER, rawZpl: false, dry: true }
   const printers = (await viewer?.webContents.getPrintersAsync()) ?? []
   const cfg = loadPrinterConfig()
   return {

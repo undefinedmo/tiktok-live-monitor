@@ -26,7 +26,7 @@ declare global {
   interface Window {
     ttLive: { onEvent: (cb: (ev: LiveEvent) => void) => void }
     labelAPI: {
-      getPrinters: () => Promise<{ printers: { name: string; displayName: string; isDefault: boolean }[]; saved: string; rawZpl: boolean }>
+      getPrinters: () => Promise<{ printers: { name: string; displayName: string; isDefault: boolean }[]; saved: string; rawZpl: boolean; dry?: boolean }>
       savePrinter: (name: string) => Promise<boolean>
       setRawZpl: (enabled: boolean) => Promise<boolean>
       print: (labelData: LabelData, printerName: string, template: LabelTemplate) => Promise<{ success: boolean; error?: string }>
@@ -910,8 +910,30 @@ function updatePrintNext() {
   btn.disabled = lastPrintedNumber === null || !selectedPrinter
 }
 
+// ── printer state line (Settings → Printer) ─────────────────────────────────
+// One sentence that says whether a label will come out, worst problem first. It only claims
+// what the app knows: the device's own status is readable in raw-ZPL mode alone, so the
+// all-clear is "no problems reported", not "ready".
+let dryRun = false
+let printerAlerts: string[] = []
+function renderPrinterState() {
+  const st = document.getElementById('printerState')
+  if (!st) return
+  let text = 'No problems reported'
+  let cls = 'ok-text'
+  if (dryRun) { text = 'Dry run — nothing will print'; cls = 'warn-text' }
+  else if (!selectedPrinter) { text = 'No printer selected — labels cannot print'; cls = 'bad-text' }
+  else if (printerAlerts.length) { text = printerAlerts.join(' · '); cls = 'bad-text' }
+  else if (!autoPrint) { text = 'Printer is set, but automatic printing is off'; cls = 'warn-text' }
+  st.className = 'state ' + cls
+  st.textContent = text
+}
+
 async function setupPrinting() {
-  const { printers, saved, rawZpl } = await window.labelAPI.getPrinters()
+  const { printers, saved, rawZpl, dry } = await window.labelAPI.getPrinters()
+  dryRun = !!dry
+  const banner = document.getElementById('dryBanner')
+  if (banner) banner.style.display = dryRun ? 'flex' : 'none'
   const sel = $('printerSel') as HTMLSelectElement
   for (const p of printers) {
     const opt = document.createElement('option')
@@ -921,16 +943,17 @@ async function setupPrinting() {
   }
   selectedPrinter = saved || printers.find((p) => p.isDefault)?.name || ''
   sel.value = selectedPrinter
-  const printerHint = () => { const h = document.getElementById('printerSaved'); if (h) h.textContent = selectedPrinter ? '· current: ' + selectedPrinter : '· none selected yet' }
+  const printerHint = renderPrinterState
   printerHint()
   updateSampleBtn()
   autoPrint = localStorage.getItem('tt-autoprint') === '1'
   ;($('autoPrint') as HTMLInputElement).checked = autoPrint
+  renderPrinterState()
   updateFeedWinsSeen()
   updatePrintNext()
   renderQueue()
   sel.addEventListener('change', () => { selectedPrinter = sel.value; void window.labelAPI.savePrinter(selectedPrinter); updatePrintNext(); renderQueue(); printerHint(); updateSampleBtn() })
-  ;($('autoPrint') as HTMLInputElement).addEventListener('change', (e) => { autoPrint = (e.target as HTMLInputElement).checked; localStorage.setItem('tt-autoprint', autoPrint ? '1' : '0') })
+  ;($('autoPrint') as HTMLInputElement).addEventListener('change', (e) => { autoPrint = (e.target as HTMLInputElement).checked; localStorage.setItem('tt-autoprint', autoPrint ? '1' : '0'); renderPrinterState() })
   ;($('rawZpl') as HTMLInputElement).checked = rawZpl
   ;($('rawZpl') as HTMLInputElement).addEventListener('change', (e) => { void window.labelAPI.setRawZpl((e.target as HTMLInputElement).checked) })
   $('printNext').addEventListener('click', () => { if (lastPrintedNumber !== null) void printLabel({ itemNumber: String(lastPrintedNumber + 1) }, { register: true }) })
@@ -951,6 +974,8 @@ window.updateAPI?.onReady((info) => {
   if (!u) return
   u.style.display = ''
   u.title = `v${info.version} downloaded — installs when you close the app`
+  const about = document.getElementById('aboutUpdate')
+  if (about) { about.className = 'ok-text'; about.textContent = `Update v${info.version} is downloaded — it installs when you close the app` }
 })
 
 // ── label print preview ──────────────────────────────────────────────────────
@@ -995,10 +1020,13 @@ function renderLabelPreview() {
 
 // "Print sample" — sends the preview's sample label to the selected printer (a test print).
 function updateSampleBtn() {
-  const b = document.getElementById('printSample') as HTMLButtonElement | null
-  if (!b) return
-  b.disabled = !selectedPrinter
-  b.title = selectedPrinter ? `Print a test label to ${selectedPrinter}` : 'Select a printer first'
+  // Two doors to the same test print: beside the preview, and beside the printer it tests.
+  for (const id of ['printSample', 'printTest']) {
+    const b = document.getElementById(id) as HTMLButtonElement | null
+    if (!b) continue
+    b.disabled = !selectedPrinter
+    b.title = selectedPrinter ? `Print a test label to ${selectedPrinter}` : 'Select a printer first'
+  }
 }
 
 // ── per-field text size (−/+ multipliers, applied by labelHtml + the preview) ──
@@ -1179,6 +1207,7 @@ function setupSettings() {
   for (const id of ['setRegex', 'setFlags']) document.getElementById(id)?.addEventListener('input', syncPresetSel)
   renderPresets()
   document.getElementById('printSample')?.addEventListener('click', () => void printLabel(sampleLabelData()))
+  document.getElementById('printTest')?.addEventListener('click', () => void printLabel(sampleLabelData()))
   updateScaleLabels()
   updateSampleBtn()
   preview()
@@ -1192,6 +1221,7 @@ setupSettings()
 setupFeed()
 renderStats()
 $('feedCount').textContent = 'v' + __APP_VERSION__
+{ const v = document.getElementById('aboutVersion'); if (v) v.textContent = __APP_VERSION__ }
 
 // -- screens: live monitor + label settings ----------------------------------
 // productTx survives the ledger removal: the products panel shows per-product AI
@@ -1235,6 +1265,11 @@ function renderSfSync(v: SfSyncView) {
   st.className = cls
   st.textContent = v.hasToken || v.state !== 'off' ? text : 'Off — add a token to upload shows to SellerFolio'
   if (!v.canStore) st.textContent += ' · this computer cannot store the token securely, so it must be re-entered each launch'
+  st.className = 'state ' + cls
+  const off = document.getElementById('sfOff')
+  if (off) off.style.display = v.hasToken ? '' : 'none'
+  const dev = document.getElementById('aboutDevice')
+  if (dev) dev.textContent = v.device || '—'
 }
 function setupSfSync() {
   const api = window.sfSyncAPI
@@ -1281,10 +1316,14 @@ function renderWatchdog(alerts: { code: string; message: string }[]) {
   if (!alerts.length) {
     bar.style.display = 'none'
     wdSeenCodes.clear()
+    printerAlerts = []
+    renderPrinterState()
     return
   }
   bar.style.display = 'flex'
   bar.textContent = '⚠ ' + alerts.map((a) => a.message).join('  ·  ')
+  printerAlerts = alerts.filter((a) => a.code.startsWith('printer-')).map((a) => a.message)
+  renderPrinterState()
   if (alerts.some((a) => !wdSeenCodes.has(a.code))) wdBeep()
   alerts.forEach((a) => wdSeenCodes.add(a.code))
 }
