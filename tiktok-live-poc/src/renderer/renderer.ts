@@ -52,6 +52,7 @@ declare global {
     sfSyncAPI?: {
       get: () => Promise<SfSyncView>
       save: (args: { baseUrl?: string; token?: string }) => Promise<SfSyncView & { ok: boolean; error?: string }>
+      openFolder: () => Promise<{ ok: boolean }>
       onState: (cb: (s: SfSyncView) => void) => void
     }
   }
@@ -1152,15 +1153,24 @@ function setupSettings() {
   // Mark the dropdown when the box matches a saved pattern, so it reads as "you are on
   // this preset" rather than leaving a stale name selected next to an edited regex.
   const syncPresetSel = () => {
-    const hit = regexPresets.find((p) => p.regex === inp('setRegex').value && p.flags === inp('setFlags').value)
+    const regex = inp('setRegex').value
+    const hit = regexPresets.find((p) => p.regex === regex && p.flags === inp('setFlags').value)
     presetSel.value = hit ? hit.name : ''
     presetDelete.disabled = !hit
+    // The first option doubles as the "nothing chosen" line, so it has to say WHY nothing is
+    // chosen: a hand-written pattern is in use, or there is simply no choice made yet.
+    const first = presetSel.options[0]
+    const custom = !hit && regex.trim() !== ''
+    if (first) first.textContent = custom ? 'A custom pattern (see Advanced)' : regexPresets.length ? 'Choose what to print…' : 'No saved patterns — add one under Advanced'
+    // A custom pattern lives under Advanced; open it so the thing in use is never hidden.
+    const adv = document.getElementById('advPattern') as HTMLDetailsElement | null
+    if (adv && custom) adv.open = true
   }
   const renderPresets = () => {
     presetSel.replaceChildren()
     const none = document.createElement('option')
     none.value = ''
-    none.textContent = regexPresets.length ? '— saved patterns —' : '— none saved —'
+    none.textContent = 'Choose what to print…' // refined by syncPresetSel below
     presetSel.appendChild(none)
     for (const p of regexPresets) {
       const o = document.createElement('option')
@@ -1288,6 +1298,7 @@ function setupSfSync() {
       if (!r.ok && r.error) { const st = document.getElementById('sfState'); if (st) { st.className = 'bad-text'; st.textContent = r.error } }
     })
   })
+  document.getElementById('sfFolder')?.addEventListener('click', () => void api.openFolder())
   document.getElementById('sfOff')?.addEventListener('click', () => {
     void api.save({ token: '' }).then(renderSfSync)
   })

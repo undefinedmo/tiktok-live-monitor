@@ -218,6 +218,13 @@
       .field-pair{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;}
       .modal-box .f-lbl{display:block;margin:0 0 6px;font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:600;}
       .state{font-size:12px;margin-top:8px;}
+      details.adv{margin-top:10px;border-top:1px solid var(--line);padding-top:10px;}
+      details.adv summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--ink-3);list-style:none;display:flex;align-items:center;gap:6px;}
+      details.adv summary::-webkit-details-marker{display:none;}
+      details.adv summary::before{content:'▸';font-size:10px;transition:transform .12s;}
+      details.adv[open] summary::before{transform:rotate(90deg);}
+      details.adv summary:hover{color:var(--ink);}
+      details.adv p{margin:8px 0 0;font-size:12px;}
       .kv{display:flex;align-items:baseline;gap:10px;padding:4px 0;font-size:13px;}
       .kv > span:first-child{width:110px;flex:none;color:var(--ink-3);}
       .kv b{font-weight:600;}
@@ -422,8 +429,7 @@
                 <label class="check"><input type="checkbox" id="rawZpl" /> Fast printing (raw ZPL) &mdash; ~20&times; faster spool</label>
                 <div class="preview" style="margin-top:2px;">Sends ZPL straight to the printer, skipping the slow render. Only for ZPL-capable label printers (e.g. Arkscan 2054A). Names with emoji auto-fall-back to normal printing.</div>
                 <div class="set-note" style="margin-top:12px;">
-                  <h4>Print source <span>(auto-print signal)</span></h4>
-                  <p>Every signal prints: live auction-close (~1s after the gavel) and the order record (~2&ndash;5s), whichever reports a sale first &mdash; duplicates are filtered automatically. No single TikTok feed going quiet can stop labels.</p>
+                  <p>A label prints from whichever reports the sale first: the auction closing on screen (about 1.5 seconds after the timer) or TikTok&rsquo;s order record (about 3 seconds). The second report is ignored, so each item gets one label.</p>
                   <div id="feedWinsSeen" class="ok-text" style="margin-top:7px;font-size:11px;"></div>
                 </div>
               </div>
@@ -445,30 +451,37 @@
                   <div class="field-row"><label><input type="checkbox" id="setProductName" /> Product name (full)</label><span class="sizestep"><button type="button" data-size="productName" data-d="-1">&minus;</button><b id="sz-productName">&mdash;</b><button type="button" data-size="productName" data-d="1">+</button></span></div>
                   <div class="field-row"><label><input type="checkbox" id="setPrice" /> Price</label><span class="sizestep"><button type="button" data-size="price" data-d="-1">&minus;</button><b id="sz-price">&mdash;</b><button type="button" data-size="price" data-d="1">+</button></span></div>
                   <div class="field-row"><label title="SF1:T:&lt;sku_id&gt; — scanned at the pack station to match the item to its order. Printed only on sale labels (not manual Next/Custom/Range)."><input type="checkbox" id="setQr" /> QR code (pack station)</label></div>
-                  <div class="field-row"><label><input type="checkbox" id="setCustom" /> Custom (regex extract)</label><span class="sizestep"><button type="button" data-size="custom" data-d="-1">&minus;</button><b id="sz-custom">&mdash;</b><button type="button" data-size="custom" data-d="1">+</button></span></div>
+                  <div class="field-row"><label><input type="checkbox" id="setCustom" /> Text from the title <span class="muted">(for example, the bin)</span></label><span class="sizestep"><button type="button" data-size="custom" data-d="-1">&minus;</button><b id="sz-custom">&mdash;</b><button type="button" data-size="custom" data-d="1">+</button></span></div>
                 </div>
-                <div class="custom-row">
-                  <input type="text" id="setRegex" placeholder="regex, e.g. (#\d+)" />
-                  <input type="text" id="setFlags" placeholder="flags" />
-                </div>
-                <div class="custom-row" style="margin-top:6px;">
-                  <select id="presetSel" style="flex:1 1 190px;font-size:12px;">
-                    <option value="">&mdash; saved patterns &mdash;</option>
+                <div class="field" style="margin-top:10px;">
+                  <label class="f-lbl" for="presetSel">What to pull from the title</label>
+                  <select id="presetSel" style="width:100%;">
+                    <option value="">Choose what to print&hellip;</option>
                   </select>
-                  <input type="text" id="presetName" placeholder="name to save as&hellip;" style="flex:1 1 150px;" />
-                  <button type="button" id="presetSave" class="chip amber" style="flex:none;">Save</button>
-                  <button type="button" id="presetDelete" class="chip" style="flex:none;" disabled>Delete</button>
                 </div>
                 <div class="preview" style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
-                  <span style="flex:none;">Sample:</span>
+                  <span style="flex:none;">Try a title:</span>
                   <input id="sampleTitle" class="ai-edit" style="flex:1 1 260px;max-width:none;" spellcheck="false" placeholder="paste a real listing title&hellip;" />
-                  <span style="flex:none;">&rarr; extracts <b id="extractPreview">&mdash;</b></span>
+                  <span style="flex:none;">&rarr; prints <b id="extractPreview">&mdash;</b></span>
                 </div>
                 <div class="preview" style="display:flex;align-items:center;gap:7px;margin-top:6px;">
-                  <span style="flex:none;">Buyer:</span>
+                  <span style="flex:none;">Try a buyer:</span>
                   <input id="sampleBuyer" class="ai-edit" style="flex:1 1 160px;max-width:220px;" spellcheck="false" placeholder="buyer name&hellip;" />
                   <span id="samplePathHint" class="muted" style="flex:none;"></span>
                 </div>
+                <details class="adv" id="advPattern">
+                  <summary>Advanced: edit or save a pattern</summary>
+                  <p class="muted">A regular expression, matched against the listing title. Whatever the first pair of brackets captures is what prints.</p>
+                  <div class="custom-row">
+                    <input type="text" id="setRegex" placeholder="pattern, e.g. (Bin [A-Z])" spellcheck="false" />
+                    <input type="text" id="setFlags" placeholder="flags" title="Pattern flags — i ignores upper/lower case" spellcheck="false" />
+                  </div>
+                  <div class="custom-row" style="margin-top:6px;">
+                    <input type="text" id="presetName" placeholder="name to save it as&hellip;" style="flex:1 1 180px;" />
+                    <button type="button" id="presetSave" class="chip amber" style="flex:none;">Save pattern</button>
+                    <button type="button" id="presetDelete" class="chip" style="flex:none;" disabled>Delete</button>
+                  </div>
+                </details>
               </div>
 
               <div class="modal-box set-card">
@@ -487,6 +500,7 @@
                 <div class="custom-row" style="margin:12px 0 0;">
                   <button type="button" id="sfSave" class="qbtn print" style="flex:none;">Save</button>
                   <button type="button" id="sfOff" class="qbtn" style="flex:none;display:none;" title="Remove the saved token and stop uploading">Turn off</button>
+                  <button type="button" id="sfFolder" class="qbtn" style="flex:none;" title="Open the folder where each show is saved on this computer">Open saved shows</button>
                   <span id="sfState" class="state muted" style="margin:0;">&mdash;</span>
                 </div>
               </div>

@@ -719,6 +719,12 @@ function applySync(): void {
   })
 }
 ipcMain.handle('sf-sync:get', () => syncView())
+// Where each show is saved on this computer (one .jsonl per live room).
+ipcMain.handle('sf-sync:open-folder', async () => {
+  const dir = join(app.getPath('userData'), 'journal')
+  try { mkdirSync(dir, { recursive: true }) } catch { /* openPath reports it */ }
+  return { ok: (await shell.openPath(dir)) === '' }
+})
 ipcMain.handle('sf-sync:save', (_e, a: { baseUrl?: string; token?: string }) => {
   const cur = loadSyncSettings()
   const baseUrl = (a?.baseUrl ?? cur.baseUrl).trim() || DEFAULT_SF_URL

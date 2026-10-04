@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('syncAPI', {
 contextBridge.exposeInMainWorld('sfSyncAPI', {
   get: () => ipcRenderer.invoke('sf-sync:get'),
   save: (args: { baseUrl?: string; token?: string }) => ipcRenderer.invoke('sf-sync:save', args),
+  openFolder: () => ipcRenderer.invoke('sf-sync:open-folder'),
   onState: (cb: (s: unknown) => void) => ipcRenderer.on('sf-sync-state', (_e, s) => cb(s)),
 })
 
