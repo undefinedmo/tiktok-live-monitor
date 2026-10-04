@@ -244,6 +244,7 @@
       .modal-box input[type=checkbox].switch:checked{background:var(--accent);}
       .modal-box input[type=checkbox].switch:checked::after{transform:translateX(16px);}
       .modal-box input[type=checkbox].switch:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+      .modal-box input[type=checkbox].switch:disabled{opacity:.45;cursor:not-allowed;}
       .field{display:block;margin:0 0 4px;}
       .field input[type=text],.field input[type=password]{width:100%;}
       .field-pair{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;}
@@ -541,6 +542,15 @@
                   <button type="button" id="sfFolder" class="qbtn" style="flex:none;" title="Open the folder where each show is saved on this computer">Open saved shows</button>
                   <span id="sfState" class="state muted" style="margin:0;">&mdash;</span>
                 </div>
+              </div>
+
+              <div class="modal-box set-card">
+                <h3>Show audio</h3>
+                <label class="switch-row" for="aiTranscribe" style="margin-bottom:0!important;">
+                  <span><b>Send show audio to Google Gemini</b><small>When an item sells, the last 30 seconds of the show&rsquo;s audio is sent to Google to be transcribed. This version does not show or save the result, so leave it off unless you are testing.</small></span>
+                  <input type="checkbox" id="aiTranscribe" class="switch" />
+                </label>
+                <div id="aiState" class="state muted">&mdash;</div>
               </div>
 
               <div class="modal-box set-card" style="margin-bottom:0;">

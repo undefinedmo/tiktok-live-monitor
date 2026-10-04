@@ -578,8 +578,17 @@ let astream: MediaStream | null = null
 let rec: MediaRecorder | null = null
 let recChunks: Blob[] = []
 let onStopResolve: ((b: Blob) => void) | null = null
+// recapEnabled = a Gemini key exists on this computer AND the Settings switch is on. The
+// switch defaults OFF: with a key in the environment this used to send a clip of the show's
+// audio to Google on every sale with nowhere for the answer to go (AI_UI hides the list) —
+// spend and audio leaving the machine, silently. Nothing is captured or sent unless someone
+// turns it on.
+const AI_PREF_KEY = 'tt-ai-transcribe'
+let geminiKeyPresent = false
+let aiTranscribePref = localStorage.getItem(AI_PREF_KEY) === '1'
 let recapEnabled = false
 let transcribing = false
+let segmentTimer: ReturnType<typeof setInterval> | undefined
 interface Recap { head: string; status: 'transcribing' | 'done' | 'error'; text: string }
 const recaps: Recap[] = []
 
@@ -598,7 +607,8 @@ function cycleRecorder() {
   rec.start(1000)
 }
 function startAudioCapture(): void {
-  if (astream) return
+  // Off means off: no recorder exists, so there is no clip to send.
+  if (astream || !recapEnabled) return
   const video = document.getElementById('live') as (HTMLVideoElement & { captureStream?: () => MediaStream }) | null
   let stream: MediaStream | undefined
   try { stream = video?.captureStream?.() } catch { /* ignore */ }
@@ -606,7 +616,15 @@ function startAudioCapture(): void {
   if (!tracks.length) return
   astream = new MediaStream(tracks)
   cycleRecorder()
-  setInterval(() => { if (rec?.state === 'recording' && !onStopResolve) rec.stop() }, 30000) // rolling ≤30s segments
+  segmentTimer = setInterval(() => { if (rec?.state === 'recording' && !onStopResolve) rec.stop() }, 30000) // rolling ≤30s segments
+}
+function stopAudioCapture(): void {
+  if (segmentTimer) { clearInterval(segmentTimer); segmentTimer = undefined }
+  const r = rec
+  astream = null // cycleRecorder (rec.onstop) will not start a new segment
+  rec = null
+  recChunks = []
+  try { if (r && r.state !== 'inactive') r.stop() } catch { /* already stopped */ }
 }
 function grabClip(): Promise<Blob | null> {
   if (!rec || rec.state !== 'recording') return Promise.resolve(null)
@@ -681,8 +699,32 @@ async function transcribeProduct(productId: string, productName: string): Promis
   }
 }
 
+function applyAiPref(): void {
+  recapEnabled = geminiKeyPresent && aiTranscribePref
+  if (recapEnabled) startAudioCapture() // no-op until the video is playing; its own listener covers that
+  else stopAudioCapture()
+  const sw = document.getElementById('aiTranscribe') as HTMLInputElement | null
+  const st = document.getElementById('aiState')
+  if (sw) { sw.checked = recapEnabled; sw.disabled = !geminiKeyPresent }
+  if (st) {
+    const [text, cls] = !geminiKeyPresent
+      ? ['No Gemini key on this computer — nothing can be sent', 'muted']
+      : recapEnabled
+        ? ['On — a clip of the show’s audio goes to Google each time an item sells', 'warn-text']
+        : ['Off — no audio is captured and none leaves this computer', 'ok-text']
+    st.className = 'state ' + cls
+    st.textContent = text
+  }
+}
+document.getElementById('aiTranscribe')?.addEventListener('change', (e) => {
+  aiTranscribePref = (e.target as HTMLInputElement).checked
+  localStorage.setItem(AI_PREF_KEY, aiTranscribePref ? '1' : '0')
+  applyAiPref()
+})
+
 async function initRecap() {
-  try { recapEnabled = (await window.recapAPI?.enabled())?.enabled ?? false } catch { recapEnabled = false }
+  try { geminiKeyPresent = (await window.recapAPI?.enabled())?.enabled ?? false } catch { geminiKeyPresent = false }
+  applyAiPref()
   const st = document.getElementById('recapStatus')
   // AI_UI off: hide the chip but leave recapEnabled/transcribe* wired, so re-enabling the
   // feature is this one flag rather than a rebuild of the plumbing.
