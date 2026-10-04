@@ -245,6 +245,12 @@ function createMonitor() {
 }
 
 ipcMain.on('tt-status', (_e, s: { status: StatusEvent['status']; detail?: string }) => {
+  // The preload says "connecting" on every page load and on every socket the dashboard opens.
+  // Once we are attached to a live room that is stale news, and it used to stick: both paths
+  // that announce "connected" are guarded by `!connected`, so a socket opening AFTER the REST
+  // bootstrap flipped the pill back to "connecting…" for the rest of the show while the app
+  // was polling, printing and recording normally (seen live 2026-10-03).
+  if (s.status === 'connecting' && connected) return
   send({ kind: 'status', status: s.status, detail: s.detail })
 })
 

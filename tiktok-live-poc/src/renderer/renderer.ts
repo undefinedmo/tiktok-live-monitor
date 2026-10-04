@@ -828,8 +828,39 @@ const priceCentsOf = (formatted?: string): number => {
   const m = /([\d,]+(?:\.\d{1,2})?)/.exec(formatted ?? '')
   return m?.[1] ? Math.round(parseFloat(m[1].replace(/,/g, '')) * 100) : 0
 }
+// ── the "Item sold" moment on the video ──────────────────────────────────────
+// A few seconds of "Item sold / <buyer>" over the picture when an auction closes. It is fed
+// only by CONFIRMED winners — a pin-swap close names the last leader, which a late bid can
+// overturn, and putting the wrong name on screen is worse than showing it two seconds later
+// when the order row lands. Scheduled with setTimeout(0) from its callers so it paints after
+// the label for the same sale has been dispatched: nothing here may run ahead of a print.
+const SOLD_SHOW_MS = 4200
+const SOLD_REPEAT_MS = 90_000 // the same lot reported again by a slower source
+const soldShownAt = new Map<string, number>()
+let soldTimer: ReturnType<typeof setTimeout> | undefined
+function showSold(lot: string, buyer: string | undefined, price?: string) {
+  const el = document.getElementById('soldBanner')
+  if (!el || !buyer) return
+  const now = Date.now()
+  const last = soldShownAt.get(lot)
+  if (lot && last !== undefined && now - last < SOLD_REPEAT_MS) return
+  soldShownAt.set(lot, now)
+  if (soldShownAt.size > 300) soldShownAt.delete(soldShownAt.keys().next().value!)
+  const name = $('soldName')
+  name.textContent = buyer
+  name.classList.toggle('long', buyer.length > 16)
+  $('soldLot').textContent = lot ? '#' + lot : ''
+  $('soldPrice').textContent = price ?? ''
+  el.classList.remove('show')
+  void el.offsetWidth // restart the entrance when one sale follows another
+  el.classList.add('show')
+  if (soldTimer) clearTimeout(soldTimer)
+  soldTimer = setTimeout(() => el.classList.remove('show'), SOLD_SHOW_MS)
+}
+
 function onAuctionClosed(ev: Extract<LiveEvent, { kind: 'auction-closed' }>) {
   const lot = (ev.lotNumber ?? '').replace(/^#/, '')
+  if (lot && ev.source !== 'pin-swap') setTimeout(() => showSold(lot, ev.winner, ev.price), 0)
   // Instant UI: paint the close on the lot overlay even when the lot number isn't
   // known yet (unpinned lots) — the sale is real, only its attribution is pending.
   if (lot) $('lotNum').textContent = '#' + lot
@@ -1461,6 +1492,13 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       // pin only covers pinned lots, while order rows landed 0.3-3s after
       // creation - so redundancy IS the latency strategy, not a fallback.
       for (const s of freshSales) autoPrintSale(s)
+      // The confirmed row is also what announces a sale whose fast close was only a guess
+      // (or never arrived). Recent rows only: a backlog row is history, not a moment.
+      for (const s of freshSales) {
+        if (s.paymentStatus === 'failed' || Date.now() - s.createdAt > 20000) continue
+        const lot = (s.skuDesc ?? '').replace(/^#/, '')
+        if (lot) setTimeout(() => showSold(lot, s.buyer.username || s.buyer.handle, s.price.formatted), 0)
+      }
       recentForRecap = freshSales.find((s) => s.paymentStatus !== 'failed' && Date.now() - s.createdAt < 60000)
 
       // ── THEN UI ──────────────────────────────────────────────────────────

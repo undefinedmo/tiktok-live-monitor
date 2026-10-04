@@ -78,6 +78,37 @@
       .lot-fig .v{font-family:var(--mono);font-weight:600;font-size:22px;color:var(--on-video);font-variant-numeric:tabular-nums;}
       .lot-fig .v.ends{color:#ffb38a;}
 
+      /* ── the "Item sold" moment ───────────────────────────────────────────────
+         Sits over the picture, so it uses the on-video palette (dark glass, white text) with
+         the app's accent as the one colour. It never takes clicks: the video controls and the
+         lot card under it stay usable. */
+      .sold-banner{position:absolute;left:50%;top:40%;z-index:3;min-width:230px;max-width:86%;padding:20px 28px 20px;text-align:center;pointer-events:none;
+        background:linear-gradient(180deg,rgba(22,24,34,.86),rgba(10,11,16,.9));border:1px solid rgba(255,255,255,.16);border-radius:20px;
+        box-shadow:0 22px 60px rgba(0,0,0,.5),0 0 0 6px rgba(10,88,240,.14),inset 0 1px 0 rgba(255,255,255,.12);backdrop-filter:blur(14px) saturate(1.25);
+        opacity:0;transform:translate(-50%,-46%) scale(.9);transition:opacity .22s ease,transform .32s cubic-bezier(.2,.9,.25,1.25);}
+      .sold-banner.show{opacity:1;transform:translate(-50%,-50%) scale(1);}
+      .sold-check{position:relative;width:46px;height:46px;margin:0 auto 12px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(10,88,240,.55);}
+      .sold-check svg{width:26px;height:26px;fill:none;stroke:#fff;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:22;stroke-dashoffset:22;}
+      .sold-check::after{content:'';position:absolute;inset:0;border-radius:50%;border:2px solid var(--on-video-accent);opacity:0;}
+      .sold-banner.show .sold-check{animation:soldPop .42s cubic-bezier(.2,.9,.25,1.4) both;}
+      .sold-banner.show .sold-check svg{animation:soldDraw .34s .16s ease-out forwards;}
+      .sold-banner.show .sold-check::after{animation:soldRing .9s .12s ease-out;}
+      .sold-eyebrow{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.24em;text-transform:uppercase;color:var(--on-video-accent);margin-right:-.24em;}
+      .sold-name{margin-top:6px;font-weight:700;font-size:27px;line-height:1.15;letter-spacing:-.02em;color:var(--on-video);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .sold-name.long{font-size:21px;}
+      .sold-meta{margin-top:10px;display:flex;align-items:center;justify-content:center;gap:10px;font-family:var(--mono);font-size:12px;color:var(--on-video-2);}
+      .sold-meta:empty{display:none;}
+      .sold-price{padding:3px 10px;border-radius:20px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.16);color:var(--on-video);font-weight:600;font-variant-numeric:tabular-nums;}
+      .sold-price:empty{display:none;}
+      @keyframes soldPop{0%{transform:scale(.3);}100%{transform:scale(1);}}
+      @keyframes soldDraw{to{stroke-dashoffset:0;}}
+      @keyframes soldRing{0%{opacity:.9;transform:scale(1);}100%{opacity:0;transform:scale(2.1);}}
+      @media (prefers-reduced-motion:reduce){
+        .sold-banner{transition:opacity .2s ease;transform:translate(-50%,-50%);}
+        .sold-banner.show .sold-check,.sold-banner.show .sold-check::after{animation:none;}
+        .sold-banner.show .sold-check svg{animation:none;stroke-dashoffset:0;}
+      }
+
       /* ── chat ───────────────────────────────────────────────────────────────── */
       .chat-col{flex:1 1 360px;min-width:280px;max-width:700px;border-left:1px solid var(--line);border-right:1px solid var(--line);display:flex;flex-direction:column;background:var(--panel);}
       .section-head{height:46px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid var(--line);}
@@ -310,6 +341,13 @@
           <div class="stream-card">
             <video id="live" muted autoplay playsinline controls></video>
             <div class="stream-badge"><i></i>LIVE</div>
+            <!-- the "sold" moment: shown for a few seconds over the picture when an auction closes -->
+            <div id="soldBanner" class="sold-banner" role="status" aria-live="polite">
+              <div class="sold-check"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 12.5l4.2 4.2L18.5 8" /></svg></div>
+              <div class="sold-eyebrow">Item sold</div>
+              <div class="sold-name" id="soldName">&mdash;</div>
+              <div class="sold-meta"><span id="soldLot"></span><span id="soldPrice" class="sold-price"></span></div>
+            </div>
             <div id="lotOverlay" class="lot-card">
               <div class="lot-thumb"></div>
               <div style="flex:1 1 120px;min-width:0;overflow:hidden;">
