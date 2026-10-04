@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ipcMain, session, Menu, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, session, Menu, nativeTheme, safeStorage, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { join } from 'node:path'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -14,7 +14,7 @@ import { parseTrend, paceCentsPerHour, formatCents, STATS_GMV, STATS_ORDERS } fr
 import { decodeChat } from '../core/chat'
 import { evaluateWatchdog } from '../core/watchdog'
 import { initFlightLog, flightLogPath, flog, flushFlightLogSync } from './flightlog'
-import { initJournal, setJournalContext, record, flushJournal } from './journal'
+import { initJournal, setJournalContext, record, flushJournal, setJournalSync, journalDeviceId } from './journal'
 import { decodeAuctionIm, extractMessagePayloads } from '../core/auctionIm'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
 import { labelZpl, labelNeedsHtml } from './zplLabel'
@@ -672,6 +672,64 @@ function replayFixtures() {
   }
 }
 
+// ── SellerFolio sync: upload the show journal ────────────────────────────────
+// Local first. The journal file is written regardless; this only decides whether the worker
+// also ships it. The token is a SellerFolio capture token (Settings → capture tokens), kept
+// encrypted with the OS keystore (DPAPI on Windows) — never in plain text on disk.
+const SYNC_FILE = join(app.getPath('userData'), 'sf-sync.json')
+const SYNC_PATH = '/api/capture/live-monitor/events'
+const DEFAULT_SF_URL = 'https://hq.luxesenseedit.com'
+let syncState: { state: string; detail: string } = { state: 'off', detail: '' }
+
+function loadSyncSettings(): { baseUrl: string; token: string } {
+  try {
+    const j = JSON.parse(readFileSync(SYNC_FILE, 'utf8')) as { baseUrl?: string; tokenEnc?: string }
+    const token = j.tokenEnc && safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(Buffer.from(j.tokenEnc, 'base64')) : ''
+    return { baseUrl: j.baseUrl || DEFAULT_SF_URL, token }
+  } catch {
+    return { baseUrl: DEFAULT_SF_URL, token: '' }
+  }
+}
+function saveSyncSettings(s: { baseUrl: string; token: string }): void {
+  const tokenEnc = s.token && safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(s.token).toString('base64') : ''
+  try { writeFileSync(SYNC_FILE, JSON.stringify({ baseUrl: s.baseUrl, tokenEnc })) } catch { /* ignore */ }
+}
+/** The upload URL for a server address, or null if the address is not one we will send a token to. */
+function syncEndpoint(baseUrl: string): string | null {
+  try {
+    const u = new URL(baseUrl)
+    const local = u.hostname === 'localhost' || u.hostname === '127.0.0.1'
+    if (u.protocol !== 'https:' && !(local && u.protocol === 'http:')) return null
+    return u.origin + SYNC_PATH
+  } catch {
+    return null
+  }
+}
+function syncView() {
+  const s = loadSyncSettings()
+  return { baseUrl: s.baseUrl, hasToken: !!s.token, lastFour: s.token ? s.token.slice(-4) : '', canStore: safeStorage.isEncryptionAvailable(), device: journalDeviceId(), ...syncState }
+}
+function applySync(): void {
+  const s = loadSyncSettings()
+  const endpoint = syncEndpoint(s.baseUrl)
+  if (!endpoint || !s.token) syncState = { state: 'off', detail: '' }
+  setJournalSync(endpoint && s.token ? { endpoint, token: s.token } : null, (state, detail) => {
+    syncState = { state, detail }
+    viewerSend('sf-sync-state', syncView())
+  })
+}
+ipcMain.handle('sf-sync:get', () => syncView())
+ipcMain.handle('sf-sync:save', (_e, a: { baseUrl?: string; token?: string }) => {
+  const cur = loadSyncSettings()
+  const baseUrl = (a?.baseUrl ?? cur.baseUrl).trim() || DEFAULT_SF_URL
+  if (!syncEndpoint(baseUrl)) return { ok: false, error: 'Enter an https:// address', ...syncView() }
+  // An omitted token keeps the saved one; an empty string clears it (turns sync off).
+  const token = a?.token === undefined ? cur.token : a.token.trim()
+  saveSyncSettings({ baseUrl, token })
+  applySync()
+  return { ok: true, ...syncView() }
+})
+
 // ── Label printing (mirrors the desktop app: webContents.print of HTML) ──────
 const PRINTER_FILE = join(app.getPath('userData'), 'tt-printer.json')
 interface PrinterConfig { printer: string; rawZpl: boolean }
@@ -948,7 +1006,8 @@ ipcMain.handle('print-label', (_e, args: { labelData: LabelData; printerName: st
     const done = Date.now()
     lat(`E print DONE #${item} ok=${r.success} spool=${done - queuedAt}ms${seen ? ` · total(rest→label)=${done - seen}ms` : ''}`)
     // After the label is out, and only a postMessage: recording cannot delay a print.
-    record('print', { lot: item, buyer: args?.labelData?.buyer, productName: args?.labelData?.productName, price: args?.labelData?.price, code: args?.labelData?.code, ok: r.success, error: r.error, queuedAt, spoolMs: done - queuedAt, dry: DRY_PRINT || undefined })
+    // "#42", like every other record — the label data carries the bare number.
+    record('print', { lot: item ? `#${item}` : undefined, buyer: args?.labelData?.buyer, productName: args?.labelData?.productName, price: args?.labelData?.price, code: args?.labelData?.code, ok: r.success, error: r.error, queuedAt, spoolMs: done - queuedAt, dry: DRY_PRINT || undefined })
     saleSeenAt.delete(item)
     return r
   })
@@ -1101,7 +1160,10 @@ function startApp() {
   rawZplEnabled = pcfg.rawZpl
   if (pcfg.rawZpl && pcfg.printer) warmRawPrinter(pcfg.printer)
   // The show journal, written on its own thread. Skipped in replay: fixtures are not a show.
-  if (!process.env.TT_REPLAY) initJournal(join(app.getPath('userData'), 'journal'), __JOURNAL_WORKER_SRC__, flog)
+  if (!process.env.TT_REPLAY) {
+    initJournal(join(app.getPath('userData'), 'journal'), __JOURNAL_WORKER_SRC__, flog)
+    applySync()
+  }
   createViewer()
   if (process.env.TT_REPLAY) {
     setTimeout(replayFixtures, 1200)

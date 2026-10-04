@@ -224,6 +224,10 @@
       .set-note h4 span{font-weight:400;color:var(--ink-3);}
       .set-note p{margin:0;color:var(--ink-3);font-size:12px;}
       .ok-text{color:var(--gain);}
+      .warn-text{color:var(--flag);}
+      .bad-text{color:var(--loss);}
+      .modal-box input[type=password]{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:7px 10px;font:inherit;outline:none;}
+      .modal-box input[type=password]:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-tint);}
       .muted{color:var(--ink-4);}
       .modal-actions{text-align:right;margin-top:16px;}
       .modal-actions button{background:var(--accent);color:#fff;border:none;border-radius:8px;height:32px;padding:0 16px;font-weight:600;}
@@ -388,6 +392,17 @@
               <p>Every signal prints: live auction-close (~1s after the gavel) and the order record (~2–5s), whichever reports a sale first — duplicates are filtered automatically. No single TikTok feed going quiet can stop labels.</p>
               <div id="feedWinsSeen" class="ok-text" style="margin-top:7px;font-size:11px;"></div>
             </div>
+          </div>
+          <div class="modal-box set-card">
+            <h3>SellerFolio sync</h3>
+            <div class="set-note"><p>Every show is saved on this computer as it happens. With a token, it is also uploaded to SellerFolio — in the background, on its own thread, so it can never slow a label.</p></div>
+            <div class="custom-row" style="margin-top:12px;">
+              <input type="text" id="sfUrl" placeholder="https://hq.luxesenseedit.com" spellcheck="false" style="flex:1 1 240px;" />
+              <input type="password" id="sfToken" autocomplete="off" spellcheck="false" style="flex:1 1 220px;" />
+              <button type="button" id="sfSave" class="qbtn print" style="flex:none;">Save</button>
+              <button type="button" id="sfOff" class="qbtn" style="flex:none;" title="Remove the saved token and stop uploading">Turn off</button>
+            </div>
+            <div class="preview"><span id="sfState" class="muted">—</span></div>
           </div>
           <div class="modal-box set-card">
             <label>Label size

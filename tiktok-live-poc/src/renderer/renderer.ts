@@ -49,6 +49,11 @@ declare global {
     diagAPI?: {
       open: () => Promise<{ ok: boolean; path?: string }>
     }
+    sfSyncAPI?: {
+      get: () => Promise<SfSyncView>
+      save: (args: { baseUrl?: string; token?: string }) => Promise<SfSyncView & { ok: boolean; error?: string }>
+      onState: (cb: (s: SfSyncView) => void) => void
+    }
   }
 }
 
@@ -1208,6 +1213,51 @@ function showScreen(s: 'monitor' | 'settings') {
 $('navMonitor').addEventListener('click', () => showScreen('monitor'))
 document.getElementById('navSettings2')?.addEventListener('click', () => showScreen('settings'))
 document.getElementById('diagBtn')?.addEventListener('click', () => void window.diagAPI?.open())
+
+// ── SellerFolio sync card ────────────────────────────────────────────────────
+interface SfSyncView { baseUrl: string; hasToken: boolean; lastFour: string; canStore: boolean; device: string; state: string; detail: string }
+const SF_SYNC_LABEL: Record<string, [string, string]> = {
+  off: ['Off — shows are saved on this computer only', 'muted'],
+  synced: ['Connected — shows are uploading to SellerFolio', 'ok-text'],
+  offline: ['Can’t reach SellerFolio — saving here, will upload when it is back', 'warn-text'],
+  auth: ['SellerFolio rejected this token — paste a new one', 'bad-text'],
+  rejected: ['SellerFolio refused an upload — saving here and retrying', 'warn-text'],
+  error: ['Upload error — saving here and retrying', 'warn-text'],
+}
+function renderSfSync(v: SfSyncView) {
+  const url = document.getElementById('sfUrl') as HTMLInputElement | null
+  const tok = document.getElementById('sfToken') as HTMLInputElement | null
+  const st = document.getElementById('sfState')
+  if (!url || !tok || !st) return
+  if (document.activeElement !== url) url.value = v.baseUrl
+  tok.placeholder = v.hasToken ? `saved · ends in ${v.lastFour}` : 'paste a capture token (sfc_…)'
+  const [text, cls] = SF_SYNC_LABEL[v.state] ?? [v.state, 'muted']
+  st.className = cls
+  st.textContent = v.hasToken || v.state !== 'off' ? text : 'Off — add a token to upload shows to SellerFolio'
+  if (!v.canStore) st.textContent += ' · this computer cannot store the token securely, so it must be re-entered each launch'
+}
+function setupSfSync() {
+  const api = window.sfSyncAPI
+  const save = document.getElementById('sfSave') as HTMLButtonElement | null
+  if (!api || !save) return
+  void api.get().then(renderSfSync)
+  api.onState(renderSfSync)
+  save.addEventListener('click', () => {
+    const url = (document.getElementById('sfUrl') as HTMLInputElement).value
+    const tokEl = document.getElementById('sfToken') as HTMLInputElement
+    // An empty token box means "keep what is saved", so the address can be changed alone.
+    const args = tokEl.value.trim() ? { baseUrl: url, token: tokEl.value } : { baseUrl: url }
+    void api.save(args).then((r) => {
+      tokEl.value = ''
+      renderSfSync(r)
+      if (!r.ok && r.error) { const st = document.getElementById('sfState'); if (st) { st.className = 'bad-text'; st.textContent = r.error } }
+    })
+  })
+  document.getElementById('sfOff')?.addEventListener('click', () => {
+    void api.save({ token: '' }).then(renderSfSync)
+  })
+}
+setupSfSync()
 
 // ── watchdog banner: a degraded signal path must be SEEN, not discovered via
 // missing labels. Beeps once per newly-raised alert code, not on every re-send.

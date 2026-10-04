@@ -26,6 +26,12 @@ contextBridge.exposeInMainWorld('syncAPI', {
   openMonitor: () => ipcRenderer.invoke('tt-open-monitor'),
 })
 
+contextBridge.exposeInMainWorld('sfSyncAPI', {
+  get: () => ipcRenderer.invoke('sf-sync:get'),
+  save: (args: { baseUrl?: string; token?: string }) => ipcRenderer.invoke('sf-sync:save', args),
+  onState: (cb: (s: unknown) => void) => ipcRenderer.on('sf-sync-state', (_e, s) => cb(s)),
+})
+
 contextBridge.exposeInMainWorld('diagAPI', {
   open: () => ipcRenderer.invoke('tt-diag:open'),
 })

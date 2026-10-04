@@ -13,6 +13,8 @@
 
 import { Worker } from 'node:worker_threads'
 import { join } from 'node:path'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 
 interface Context { room?: string; session?: string; sessionName?: string }
 
@@ -25,6 +27,9 @@ let ctx: Context = {}
 let file = ''
 let restarts = 0
 let report: (line: string) => void = () => {}
+let deviceId = ''
+let syncConfig: { endpoint: string; token: string } | null = null
+let onSync: (state: string, detail: string) => void = () => {}
 const waiters = new Map<number, (ok: boolean) => void>()
 let flushSeq = 0
 
@@ -34,8 +39,9 @@ function spawn(): void {
   try {
     const w = new Worker(source, { eval: true })
     w.unref() // the journal must never be what keeps the app from quitting
-    w.on('message', (m: { kind: string; id?: number; failed?: number; message?: string }) => {
+    w.on('message', (m: { kind: string; id?: number; failed?: number; message?: string; state?: string; detail?: string }) => {
       if (m.kind === 'flushed' && m.id !== undefined) { waiters.get(m.id)?.(!m.failed); waiters.delete(m.id) }
+      else if (m.kind === 'sync') { report(`[journal] sync ${m.state}${m.detail ? ` — ${m.detail}` : ''}`); onSync(m.state ?? '', m.detail ?? '') }
       else if (m.kind === 'error') report(`[journal] ${m.message ?? 'write error'}`)
       else if (m.kind === 'recovered') report('[journal] writes recovered')
     })
@@ -54,6 +60,7 @@ function spawn(): void {
       }
     })
     worker = w
+    postSyncConfig() // a restarted worker has to be told again
   } catch (e) {
     worker = null
     report(`[journal] could not start: ${String((e as Error)?.message ?? e)}`)
@@ -70,11 +77,32 @@ function currentFile(): string {
   return file
 }
 
+// A stable per-install id, so two machines journaling at the same instant can never mint the
+// same record id. One tiny synchronous read at startup, before any show is attached.
+function loadDeviceId(directory: string): string {
+  const f = join(directory, 'device-id')
+  try {
+    const id = readFileSync(f, 'utf8').trim()
+    if (/^[0-9a-f]{12}$/.test(id)) return id
+  } catch { /* first run */ }
+  const id = randomBytes(6).toString('hex')
+  try { mkdirSync(directory, { recursive: true }); writeFileSync(f, id) } catch { /* an unwritable dir still gets a per-run id */ }
+  return id
+}
+
+function postSyncConfig(): void {
+  try {
+    worker?.postMessage({ kind: 'sync-config', config: syncConfig ? { ...syncConfig, dir, deviceId } : null })
+  } catch { /* best-effort */ }
+}
+
 /** Start the journal. `workerSource` is the bundled journalWorker as a string. Never throws. */
 export function initJournal(directory: string, workerSource: string, onReport?: (line: string) => void): void {
   dir = directory
   source = workerSource
-  runId = Date.now().toString(36)
+  deviceId = loadDeviceId(directory)
+  runId = `${deviceId}.${Date.now().toString(36)}`
+  syncConfig = null
   seq = 0
   restarts = 0
   file = ''
@@ -122,4 +150,20 @@ export async function closeJournal(): Promise<void> {
 
 export function journalFile(): string {
   return worker ? currentFile() : ''
+}
+
+/** Turn the upload to SellerFolio on (endpoint + token) or off (null). Safe to call any time. */
+export function setJournalSync(config: { endpoint: string; token: string } | null, onState?: (state: string, detail: string) => void): void {
+  syncConfig = config && config.endpoint && config.token ? config : null
+  if (onState) onSync = onState
+  postSyncConfig()
+}
+
+/** Ask for an upload pass now instead of at the next idle tick. */
+export function syncJournalNow(): void {
+  try { worker?.postMessage({ kind: 'sync-now' }) } catch { /* best-effort */ }
+}
+
+export function journalDeviceId(): string {
+  return deviceId
 }
