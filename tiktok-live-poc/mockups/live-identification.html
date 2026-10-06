@@ -20,7 +20,10 @@
   5. Override and Retry on each entry, and on every row of the new screen.
   6. A new screen on the icon rail, built like #settingsScreen: every identification for the show.
 
-  The right panel is untouched; the AI chip on "Current auction item" now points at the review queue.
+  7. "Current auction item" is DELETED. It showed name, bid, bids and ends-in — every one of which
+     the video overlay already shows, and the overlay adds the high bidder besides. The overlay is
+     also always visible, where the right panel scrolls. Its one unique affordance, the time bar,
+     moved onto the overlay; its review chip moved to the Identification head, where it belongs.
   Drawn at 1440x900.
 -->
 <style>
@@ -94,6 +97,10 @@
   .lot-fig .k{font-size:11px;color:var(--on-video-2);}
   .lot-fig .v{font-family:var(--mono);font-weight:600;font-size:22px;color:var(--on-video);font-variant-numeric:tabular-nums;}
   .lot-fig .v.ends{color:#ffb38a;}
+  /* carried over from the deleted "Current auction item" panel — its one unique affordance */
+  .lot-bar{flex:1 1 100%;height:3px;border-radius:2px;background:rgba(255,255,255,.22);overflow:hidden;}
+  .lot-bar i{display:block;height:100%;background:var(--on-video-accent);}
+  .chip.rev{background:var(--flag-bg);color:var(--flag);border:0;cursor:pointer;}
 
   /* ── chat column: identification on top, chat underneath ────────────────── */
   .chat-col{flex:1 1 360px;min-width:280px;max-width:700px;border-left:1px solid var(--line);
@@ -184,15 +191,6 @@
   .bidrow.fresh::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent);}
   .bidrow .who{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .bidrow .amt{font-family:var(--mono);font-weight:600;}
-  .auction-name{font-weight:700;font-size:18px;letter-spacing:-.01em;margin-top:10px;white-space:nowrap;
-    overflow:hidden;text-overflow:ellipsis;}
-  .auction-figs{display:flex;justify-content:space-between;align-items:flex-end;margin-top:12px;}
-  .auction-figs .k{font-size:11px;color:var(--ink-3);}
-  .auction-figs .v{font-family:var(--mono);font-weight:600;font-size:26px;margin-top:2px;font-variant-numeric:tabular-nums;}
-  .auction-figs .v.bid{color:var(--accent);}
-  .auction-figs .v.ends{color:var(--flag);}
-  .auction-bar{height:6px;border-radius:4px;background:var(--panel-3);overflow:hidden;margin-top:14px;}
-  .auction-bar i{display:block;height:100%;width:64%;background:var(--accent);}
   .capture{display:flex;align-items:center;gap:16px;}
   .capture .sig{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--ink-3);}
   .capture .sig i{width:6px;height:6px;border-radius:50%;background:var(--gain);}
@@ -262,6 +260,7 @@
               <div class="lot-fig"><div class="k">Current bid &middot; 21 bids</div><div class="v">$88</div></div>
               <div class="lot-fig"><div class="k">Ends in</div><div class="v ends">0:09</div></div>
             </div>
+            <div class="lot-bar"><i style="width:64%;"></i></div>
           </div>
         </div>
       </div>
@@ -270,7 +269,10 @@
       <div class="chat-col">
         <div class="section-head">
           <span class="section-title">Identification</span>
-          <span class="livecount"><i></i>116 of 118</span>
+          <span style="display:flex;align-items:center;gap:8px;">
+            <button class="chip rev" onclick="go('history',document.getElementById('navIdent'))">2 need review</button>
+            <span class="livecount"><i></i>116 of 118</span>
+          </span>
         </div>
 
         <div id="recapList" class="sf-scroll">
@@ -372,19 +374,6 @@
           </div>
         </div>
 
-        <div class="panel pad">
-          <div style="display:flex;align-items:center;justify-content:space-between;">
-            <span class="eyebrow">Current auction item</span>
-            <button class="chip amber" onclick="go('history',document.getElementById('navIdent'))">2 NEED REVIEW</button>
-          </div>
-          <div class="auction-name">Bin A - Alo Yoga and More, No Cancels</div>
-          <div class="auction-figs">
-            <div><div class="k">Current bid</div><div class="v bid">$88</div></div>
-            <div><div class="k">Bids</div><div class="v">21</div></div>
-            <div style="text-align:right;"><div class="k">Ends in</div><div class="v ends">0:09</div></div>
-          </div>
-          <div class="auction-bar"><i></i></div>
-        </div>
 
         <div class="panel">
           <div class="panel-head"><span class="eyebrow">Thermal print queue</span>
