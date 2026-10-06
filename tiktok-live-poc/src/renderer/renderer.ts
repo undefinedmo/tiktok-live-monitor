@@ -37,6 +37,7 @@ declare global {
     recapAPI?: {
       enabled: () => Promise<{ enabled: boolean; model: string }>
       transcribe: (payload: { audio: Uint8Array; productName?: string; structured?: boolean }) => Promise<{ text?: string; fields?: LedgerTranscript; error?: string }>
+      suggestRegex?: (payload: { title: string; want: string }) => Promise<{ regex?: string; flags?: string; explain?: string; error?: string }>
     }
     syncAPI?: {
       connection: () => Promise<{ loggedIn: boolean; hasShow: boolean; polling: boolean }>
@@ -1407,6 +1408,69 @@ function setupSettings() {
     b.addEventListener('input', onEdit)
   }
   sampleInputs()
+
+  // ── AI help for the extraction pattern ──────────────────────────────────────
+  // The suggestion is shown, never applied. It is run through the SAME extractCustom the printer
+  // uses, against the operator's own sample title, so what is on screen is what would print.
+  const regexAI = () => {
+    const ask = document.getElementById('rxAsk') as HTMLButtonElement | null
+    const want = inp('rxWant')
+    const box = document.getElementById('rxResult')
+    const state = document.getElementById('rxState')
+    if (!ask || !box || !state) return
+    let proposed: { regex: string; flags: string } | null = null
+
+    const say = (msg: string, bad = false) => {
+      state.textContent = msg
+      state.className = 'state ' + (bad ? 'bad-text' : 'muted')
+    }
+    if (!window.recapAPI?.suggestRegex) {
+      ask.disabled = true
+      say('Needs a Gemini key — set GEMINI_API_KEY to use this.')
+    }
+    document.getElementById('rxDismiss')?.addEventListener('click', () => { box.hidden = true; proposed = null })
+    document.getElementById('rxUse')?.addEventListener('click', () => {
+      if (!proposed) return
+      inp('setRegex').value = proposed.regex
+      inp('setFlags').value = proposed.flags
+      inp('setCustom').checked = true          // a pattern nobody prints is not what they asked for
+      box.hidden = true
+      proposed = null
+      apply()
+      say('Pattern applied.')
+    })
+    ask.addEventListener('click', async () => {
+      const title = sampleTitle.trim()
+      if (!title) return say('Paste a sample listing title above first.', true)
+      if (!want.value.trim()) return say('Describe what should print.', true)
+      ask.disabled = true
+      say('Asking…')
+      try {
+        const r = await window.recapAPI!.suggestRegex!({ title, want: want.value.trim() })
+        if (r.error || !r.regex) return say(r.error ?? 'No pattern came back.', true)
+        // Compile it before it is ever shown as usable — a malformed pattern must not reach the field.
+        try { new RegExp(r.regex, r.flags ?? '') } catch (e) {
+          return say('The suggested pattern was not valid: ' + (e as Error).message, true)
+        }
+        const prints = extractCustom(title, r.regex, r.flags ?? '')
+        proposed = { regex: r.regex, flags: r.flags ?? '' }
+        document.getElementById('rxPattern')!.textContent = r.regex + (r.flags ? '  /' + r.flags : '')
+        const printsEl = document.getElementById('rxPrints')!
+        printsEl.textContent = prints || 'nothing'
+        printsEl.style.color = prints ? 'var(--ink)' : 'var(--loss)'
+        document.getElementById('rxExplain')!.textContent = r.explain ?? ''
+        box.hidden = false
+        // Offering a pattern that extracts nothing from the operator's own title would be offering
+        // a label that prints blank, so say so rather than letting the empty result pass as a result.
+        say(prints ? '' : 'That pattern finds nothing in your sample title — try describing it differently.', !prints)
+      } catch (e) {
+        say((e as Error).message, true)
+      } finally {
+        ask.disabled = false
+      }
+    })
+  }
+  regexAI()
   const apply = () => {
     labelTemplate = {
       labelSize: sel('setSize').value as LabelTemplate['labelSize'],

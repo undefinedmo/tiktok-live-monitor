@@ -899,6 +899,49 @@ async function geminiStructured(
   }
 }
 
+// Turn a plain-language description into a label-extraction pattern. The operator says what they
+// want printed ("the bin letter"); this returns a candidate regex. It is deliberately NOT applied
+// here — the renderer runs it against the operator's own sample title first and shows the result,
+// because a pattern that silently installs itself prints the wrong thing on every label of the
+// next show and nothing looks broken.
+ipcMain.handle('tt-suggest-regex', async (_e, payload: { title?: string; want?: string }) => {
+  if (!GEMINI_KEY) return { error: 'GEMINI_API_KEY not set' }
+  const title = (payload?.title ?? '').slice(0, 300).trim()
+  const want = (payload?.want ?? '').slice(0, 200).trim()
+  if (!title) return { error: 'paste a sample listing title first' }
+  if (!want) return { error: 'describe what should print' }
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`
+  const prompt = [
+    'You write JavaScript regular expressions that extract one piece of text from a product title.',
+    `TITLE: ${JSON.stringify(title)}`,
+    `WANTED: ${JSON.stringify(want)}`,
+    '',
+    'Return ONLY minified JSON: {"regex":"...","flags":"...","explain":"..."}',
+    'Rules: the FIRST capture group must contain exactly the wanted text. Keep the pattern short and',
+    'literal — prefer explicit alternatives over broad classes. Never use nested quantifiers or',
+    'backreferences. flags is "" or "i". explain is one short sentence in plain English.',
+  ].join('\n')
+  const body = { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0 } }
+  try {
+    const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    const json = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[]; error?: { message?: string } }
+    if (!res.ok) return { error: `gemini ${res.status}: ${json?.error?.message ?? ''}`.slice(0, 200) }
+    const raw = (json.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('').trim()
+    const body2 = raw.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
+    let parsed: { regex?: unknown; flags?: unknown; explain?: unknown }
+    try { parsed = JSON.parse(body2) } catch { return { error: 'the model did not return a pattern' } }
+    const regex = typeof parsed.regex === 'string' ? parsed.regex : ''
+    const flags = typeof parsed.flags === 'string' ? parsed.flags.replace(/[^gimsuy]/g, '') : ''
+    if (!regex) return { error: 'the model did not return a pattern' }
+    // A pattern this long is not something an operator can read or check, so it is refused here
+    // rather than handed to the renderer to validate.
+    if (regex.length > 200) return { error: 'the suggested pattern was too long to trust' }
+    return { regex, flags, explain: typeof parsed.explain === 'string' ? parsed.explain.slice(0, 200) : '' }
+  } catch (e) {
+    return { error: (e as Error).message }
+  }
+})
+
 ipcMain.handle('tt-transcribe', async (_e, payload: { audio?: Uint8Array; productName?: string; structured?: boolean }) => {
   if (!GEMINI_KEY) return { error: 'GEMINI_API_KEY not set' }
   const audio = payload?.audio instanceof Uint8Array ? payload.audio : new Uint8Array(payload?.audio ?? [])

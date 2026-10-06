@@ -207,6 +207,15 @@
       .capture .sig i{width:6px;height:6px;border-radius:50%;background:var(--gain);}
       /* off is the honest default: both lights start dark and only go green once the thing they
          name is genuinely running. */
+      /* AI regex help, inside the Advanced pattern block */
+      .rxai{display:flex;gap:8px;align-items:center;margin:10px 0 0;}
+      .rxai input{flex:1 1 auto;min-width:0;}
+      .rxresult{margin-top:10px;padding:10px 12px;border:1px solid var(--accent);background:var(--accent-tint);border-radius:8px;}
+      .rxline{display:flex;align-items:baseline;gap:8px;margin-bottom:4px;}
+      .rxline .k{font-size:11px;color:var(--ink-3);flex:0 0 54px;}
+      .rxline code{font-family:var(--mono);font-size:11.5px;word-break:break-all;}
+      .rxline b{font-size:13px;}
+      .rxacts{display:flex;gap:6px;justify-content:flex-end;margin-top:8px;}
       .capture .sig.off{color:var(--ink-4);}
       .capture .sig.off i{background:var(--line-strong);}
 
@@ -594,6 +603,25 @@
                 <details class="adv" id="advPattern">
                   <summary>Advanced: edit or save a pattern</summary>
                   <p class="muted">A regular expression, matched against the listing title. Whatever the first pair of brackets captures is what prints.</p>
+                  <!-- Say what you want in plain words and let the model write the pattern. The
+                       suggestion is never applied on its own: it is run against the sample title
+                       above and the extracted text is shown first, because a pattern that installs
+                       itself prints the wrong thing on every label of the next show and nothing
+                       looks broken. -->
+                  <div class="rxai">
+                    <input type="text" id="rxWant" placeholder="Describe what should print, e.g. the bin letter" spellcheck="false" />
+                    <button type="button" id="rxAsk" class="qbtn" style="flex:none;">Suggest pattern</button>
+                  </div>
+                  <div id="rxResult" class="rxresult" hidden>
+                    <div class="rxline"><span class="k">Pattern</span><code id="rxPattern"></code></div>
+                    <div class="rxline"><span class="k">Prints</span><b id="rxPrints"></b></div>
+                    <div id="rxExplain" class="muted"></div>
+                    <div class="rxacts">
+                      <button type="button" id="rxDismiss" class="qbtn sm">Dismiss</button>
+                      <button type="button" id="rxUse" class="qbtn sm print">Use this</button>
+                    </div>
+                  </div>
+                  <div id="rxState" class="state muted"></div>
                   <div class="custom-row">
                     <input type="text" id="setRegex" placeholder="pattern, e.g. (Bin [A-Z])" spellcheck="false" />
                     <input type="text" id="setFlags" placeholder="flags" title="Pattern flags — i ignores upper/lower case" spellcheck="false" />
@@ -669,7 +697,12 @@
           savePrinter: async () => true,
           print: async () => ({ success: true }),
         }
-        window.recapAPI = { enabled: async () => ({ enabled: true, model: 'gemini-2.5-flash' }), transcribe: async () => ({ text: '(demo)' }) }
+        window.recapAPI = {
+          enabled: async () => ({ enabled: true, model: 'gemini-2.5-flash' }),
+          transcribe: async () => ({ text: '(demo)' }),
+          // Canned, so the preview exercises the real validate -> extract -> show path without a key.
+          suggestRegex: async () => ({ regex: '(Bin [A-Z])', flags: 'i', explain: 'Finds the word Bin followed by a single letter.' }),
+        }
         // Demo data only — the renderer owns the markup, so this cannot drift from the real UI.
         window.__demoRecaps = [
           { head: 'Bin B - Alo Yoga and More — @janethague', lot: '#69', price: '$145', status: 'done',

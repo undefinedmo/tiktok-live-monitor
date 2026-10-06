@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('updateAPI', {
 contextBridge.exposeInMainWorld('recapAPI', {
   enabled: () => ipcRenderer.invoke('recap-enabled'),
   transcribe: (payload: unknown) => ipcRenderer.invoke('tt-transcribe', payload),
+  suggestRegex: (payload: unknown) => ipcRenderer.invoke('tt-suggest-regex', payload),
 })
 
 contextBridge.exposeInMainWorld('syncAPI', {
