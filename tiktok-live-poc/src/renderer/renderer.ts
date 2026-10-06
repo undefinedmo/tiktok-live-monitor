@@ -70,14 +70,6 @@ function el(tag: string, className?: string, text?: string): HTMLElement {
   if (text !== undefined) e.textContent = text
   return e
 }
-function avatar(url: string | undefined, cls = 'bidav'): HTMLElement {
-  const img = document.createElement('img')
-  img.className = cls
-  img.referrerPolicy = 'no-referrer'
-  if (url) img.src = url
-  img.addEventListener('error', () => { img.style.visibility = 'hidden' })
-  return img
-}
 function ago(ms: number): string {
   const s = Math.max(0, Math.round((Date.now() - ms) / 1000))
   if (s < 60) return `${s}s`
@@ -193,7 +185,6 @@ function renderFeed() {
     const failed = s.paymentStatus === 'failed'
     const provisional = s.orderId.startsWith('prov:')
     const row = el('div', 'bidrow' + (i === 0 ? ' fresh' : '') + (failed ? ' failed' : ''))
-    row.appendChild(avatar(s.buyer.avatarUrl))
     const who = el('div', 'bidwho')
     who.appendChild(el('div', 'bidname', s.buyer.username || s.buyer.handle || '—'))
     const sub = el('div', 'bidsub')
@@ -489,7 +480,6 @@ function renderFailed() {
   list.replaceChildren()
   for (const s of rows.slice(0, 40)) {
     const row = el('div', 'bidrow failed')
-    row.appendChild(avatar(s.buyer.avatarUrl))
     const who = el('div', 'bidwho')
     who.appendChild(el('div', 'bidname', s.buyer.username || s.buyer.handle || '—'))
     const sub = el('div', 'bidsub')
