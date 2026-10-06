@@ -741,6 +741,30 @@ function idEntry(r: Recap, current: boolean, redraw: () => void): HTMLElement {
   return row
 }
 
+/** The capture lights report what is ACTUALLY running, not what the app can do.
+ *  AUDIO is green only while a MediaRecorder is recording the stream's audio track — which needs
+ *  both a Gemini key and the Settings switch, and that switch defaults OFF. VIDEO is green only
+ *  while the player is genuinely playing. Anything less and an operator checking "is this
+ *  capturing?" gets a reassuring light over nothing. */
+function renderCaptureState() {
+  const v = document.getElementById('live') as HTMLVideoElement | null
+  const videoLive = !!v && !v.paused && !v.ended && v.readyState >= 2
+  const audioLive = !!astream && rec?.state === 'recording'
+  const audio = document.getElementById('sigAudio')
+  const video = document.getElementById('sigVideo')
+  if (audio) {
+    audio.classList.toggle('off', !audioLive)
+    audio.title = audioLive ? 'Recording the stream’s audio for identification'
+      : recapEnabled ? 'Idle — audio is captured when a lot sells' : 'Off — turn on Show audio in Settings'
+  }
+  if (video) {
+    video.classList.toggle('off', !videoLive)
+    video.title = videoLive ? 'Playing the live stream' : 'No stream playing'
+  }
+  const note = document.getElementById('captureNote')
+  if (note) note.textContent = audioLive ? 'recording' : recapEnabled ? 'armed' : 'audio off'
+}
+
 function renderRecap() {
   const list = document.getElementById('recapList')
   if (!list) return
@@ -1531,6 +1555,8 @@ for (const b of document.querySelectorAll<HTMLElement>('[data-idfilter]')) {
   })
 }
 syncIdFilterButtons()
+renderCaptureState()
+setInterval(renderCaptureState, 1000)
 // Deep link, so a screen can be opened (and screenshotted) without a click. Accepts the query
 // form too, because a fragment does not always survive a headless capture.
 {

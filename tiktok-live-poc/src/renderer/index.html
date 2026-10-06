@@ -205,10 +205,10 @@
       .capture{display:flex;align-items:center;gap:16px;}
       .capture .sig{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--ink-3);}
       .capture .sig i{width:6px;height:6px;border-radius:50%;background:var(--gain);}
-      .capture .sig.alt i{background:var(--accent);}
-      .capture .bars{display:flex;align-items:flex-end;gap:2px;height:20px;margin-left:auto;}
-      .capture .bars i{width:3px;border-radius:1px;background:var(--line-strong);}
-      .capture .bars i.hi{background:var(--accent);}
+      /* off is the honest default: both lights start dark and only go green once the thing they
+         name is genuinely running. */
+      .capture .sig.off{color:var(--ink-4);}
+      .capture .sig.off i{background:var(--line-strong);}
 
       /* products + recap (hidden in the current build, styled so they stay legible if shown) */
       .prow{display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:12px;}
@@ -494,10 +494,12 @@
           </div>
           <div class="panel pad capture">
             <span class="eyebrow">Capture engine</span>
-            <span class="sig"><i></i>AUDIO</span>
-            <span class="sig"><i></i>VIDEO</span>
-            <span class="sig alt"><i></i>VISION</span>
-            <div class="bars"><i style="height:40%;"></i><i class="hi" style="height:80%;"></i><i style="height:55%;"></i><i class="hi" style="height:100%;"></i><i style="height:65%;"></i></div>
+            <!-- These report real state. VISION was removed: there is no frame/vision path in this
+                 app, so a lit light claimed a capability that does not exist. The bars were fixed
+                 inline percentages — a frozen equaliser that read as live telemetry. -->
+            <span class="sig off" id="sigAudio"><i></i>AUDIO</span>
+            <span class="sig off" id="sigVideo"><i></i>VIDEO</span>
+            <span id="captureNote" class="mono" style="margin-left:auto;font-size:10px;color:var(--ink-4);"></span>
           </div>
         </div>
       </div>
