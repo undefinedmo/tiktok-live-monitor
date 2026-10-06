@@ -218,11 +218,63 @@
       .prow .ptx{width:18px;flex:none;text-align:center;cursor:pointer;color:var(--line-strong);}
       .prow .ptx.has,.prow .ptx:hover{color:var(--accent);}
       .prow .ptx.busy{color:var(--flag);cursor:default;}
+      /* ── identification: the chat column's headline ───────────────────────────────── */
+      /* Capped at two entries (the lot selling and the one before it). A scrolling backlog here
+         competes with the show for the operator's attention; everything older is on the
+         Identifications screen. */
+      #recapList{flex:0 0 auto;overflow-y:auto;}
       .recap-entry{padding:11px 16px;border-bottom:1px solid var(--line);}
-      .recap-head{font-family:var(--mono);font-size:10px;color:var(--accent-2);margin-bottom:5px;}
+      .recap-entry.current{background:var(--onair-bg);}
+      .recap-entry.review{box-shadow:inset 3px 0 0 var(--flag);}
+      .recap-head{font-family:var(--mono);font-size:10px;color:var(--accent-2);margin-bottom:6px;display:flex;align-items:baseline;gap:7px;}
+      .recap-head .price{margin-left:auto;color:var(--ink-3);}
       .recap-text{font-size:12.5px;line-height:1.45;color:var(--ink-2);}
       .recap-text.transcribing{color:var(--flag);font-style:italic;}
       .recap-text.error{color:var(--loss);}
+      /* the five SellerFolio fields, same order and labels as the web app */
+      .id-fields{display:grid;grid-template-columns:54px 1fr;gap:1px 10px;margin:0;}
+      .id-fields dt{font-size:11px;color:var(--ink-4);align-self:center;}
+      .id-fields dd{margin:0;font-size:12.5px;display:flex;align-items:center;gap:6px;min-width:0;}
+      .id-fields dd .v{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+      .id-fields dd.mono .v{font-family:var(--mono);}
+      .id-none{color:var(--ink-4);font-style:italic;}
+      /* Only uncertainty is marked — a badge on every row is noise when the operator is
+         scanning for the exception. */
+      .id-weak{flex:none;font-size:10px;padding:1px 5px;border-radius:4px;background:var(--flag-bg);color:var(--flag);}
+      /* Deliberately NOT the escalating ladder from the mockup: this path makes ONE local call,
+         so a three-rung ladder would describe behaviour that does not exist here. */
+      .id-working{height:3px;border-radius:2px;background:var(--panel-3);overflow:hidden;margin:9px 0 6px;}
+      .id-working i{display:block;height:100%;width:40%;background:var(--onair);animation:idslide 1.1s ease-in-out infinite;}
+      @keyframes idslide{0%{margin-left:-40%;}100%{margin-left:100%;}}
+      @media (prefers-reduced-motion:reduce){.id-working i{animation:none;margin-left:0;}}
+      .id-why{font-size:11px;color:var(--ink-3);}
+      .id-acts{display:flex;align-items:center;gap:6px;margin-top:9px;}
+      .id-acts .id-why{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+      .qbtn.sm{height:26px;padding:0 9px;font-size:11.5px;border-radius:7px;}
+      .qbtn.armed{border-color:var(--loss);background:var(--loss-bg);color:var(--loss);}
+      .chip.rev{background:var(--flag-bg);color:var(--flag);cursor:pointer;}
+      .id-edit{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);}
+      .id-edit .row{display:grid;grid-template-columns:54px 1fr;gap:6px 10px;align-items:center;}
+      .id-edit label{font-size:11px;color:var(--ink-4);}
+      .id-edit input{font:inherit;font-size:12.5px;padding:4px 8px;border:1px solid var(--line);border-radius:7px;background:var(--panel);width:100%;}
+      .id-edit input:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:var(--accent);}
+      .id-edit .acts{display:flex;gap:6px;justify-content:flex-end;margin-top:10px;}
+      /* chat: same classes, shorter, and no composer */
+      .chat-wrap{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;border-top:1px solid var(--line);}
+      .chat-note{flex:none;margin:0;padding:0 16px 12px;font-size:11px;color:var(--ink-4);}
+      /* ── identifications screen (built like #settingsScreen) ──────────────────────── */
+      #identifyScreen{flex:1;display:none;flex-direction:column;min-width:0;padding:24px 28px;gap:14px;overflow:hidden;}
+      .idfilters{display:flex;gap:8px;align-items:center;flex:none;}
+      .idfilters input{font:inherit;font-size:12.5px;padding:0 11px;height:32px;border:1px solid var(--line);border-radius:8px;background:var(--panel);min-width:230px;}
+      .idfilters input:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:var(--accent);}
+      .idfilters .qbtn.on{background:var(--accent-tint);color:var(--accent-2);border-color:var(--accent);}
+      #idTable{border-collapse:collapse;width:100%;}
+      #idTable thead th{position:sticky;top:0;text-align:left;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);font-weight:500;padding:10px 14px;background:var(--panel-2);border-bottom:1px solid var(--line);white-space:nowrap;}
+      #idTable th.num,#idTable td.num{text-align:right;}
+      #idTable tbody td{padding:9px 14px;border-bottom:1px solid var(--line);font-size:12.5px;vertical-align:middle;}
+      #idTable tbody tr:last-child td{border-bottom:0;}
+      #idTable tbody tr.flagged td{background:var(--flag-bg);}
+      .rowacts{display:flex;gap:6px;justify-content:flex-end;}
 
       /* ── settings screen ────────────────────────────────────────────────────── */
       #settingsScreen{flex:1;display:none;flex-direction:column;min-width:0;padding:24px 28px;gap:14px;overflow:hidden;}
@@ -332,6 +384,7 @@
     <div class="terminal-body">
       <div class="rail">
         <div class="navicon active" id="navMonitor" title="Live Monitor"><div class="navgrid"><i></i><i></i><i></i><i></i></div></div>
+        <div class="navicon" id="navIdentify" title="Identifications">&#9707;</div>
         <div style="flex:1;"></div>
         <div class="navicon" id="navSettings2" title="Label settings">⚙</div>
         <div style="height:8px;"></div>
@@ -363,15 +416,31 @@
           </div>
         </div>
 
+        <!-- Identification sits above chat: it is what the operator acts on, and it is the
+             reason this column exists. Chat keeps the bottom, shorter, and read-only. -->
         <div class="chat-col">
           <div class="section-head">
-            <span class="section-title">Live chat</span>
-            <span class="livecount"><i></i><span id="chatViewers">--</span></span>
+            <span class="section-title">Identification</span>
+            <span style="display:flex;align-items:center;gap:8px;">
+              <button id="idReviewChip" class="chip rev" style="display:none;">0 need review</button>
+              <span class="livecount"><i></i><span id="idCount">0</span></span>
+            </span>
           </div>
-          <div id="chatList" class="sf-scroll">
-            <span class="mono placeholder">waiting for comments...</span>
+          <div id="recapList" class="sf-scroll"></div>
+
+          <div class="chat-wrap">
+            <div class="section-head">
+              <span class="section-title">Live chat</span>
+              <span class="livecount"><i></i><span id="chatViewers">--</span></span>
+            </div>
+            <div id="chatList" class="sf-scroll">
+              <span class="mono placeholder">waiting for comments...</span>
+            </div>
+            <!-- The composer is gone on purpose: we cannot post to the stream, and an input that
+                 does nothing is worse than no input. Pulling buyer questions out of chat before
+                 they scroll away is separate work. -->
+            <p class="chat-note">Reading only. Replies don&rsquo;t reach the stream.</p>
           </div>
-          <div class="chat-input"><input id="chatInput" class="chat-placeholder" type="text" placeholder="Message..." maxlength="200" autocomplete="off" /><button id="chatSend" class="chat-send" title="Send to live chat">➤</button></div>
         </div>
 
         <div class="sf-scroll rightpanel">
@@ -404,20 +473,10 @@
             </div>
             <div id="topBuyersList"></div>
           </div>
-          <div class="panel pad">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <span class="eyebrow">Current auction item</span>
-              <span class="chip" id="recapStatus">AI EXTRACTION &middot; 99%</span>
-            </div>
-            <div class="auction-name" id="auctionPanelName">Waiting for current lot</div>
-            <div class="auction-figs">
-              <div><div class="k">Current bid</div><div class="v bid" id="auctionPanelBid">--</div></div>
-              <div><div class="k">Bids</div><div class="v" id="auctionPanelBids">0</div></div>
-              <div style="text-align:right;"><div class="k">Ends in</div><div class="v ends" id="auctionPanelEnds">--</div></div>
-            </div>
-            <div class="auction-bar"><i></i></div>
-            <div id="recapList" class="visually-hidden"></div>
-          </div>
+          <!-- "Current auction item" was deleted: it showed name, bid, bid count and ends-in, every
+               one of which the lot overlay on the video already shows, and the overlay adds the high
+               bidder besides. The overlay is also always visible, where this column scrolls.
+               #recapList moved into the chat column, which is what it was always for. -->
           <div class="panel">
             <div class="panel-head">
               <span class="eyebrow">Thermal print queue</span>
@@ -441,6 +500,29 @@
             <span class="sig alt"><i></i>VISION</span>
             <div class="bars"><i style="height:40%;"></i><i class="hi" style="height:80%;"></i><i style="height:55%;"></i><i class="hi" style="height:100%;"></i><i style="height:65%;"></i></div>
           </div>
+        </div>
+      </div>
+
+      <!-- ============ IDENTIFICATIONS SCREEN ============ -->
+      <div id="identifyScreen">
+        <span class="screen-title">Identifications</span>
+        <div class="idfilters">
+          <input id="idSearch" placeholder="Search lot, brand or item" aria-label="Search identifications" />
+          <button class="qbtn sm" data-idfilter="all">All</button>
+          <button class="qbtn sm" data-idfilter="review">Needs review</button>
+          <button class="qbtn sm" data-idfilter="edited">Overridden</button>
+          <span style="flex:1;"></span>
+          <span id="idShowName" class="mono muted" style="font-size:11px;"></span>
+        </div>
+        <div class="panel sf-scroll" style="flex:1;min-height:0;overflow-y:auto;">
+          <table id="idTable">
+            <thead><tr>
+              <th>Lot</th><th>Brand</th><th>Item</th><th>Color</th><th>Size</th>
+              <th class="num">MSRP</th><th class="num">Sold</th><th>How it was found</th><th></th>
+            </tr></thead>
+            <tbody id="idRows"></tbody>
+          </table>
+          <div id="idEmpty" class="mono placeholder" style="padding:18px 16px;">No identifications yet this show.</div>
         </div>
       </div>
 
@@ -587,6 +669,15 @@
           print: async () => ({ success: true }),
         }
         window.recapAPI = { enabled: async () => ({ enabled: true, model: 'gemini-2.5-flash' }), transcribe: async () => ({ text: '(demo)' }) }
+        // Demo data only — the renderer owns the markup, so this cannot drift from the real UI.
+        window.__demoRecaps = [
+          { head: 'Bin B - Alo Yoga and More — @janethague', lot: '#69', price: '$145', status: 'done',
+            fields: { brand: 'Alo Yoga', item: 'Gold Rush Puffer', color: 'Navy', size: 'S', retailPrice: '$200' } },
+          { head: 'Bin A - Customer Return — @70mendoza_', lot: '#68', price: '$32', status: 'done',
+            fields: { brand: 'Alo Yoga', item: 'Ribbed Tank', color: 'Not stated', size: 'XS', retailPrice: '' } },
+          { head: 'Bin A - Alo Yoga and More — @tlc0216', lot: '#67', price: '$96', status: 'done', edited: true,
+            fields: { brand: 'Alo Yoga', item: 'Accolade Hoodie', color: 'Espresso', size: 'L', retailPrice: '$140' } },
+        ]
         const __cbs = []
         window.ttLive = { onEvent: (cb) => __cbs.push(cb) }
         // demo: pre-seed a couple of bins with AI details + a cost template so the ledger/picklist show them
@@ -621,13 +712,7 @@
           emit({ kind: 'sales', recentSales: sales, newSales: [], byProduct: Object.values(bp), topBuyers, uniqueBuyers: topBuyers.length, totalSales: sales.filter((s) => s.paymentStatus === 'paid').length, totalCents: sales.reduce((a, s) => a + (s.paymentStatus === 'paid' ? s.price.cents : 0), 0), failedPayments: sales.filter((s) => s.paymentStatus === 'failed'), ts: now })
           const comments = [['Latrice', 'love this set! 🔥'], ['M.i', 'what size is bin A?'], ['daysi', 'sending it 🚀'], ['Nicd', 'gl everyone'], ['Bre', 'take my money 💸'], ['Val', 'is it still available?'], ['Kim', 'so cute 😍'], ['Jo', 'first time here!']]
           emit({ kind: 'chat', items: comments.map((c, i) => ({ nickname: c[0], text: c[1], avatarUrl: '', ts: now - i * 5000 })), ts: now })
-          setTimeout(() => {
-            const rl = document.getElementById('recapList')
-            if (rl) rl.innerHTML = [
-              ['#69 · Bin B - Alo Yoga — @janethague', 'Next up Bin B — beautiful Alo Yoga set, size small, brand new with tags. Starting at fifteen, who wants it…'],
-              ['#54 · Bin A - Alo Yoga — @70mendoza_', 'Bin A going out — matching set, medium, super soft, no flaws. Sold to the lady in the front!'],
-            ].map((r) => '<div class="recap-entry"><div class="recap-head">' + r[0] + '</div><div class="recap-text">' + r[1] + '</div></div>').join('')
-          }, 200)
+
         })
       }
     </script>

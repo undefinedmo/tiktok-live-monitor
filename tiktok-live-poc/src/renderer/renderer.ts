@@ -412,10 +412,6 @@ function renderAuction(p?: PinnedAuction) {
     $('lotBuyer').textContent = '—'
     $('lotBid').textContent = '—'
     $('lotBids').textContent = '0'
-    document.getElementById('auctionPanelName')!.textContent = 'Waiting for current lot'
-    document.getElementById('auctionPanelBid')!.textContent = '--'
-    document.getElementById('auctionPanelBids')!.textContent = '0'
-    document.getElementById('auctionPanelEnds')!.textContent = '--'
     return
   }
   pinnedEndMs = p.expectedEndMs
@@ -428,28 +424,22 @@ function renderAuction(p?: PinnedAuction) {
   $('lotBid').textContent = p.maxBiddingPrice ?? '—'
   $('lotBids').textContent = String(p.numBids ?? 0)
   $('lotBuyer').textContent = p.winUsername ? '@' + p.winUsername : 'no bids yet'
-  document.getElementById('auctionPanelName')!.textContent = p.productName
-  document.getElementById('auctionPanelBid')!.textContent = p.maxBiddingPrice ?? '--'
-  document.getElementById('auctionPanelBids')!.textContent = String(p.numBids ?? 0)
 }
 
 function tickCountdown() {
   const ends = document.getElementById('lotEnds')
   if (!ends) return
-  const panelEnds = document.getElementById('auctionPanelEnds')
   // A close was just painted by onAuctionClosed — hold SOLD against this 250ms tick
   // (and the slower roster/pin repaints) until the next lot's state has had time to land.
   if (Date.now() - lotSoldAt < 10000) {
     ends.textContent = 'SOLD'
-    if (panelEnds) panelEnds.textContent = 'SOLD'
     return
   }
-  if (!pinnedEndMs) { ends.textContent = '--'; if (panelEnds) panelEnds.textContent = '--'; return }
+  if (!pinnedEndMs) { ends.textContent = '--'; return }
   // expectedEndMs is in server time; correct the client clock by the pin/get offset.
   const left = Math.max(0, Math.round((pinnedEndMs - (Date.now() + serverTimeOffsetMs)) / 1000))
   const label = left > 0 ? `${left}s` : 'ended'
   ends.textContent = label
-  if (panelEnds) panelEnds.textContent = label
 }
 setInterval(tickCountdown, 250)
 
@@ -589,7 +579,32 @@ let aiTranscribePref = localStorage.getItem(AI_PREF_KEY) === '1'
 let recapEnabled = false
 let transcribing = false
 let segmentTimer: ReturnType<typeof setInterval> | undefined
-interface Recap { head: string; status: 'transcribing' | 'done' | 'error'; text: string }
+interface Recap {
+  head: string
+  lot: string
+  price: string
+  status: 'transcribing' | 'done' | 'error'
+  text: string
+  /** The five SellerFolio fields. main.ts has always returned these; the old UI threw them away. */
+  fields?: LedgerTranscript
+  /** An operator corrected this entry by hand — never silently replaced by a later run. */
+  edited?: boolean
+  /** Kept so Retry can re-run THIS lot rather than whatever is selling now. */
+  sale?: Sale
+}
+const ID_FIELDS: Array<[keyof LedgerTranscript, string, boolean]> = [
+  ['brand', 'Brand', false], ['item', 'Item', false], ['color', 'Color', false],
+  ['size', 'Size', true], ['retailPrice', 'MSRP', true],
+]
+/** A model that answers "Not stated" has not answered. Treat it as absent, as the server does. */
+function idValue(v: unknown): string | null {
+  const t = typeof v === 'string' ? v.trim() : ''
+  return !t || /^(not stated|unknown|n\/?a|none|-+)$/i.test(t) ? null : t
+}
+function idIsWeak(r: Recap): boolean {
+  if (r.status !== 'done') return false
+  return ID_FIELDS.some(([k]) => idValue(r.fields?.[k]) === null)
+}
 const recaps: Recap[] = []
 
 function cycleRecorder() {
@@ -631,21 +646,192 @@ function grabClip(): Promise<Blob | null> {
   return new Promise((resolve) => { onStopResolve = resolve; rec!.stop() })
 }
 
+/** The five fields as a label/value grid — same order and labels as the web app's identity card. */
+function idFieldGrid(r: Recap): HTMLElement {
+  const dl = el('dl', 'id-fields')
+  for (const [key, label, mono] of ID_FIELDS) {
+    dl.appendChild(el('dt', undefined, label))
+    const dd = el('dd', mono ? 'mono' : undefined)
+    const v = idValue(r.fields?.[key])
+    const span = el('span', v ? 'v' : 'v id-none', v ?? (r.status === 'transcribing' ? 'listening…' : 'not said'))
+    dd.appendChild(span)
+    dl.appendChild(dd)
+  }
+  return dl
+}
+
+/** Inline correction of the five fields. An operator edit is never overwritten by a later run. */
+function idEditor(r: Recap, redraw: () => void): HTMLElement {
+  const box = el('div', 'id-edit')
+  const row = el('div', 'row')
+  const inputs: Partial<Record<keyof LedgerTranscript, HTMLInputElement>> = {}
+  for (const [key, label] of ID_FIELDS) {
+    const lab = el('label', undefined, label)
+    const inp = document.createElement('input')
+    inp.value = idValue(r.fields?.[key]) ?? ''
+    inp.placeholder = 'not said'
+    inputs[key] = inp
+    row.appendChild(lab); row.appendChild(inp)
+  }
+  const acts = el('div', 'acts')
+  const cancel = el('button', 'qbtn sm', 'Cancel')
+  const save = el('button', 'qbtn sm print', 'Save identity')
+  cancel.addEventListener('click', () => { editing.delete(r); redraw() })
+  save.addEventListener('click', () => {
+    const next: LedgerTranscript = { ...(r.fields ?? {}) }
+    for (const [key] of ID_FIELDS) next[key] = inputs[key]!.value.trim()
+    r.fields = next
+    r.edited = true
+    r.status = 'done'
+    editing.delete(r)
+    redraw()
+  })
+  acts.appendChild(cancel); acts.appendChild(save)
+  box.appendChild(row); box.appendChild(acts)
+  return box
+}
+
+/** Retry arms on the first click and runs on the second — the same guard the web app puts on
+ *  re-transcribe, so one stray click cannot throw away an identity someone corrected by hand. */
+function idRetryButton(r: Recap, redraw: () => void): HTMLElement {
+  const b = el('button', 'qbtn sm', 'Retry') as HTMLButtonElement
+  let armed = false
+  let t: ReturnType<typeof setTimeout> | undefined
+  b.addEventListener('click', () => {
+    if (!armed) {
+      armed = true; b.classList.add('armed'); b.textContent = 'Confirm retry'
+      t = setTimeout(() => { armed = false; b.classList.remove('armed'); b.textContent = 'Retry' }, 4000)
+      return
+    }
+    if (t) clearTimeout(t)
+    armed = false; b.classList.remove('armed')
+    // transcribeSale holds a single capture lock and DROPS a call made while it is busy, so say
+    // so rather than appearing to do nothing. A real queue belongs with the upload work.
+    if (transcribing) { b.textContent = 'busy — try again'; setTimeout(() => { b.textContent = 'Retry' }, 1800); return }
+    if (!r.sale) { b.textContent = 'no audio for this lot'; setTimeout(() => { b.textContent = 'Retry' }, 1800); return }
+    b.textContent = 'Retrying…'
+    void transcribeSale(r.sale).then(redraw)
+  })
+  return b
+}
+
+/** Which entries are mid-edit. Keyed by object so a re-render cannot lose the open editor. */
+const editing = new Set<Recap>()
+
+function idEntry(r: Recap, current: boolean, redraw: () => void): HTMLElement {
+  const weak = idIsWeak(r)
+  const row = el('div', 'recap-entry' + (current ? ' current' : '') + (weak ? ' review' : ''))
+  const head = el('div', 'recap-head')
+  head.appendChild(el('span', undefined, [r.lot, r.head].filter(Boolean).join(' · ')))
+  if (r.price) head.appendChild(el('span', 'price', r.price))
+  row.appendChild(head)
+
+  if (r.status === 'error') {
+    row.appendChild(el('div', 'recap-text error', '⚠ ' + r.text))
+  } else {
+    row.appendChild(idFieldGrid(r))
+  }
+
+  if (r.status === 'transcribing') {
+    const bar = el('div', 'id-working')
+    bar.appendChild(el('i'))
+    row.appendChild(bar)
+    row.appendChild(el('div', 'id-why', 'listening to this lot…'))
+  } else {
+    const acts = el('div', 'id-acts')
+    acts.appendChild(el('span', 'id-why',
+      r.edited ? 'you corrected this' : r.status === 'error' ? 'identification failed' : weak ? 'some fields were not said' : 'identified'))
+    const override = el('button', 'qbtn sm', 'Override')
+    override.addEventListener('click', () => { editing.has(r) ? editing.delete(r) : editing.add(r); redraw() })
+    acts.appendChild(override)
+    acts.appendChild(idRetryButton(r, redraw))
+    row.appendChild(acts)
+    if (editing.has(r)) row.appendChild(idEditor(r, redraw))
+  }
+  return row
+}
+
 function renderRecap() {
   const list = document.getElementById('recapList')
   if (!list) return
   list.replaceChildren()
+  const count = document.getElementById('idCount')
+  if (count) count.textContent = String(recaps.filter((r) => r.status === 'done').length)
+  const chip = document.getElementById('idReviewChip')
+  if (chip) {
+    const n = recaps.filter((r) => idIsWeak(r) || r.status === 'error').length
+    chip.textContent = `${n} need review`
+    chip.style.display = n ? '' : 'none'
+  }
   if (!recaps.length) {
-    const e = el('div', 'mono', recapEnabled ? 'transcripts appear as items sell…' : 'set GEMINI_API_KEY to enable')
+    const e = el('div', 'mono', recapEnabled ? 'items are identified as they sell…' : 'set GEMINI_API_KEY to enable')
     e.style.cssText = 'padding:14px 16px;color:var(--ink-4);font-size:11px;'
     list.appendChild(e)
     return
   }
-  for (const r of recaps.slice(0, 6)) {
-    const row = el('div', 'recap-entry')
-    row.appendChild(el('div', 'recap-head', r.head))
-    row.appendChild(el('div', 'recap-text ' + r.status, r.status === 'transcribing' ? 'transcribing…' : r.status === 'error' ? '⚠ ' + r.text : r.text))
-    list.appendChild(row)
+  // Two only: the lot selling and the one before it. Everything older is on the Identifications
+  // screen — a scrolling backlog here competes with the show for the operator's attention.
+  recaps.slice(0, 2).forEach((r, i) => list.appendChild(idEntry(r, i === 0, renderAll)))
+  if (recaps.length > 2) {
+    const more = el('div', 'recap-entry')
+    const link = el('a', undefined, 'Earlier lots are on the Identifications screen')
+    link.setAttribute('href', '#')
+    link.style.cssText = 'font-size:11px;color:var(--accent);'
+    link.addEventListener('click', (e) => { e.preventDefault(); showScreen('identify') })
+    more.appendChild(link)
+    list.appendChild(more)
+  }
+}
+
+/** Both views read the same array, so an Override made in one is visible in the other. */
+function renderAll() { renderRecap(); renderIdentifications() }
+
+let idFilter: 'all' | 'review' | 'edited' = 'all'
+function renderIdentifications() {
+  const body = document.getElementById('idRows')
+  const empty = document.getElementById('idEmpty')
+  if (!body) return
+  const q = ((document.getElementById('idSearch') as HTMLInputElement | null)?.value ?? '').trim().toLowerCase()
+  const rows = recaps.filter((r) => {
+    if (idFilter === 'review' && !(idIsWeak(r) || r.status === 'error')) return false
+    if (idFilter === 'edited' && !r.edited) return false
+    if (!q) return true
+    return [r.lot, r.head, r.fields?.brand, r.fields?.item].some((v) => (v ?? '').toLowerCase().includes(q))
+  })
+  body.replaceChildren()
+  if (empty) empty.style.display = rows.length ? 'none' : ''
+  for (const r of rows) {
+    const tr = el('tr', idIsWeak(r) || r.status === 'error' ? 'flagged' : undefined)
+    const cell = (text: string | null, cls?: string) => {
+      const td = el('td', cls)
+      td.appendChild(el('span', text ? undefined : 'id-none', text ?? 'not said'))
+      return td
+    }
+    tr.appendChild(cell(r.lot || '—', 'mono'))
+    tr.appendChild(cell(idValue(r.fields?.brand)))
+    tr.appendChild(cell(idValue(r.fields?.item)))
+    tr.appendChild(cell(idValue(r.fields?.color)))
+    tr.appendChild(cell(idValue(r.fields?.size), 'mono'))
+    tr.appendChild(cell(idValue(r.fields?.retailPrice), 'num mono'))
+    tr.appendChild(cell(r.price || null, 'num mono'))
+    tr.appendChild(cell(r.edited ? 'You corrected it' : r.status === 'error' ? 'Failed' : 'Identified live'))
+    const acts = el('td')
+    const wrap = el('div', 'rowacts')
+    const ov = el('button', 'qbtn sm', 'Override')
+    ov.addEventListener('click', () => { editing.has(r) ? editing.delete(r) : editing.add(r); renderAll() })
+    wrap.appendChild(ov)
+    wrap.appendChild(idRetryButton(r, renderAll))
+    acts.appendChild(wrap)
+    tr.appendChild(acts)
+    body.appendChild(tr)
+    if (editing.has(r)) {
+      const erow = el('tr')
+      const td = el('td')
+      td.setAttribute('colspan', '9')
+      td.appendChild(idEditor(r, renderAll))
+      erow.appendChild(td)
+      body.appendChild(erow)
+    }
   }
 }
 async function transcribeSale(s: Sale) {
@@ -659,13 +845,20 @@ async function transcribeSale(s: Sale) {
   try {
     const clip = await grabClip()
     if (!clip || clip.size < 2000) return
-    entry = { head: `${s.skuDesc ?? ''} · ${s.productName.slice(0, 28)} — @${s.buyer.handle ?? s.buyer.username}`, status: 'transcribing', text: '' }
+    entry = {
+      head: `${s.productName.slice(0, 30)} — @${s.buyer.handle ?? s.buyer.username}`,
+      lot: s.skuDesc ?? '', price: s.price?.formatted ?? '',
+      status: 'transcribing', text: '', sale: s,
+    }
     recaps.unshift(entry)
-    if (recaps.length > 30) recaps.pop()
+    if (recaps.length > 200) recaps.pop()
     renderRecap()
     const audio = new Uint8Array(await clip.arrayBuffer())
-    const res = await window.recapAPI.transcribe({ audio, productName: s.productName })
-    entry.status = res.text ? 'done' : 'error'
+    // structured: true is what returns brand/item/color/size/retailPrice. The old call omitted it
+    // and rendered the one-line summary instead, which is why the fields never reached the screen.
+    const res = await window.recapAPI.transcribe({ audio, productName: s.productName, structured: true })
+    if (res.fields && Object.keys(res.fields).length) { entry.fields = res.fields; entry.status = 'done' }
+    else entry.status = res.text ? 'done' : 'error'
     entry.text = res.text ?? res.error ?? 'failed'
   } catch (e) {
     if (entry) { entry.status = 'error'; entry.text = (e as Error).message }
@@ -725,11 +918,13 @@ document.getElementById('aiTranscribe')?.addEventListener('change', (e) => {
 async function initRecap() {
   try { geminiKeyPresent = (await window.recapAPI?.enabled())?.enabled ?? false } catch { geminiKeyPresent = false }
   applyAiPref()
-  const st = document.getElementById('recapStatus')
-  // AI_UI off: hide the chip but leave recapEnabled/transcribe* wired, so re-enabling the
-  // feature is this one flag rather than a rebuild of the plumbing.
-  if (st) { st.style.display = AI_UI ? '' : 'none'; st.textContent = recapEnabled ? 'AI EXTRACTION · 99%' : 'AI EXTRACTION' }
-  renderRecap()
+  // The AI chip lived on the deleted "Current auction item" panel. The Identification section
+  // head carries the state now; AI_UI still gates the whole feature without a plumbing rebuild.
+  // Opened without the Electron preload (a browser preview), the demo block seeds rows so the
+  // layout can be checked without a live show. It supplies DATA; this file owns the markup.
+  const seed = (window as unknown as { __demoRecaps?: Recap[] }).__demoRecaps
+  if (seed?.length && !recaps.length) recaps.push(...seed)
+  renderAll()
 }
 void initRecap()
 
@@ -1311,11 +1506,15 @@ $('feedCount').textContent = 'v' + __APP_VERSION__
 // transcripts captured this session (in-memory only - nothing persists anymore).
 const productTx: Record<string, LedgerTranscript> = {}
 
-function showScreen(s: 'monitor' | 'settings') {
+function showScreen(s: 'monitor' | 'settings' | 'identify') {
   $('monitorScreen').style.display = s === 'monitor' ? 'flex' : 'none'
   const settings = document.getElementById('settingsScreen')
   if (settings) settings.style.display = s === 'settings' ? 'flex' : 'none'
+  const identify = document.getElementById('identifyScreen')
+  if (identify) identify.style.display = s === 'identify' ? 'flex' : 'none'
+  if (s === 'identify') renderIdentifications()
   $('navMonitor').classList.toggle('active', s === 'monitor')
+  document.getElementById('navIdentify')?.classList.toggle('active', s === 'identify')
   document.getElementById('navSettings2')?.classList.toggle('active', s === 'settings')
   // live status (connecting...) + room/viewers/elapsed only make sense on the Live Monitor
   const meters = document.getElementById('liveMeters')
@@ -1324,7 +1523,30 @@ function showScreen(s: 'monitor' | 'settings') {
   if (livePill) livePill.style.display = s === 'monitor' ? 'flex' : 'none'
 }
 $('navMonitor').addEventListener('click', () => showScreen('monitor'))
+document.getElementById('navIdentify')?.addEventListener('click', () => showScreen('identify'))
 document.getElementById('navSettings2')?.addEventListener('click', () => showScreen('settings'))
+// The review count in the Identification head is the route to the flagged lots.
+document.getElementById('idReviewChip')?.addEventListener('click', () => { idFilter = 'review'; syncIdFilterButtons(); showScreen('identify') })
+document.getElementById('idSearch')?.addEventListener('input', () => renderIdentifications())
+function syncIdFilterButtons() {
+  for (const b of document.querySelectorAll<HTMLElement>('[data-idfilter]')) {
+    b.classList.toggle('on', b.dataset.idfilter === idFilter)
+  }
+}
+for (const b of document.querySelectorAll<HTMLElement>('[data-idfilter]')) {
+  b.addEventListener('click', () => {
+    idFilter = (b.dataset.idfilter as 'all' | 'review' | 'edited') ?? 'all'
+    syncIdFilterButtons()
+    renderIdentifications()
+  })
+}
+syncIdFilterButtons()
+// Deep link, so a screen can be opened (and screenshotted) without a click. Accepts the query
+// form too, because a fragment does not always survive a headless capture.
+{
+  const want = location.hash.replace('#', '') || new URLSearchParams(location.search).get('screen')
+  if (want === 'identify' || want === 'settings') showScreen(want)
+}
 document.getElementById('diagBtn')?.addEventListener('click', () => void window.diagAPI?.open())
 
 // ── SellerFolio sync card ────────────────────────────────────────────────────
@@ -1497,12 +1719,10 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       if (ev.lotNumber) $('lotNum').textContent = '#' + ev.lotNumber.replace(/^#/, '')
       if (ev.productName) {
         $('lotName').textContent = ev.productName
-        document.getElementById('auctionPanelName')!.textContent = ev.productName
         lastLotName = ev.productName
       }
       if (ev.price) {
         $('lotBid').textContent = ev.price
-        document.getElementById('auctionPanelBid')!.textContent = ev.price
       }
       $('lotBuyer').textContent = '@' + ev.leader
       // The bid feed carries no bid COUNT, and the count on screen belongs to whatever lot
@@ -1512,8 +1732,6 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       if (ev.lotNumber && ev.lotNumber !== lastBidLot) {
         lastBidLot = ev.lotNumber
         $('lotBids').textContent = '--'
-        document.getElementById('auctionPanelBids')!.textContent = '--'
-        document.getElementById('auctionPanelEnds')!.textContent = '--'
       }
       $('lotOverlay').style.display = 'flex'
       lastBidRenderAt = Date.now() // hold this against the slower roster paint (PIN_FRESH_MS)
