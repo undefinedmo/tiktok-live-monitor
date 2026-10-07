@@ -5,8 +5,10 @@
 // The contract: EVERY job that is enqueued gets EXACTLY ONE `onSettled` call --
 //   * `run` resolves          -> that outcome
 //   * `run` throws / rejects  -> { status: 'failed', reason }
-//   * abandonAll() while the job is queued or in flight -> { status: 'abandoned', reason }
-// A job is never dropped, never settled twice, and a late result from an abandoned job is ignored.
+//   * abandonAll() while the job is still WAITING -> { status: 'abandoned', reason }
+// A job is never dropped and never settled twice. A job already IN FLIGHT when abandonAll() runs is
+// left alone and settles with its true outcome when `run` finishes: a real identification for a lot
+// from the show that just ended is worth keeping, so it must not be discarded.
 
 export type Job = { orderId: string }
 
@@ -29,17 +31,20 @@ export type IdentifyQueue<J extends Job> = {
    * event is the same sale, and settling it a second time would hand downstream two outcomes for one
    * order (the later one could overwrite the real result). Once a job has settled, the same
    * `orderId` may be enqueued again: that is a deliberate retry, not a duplicate.
+   * Returns true when the job was accepted, false when it was ignored as a duplicate.
    */
-  enqueue(job: J): void
-  /** Jobs not yet settled: waiting plus running. */
+  enqueue(job: J): boolean
+  /** Jobs waiting to start. A job already running is not counted. */
   size(): number
   /** Resolves once nothing is waiting or running. Resolves immediately when already idle. */
   drain(): Promise<void>
-  /** Settle everything waiting or running as abandoned and empty the queue (the show ended). */
+  /**
+   * Settle every WAITING job as abandoned and empty the wait list (the show ended). Jobs already
+   * running are not touched: each settles with its true outcome, exactly once, when `run` finishes.
+   * `drain()` therefore still waits for them (and never resolves if a `run` never does).
+   */
   abandonAll(reason: string): void
 }
-
-type Entry<J extends Job> = { job: J; settled: boolean }
 
 export function makeIdentifyQueue<J extends Job, O extends Outcome = Outcome>(
   opts: IdentifyQueueOptions<J, O>,
@@ -49,8 +54,8 @@ export function makeIdentifyQueue<J extends Job, O extends Outcome = Outcome>(
     throw new RangeError(`concurrency must be a positive integer, got ${concurrency}`)
   }
 
-  const waiting: Entry<J>[] = []
-  const running = new Set<Entry<J>>()
+  const waiting: J[] = []
+  const running = new Set<J>()
   let idleWaiters: Array<() => void> = []
 
   const notifyIfIdle = () => {
@@ -60,62 +65,60 @@ export function makeIdentifyQueue<J extends Job, O extends Outcome = Outcome>(
     for (const w of ws) w()
   }
 
-  // The single place a job settles. The `settled` flag is what makes "exactly once" hold when an
-  // abandoned job's `run` finally resolves or rejects after the fact.
-  const settle = (entry: Entry<J>, outcome: O | QueueOutcome) => {
-    if (entry.settled) return
-    entry.settled = true
-    running.delete(entry)
+  // The single place a job settles. Each job reaches it once: a waiting job from abandonAll, a
+  // running job from its own `run` promise (which settles one way only).
+  const settle = (job: J, outcome: O | QueueOutcome) => {
+    running.delete(job)
     try {
-      opts.onSettled(entry.job, outcome)
-    } catch {
-      // A throwing consumer must not stall the queue behind it; the job has settled regardless.
+      opts.onSettled(job, outcome)
+    } catch (e) {
+      // A throwing consumer must not stall the queue behind it, but it must not vanish either: that
+      // outcome would otherwise be lost without a trace.
+      console.error(`[identifyQueue] onSettled threw for order ${job.orderId}:`, e)
     }
   }
 
   const pump = () => {
     while (running.size < concurrency) {
-      const entry = waiting.shift()
-      if (!entry) break
-      running.add(entry)
-      start(entry)
+      const job = waiting.shift()
+      if (!job) break
+      running.add(job)
+      start(job)
     }
     notifyIfIdle()
   }
 
-  const start = (entry: Entry<J>) => {
+  const start = (job: J) => {
     // `run` may throw synchronously or reject; both become a failed outcome.
     let p: Promise<O>
     try {
-      p = Promise.resolve(opts.run(entry.job))
+      p = Promise.resolve(opts.run(job))
     } catch (e) {
       p = Promise.reject(e)
     }
     p.then(
-      (outcome) => settle(entry, outcome),
-      (e) => settle(entry, { status: 'failed', reason: e instanceof Error ? e.message : String(e) }),
+      (outcome) => settle(job, outcome),
+      (e) => settle(job, { status: 'failed', reason: e instanceof Error ? e.message : String(e) }),
     ).then(pump)
   }
 
   const has = (orderId: string) =>
-    waiting.some((e) => e.job.orderId === orderId) ||
-    [...running].some((e) => e.job.orderId === orderId)
+    waiting.some((j) => j.orderId === orderId) || [...running].some((j) => j.orderId === orderId)
 
   return {
     enqueue(job) {
-      if (has(job.orderId)) return
-      waiting.push({ job, settled: false })
+      if (has(job.orderId)) return false
+      waiting.push(job)
       pump()
+      return true
     },
-    size: () => waiting.length + running.size,
+    size: () => waiting.length,
     drain() {
       if (waiting.length === 0 && running.size === 0) return Promise.resolve()
       return new Promise<void>((resolve) => idleWaiters.push(resolve))
     },
     abandonAll(reason) {
-      const doomed = [...running, ...waiting.splice(0)]
-      for (const entry of doomed) settle(entry, { status: 'abandoned', reason })
-      notifyIfIdle()
+      for (const job of waiting.splice(0)) settle(job, { status: 'abandoned', reason })
     },
   }
 }

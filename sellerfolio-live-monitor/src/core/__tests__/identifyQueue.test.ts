@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { makeIdentifyQueue } from '../identifyQueue'
 
 // A promise the test settles by hand, so concurrency is observed rather than timed.
@@ -46,21 +46,58 @@ describe('makeIdentifyQueue', () => {
     expect(settled).toEqual([['a', 'failed', 'endpoint unreachable']])
   })
 
-  // Production change: abandonAll clears the arrays without calling onSettled.
-  it('abandons what is queued or in flight when a show ends, settling each', async () => {
+  // Production change: abandonAll clears the wait list without calling onSettled.
+  it('abandons what is still waiting when a show ends, settling each', async () => {
     const settled: Array<[string, string, string | undefined]> = []
     const q = makeIdentifyQueue({
       run: () => new Promise<{ status: string }>(() => {}),
       onSettled: (j, o) => settled.push([j.orderId, o.status, o.reason]),
     })
     q.enqueue({ orderId: 'a' }) // in flight, never finishes
-    q.enqueue({ orderId: 'b' }) // still waiting behind it
+    q.enqueue({ orderId: 'b' }) // waiting behind it
+    q.enqueue({ orderId: 'c' })
     q.abandonAll('show ended')
     expect(q.size()).toBe(0)
     expect(settled).toEqual([
-      ['a', 'abandoned', 'show ended'],
       ['b', 'abandoned', 'show ended'],
+      ['c', 'abandoned', 'show ended'],
     ])
+  })
+
+  // Production change: abandonAll also settles the running job as abandoned (the earlier design),
+  // which discards a real identification that lands a moment after the show ended.
+  it('lets an in-flight job settle with its true outcome after abandonAll, exactly once', async () => {
+    const gate = deferred<{ status: string; brand: string }>()
+    const settled: Array<[string, string]> = []
+    const q = makeIdentifyQueue({
+      run: (j) => (j.orderId === 'a' ? gate.promise : new Promise<{ status: string }>(() => {})),
+      onSettled: (j, o) => settled.push([j.orderId, o.status]),
+    })
+    q.enqueue({ orderId: 'a' })
+    q.enqueue({ orderId: 'b' })
+    q.abandonAll('show ended')
+    expect(settled).toEqual([['b', 'abandoned']]) // `a` is not settled yet
+    gate.resolve({ status: 'identified', brand: 'Alo' }) // the real result lands late
+    await q.drain()
+    await tick()
+    expect(settled).toEqual([
+      ['b', 'abandoned'],
+      ['a', 'identified'],
+    ])
+  })
+
+  it('lets an in-flight job that fails after abandonAll settle as failed, exactly once', async () => {
+    const gate = deferred<{ status: string }>()
+    const settled: Array<[string, string]> = []
+    const q = makeIdentifyQueue({
+      run: () => gate.promise,
+      onSettled: (j, o) => settled.push([j.orderId, o.status]),
+    })
+    q.enqueue({ orderId: 'a' })
+    q.abandonAll('show ended')
+    gate.reject(new Error('endpoint unreachable'))
+    await q.drain()
+    expect(settled).toEqual([['a', 'failed']])
   })
 
   // Production change: enqueue starts a job only when nothing is running and otherwise returns
@@ -78,7 +115,7 @@ describe('makeIdentifyQueue', () => {
     })
     q.enqueue({ orderId: 'a' })
     q.enqueue({ orderId: 'b' }) // arrives while `a` is in flight
-    expect(q.size()).toBe(2)
+    expect(q.size()).toBe(1) // size counts what is waiting, not what is running
     expect(started).toEqual(['a'])
     gate.resolve({ status: 'identified' })
     await q.drain()
@@ -197,36 +234,26 @@ describe('makeIdentifyQueue', () => {
     await both
   })
 
-  // Production change: abandonAll forgets to notify drain waiters, so a show-end hangs a drain().
-  it('abandonAll releases a pending drain', async () => {
-    const q = makeIdentifyQueue({ run: () => new Promise<{ status: string }>(() => {}), onSettled: () => {} })
-    q.enqueue({ orderId: 'a' })
-    const drained = q.drain()
-    q.abandonAll('show ended')
-    await drained
-  })
-
-  // Production change: settle() has no `settled` guard, so a late run result settles twice.
-  it('settles an abandoned in-flight job once, even if its run finishes or fails later', async () => {
-    const ok = deferred<{ status: string }>()
-    const bad = deferred<{ status: string }>()
-    const settled: Array<[string, string]> = []
+  // Production change: abandonAll settles the running job too, or leaves waiting jobs to run on --
+  // either way drain() would release at the wrong moment.
+  it('after abandonAll, drain waits for the running job and releases once it settles', async () => {
+    const gate = deferred<{ status: string }>()
+    const settled: string[] = []
     const q = makeIdentifyQueue({
-      concurrency: 2,
-      run: (j) => (j.orderId === 'ok' ? ok.promise : bad.promise),
-      onSettled: (j, o) => settled.push([j.orderId, o.status]),
+      run: () => gate.promise,
+      onSettled: (j) => settled.push(j.orderId),
     })
-    q.enqueue({ orderId: 'ok' })
-    q.enqueue({ orderId: 'bad' })
+    q.enqueue({ orderId: 'a' })
+    q.enqueue({ orderId: 'b' })
+    let drained = false
+    void q.drain().then(() => (drained = true))
     q.abandonAll('show ended')
-    ok.resolve({ status: 'identified' }) // too late
-    bad.reject(new Error('too late'))
     await tick()
+    expect(drained).toBe(false) // `a` is still running
+    gate.resolve({ status: 'identified' })
     await tick()
-    expect(settled).toEqual([
-      ['ok', 'abandoned'],
-      ['bad', 'abandoned'],
-    ])
+    expect(drained).toBe(true)
+    expect(settled).toEqual(['b', 'a'])
   })
 
   it('settles a job once when abandonAll is called after it has already settled', async () => {
@@ -241,22 +268,29 @@ describe('makeIdentifyQueue', () => {
     expect(settled).toEqual(['a'])
   })
 
-  // Production change: abandonAll does not free the running slots, so a hung job from the last
-  // show blocks the next show's first sale forever.
-  it('does not leak into the next show: a new job runs after abandonAll and gets its own outcome', async () => {
-    const hung = deferred<{ status: string }>()
+  // Production change: abandonAll forgets to empty the wait list, so the last show's queued sales
+  // run (and settle) inside the next show.
+  it('does not leak into the next show: old waiting jobs are gone, and a new job still runs', async () => {
+    const gate = deferred<{ status: string }>()
+    const started: string[] = []
     const settled: Array<[string, string]> = []
     const q = makeIdentifyQueue({
-      run: (j) => (j.orderId === 'old' ? hung.promise : Promise.resolve({ status: 'identified' })),
+      run: (j) => {
+        started.push(j.orderId)
+        return j.orderId === 'old1' ? gate.promise : Promise.resolve({ status: 'identified' })
+      },
       onSettled: (j, o) => settled.push([j.orderId, o.status]),
     })
-    q.enqueue({ orderId: 'old' })
+    q.enqueue({ orderId: 'old1' })
+    q.enqueue({ orderId: 'old2' })
     q.abandonAll('show ended')
-    q.enqueue({ orderId: 'new' })
-    hung.resolve({ status: 'identified' }) // the old job's late answer must not touch `new`
+    q.enqueue({ orderId: 'new' }) // the next show; waits for the one slot behind old1
+    gate.resolve({ status: 'identified' })
     await q.drain()
+    expect(started).toEqual(['old1', 'new']) // old2 never ran
     expect(settled).toEqual([
-      ['old', 'abandoned'],
+      ['old2', 'abandoned'],
+      ['old1', 'identified'],
       ['new', 'identified'],
     ])
   })
@@ -307,19 +341,42 @@ describe('makeIdentifyQueue', () => {
   })
 
   // Production change: no try/catch around onSettled, so one consumer bug wedges every later sale.
-  it('survives an onSettled that throws', async () => {
-    const settled: string[] = []
-    const q = makeIdentifyQueue({
-      run: async () => ({ status: 'identified' }),
-      onSettled: (j) => {
-        settled.push(j.orderId)
-        if (j.orderId === 'a') throw new Error('consumer bug')
-      },
-    })
-    q.enqueue({ orderId: 'a' })
-    q.enqueue({ orderId: 'b' })
+  it('survives an onSettled that throws, and says so with the orderId', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const settled: string[] = []
+      const q = makeIdentifyQueue({
+        run: async () => ({ status: 'identified' }),
+        onSettled: (j) => {
+          settled.push(j.orderId)
+          if (j.orderId === 'a') throw new Error('consumer bug')
+        },
+      })
+      q.enqueue({ orderId: 'a' })
+      q.enqueue({ orderId: 'b' })
+      await q.drain()
+      expect(settled).toEqual(['a', 'b'])
+      // Production change: a catch that logs nothing -- the outcome would vanish without a trace.
+      expect(err).toHaveBeenCalledTimes(1)
+      expect(String(err.mock.calls[0]?.[0])).toContain('order a')
+      expect(err.mock.calls[0]?.[1]).toBeInstanceOf(Error)
+    } finally {
+      err.mockRestore()
+    }
+  })
+
+  // Production change: enqueue returns true unconditionally (or false unconditionally).
+  it('enqueue says whether the job was accepted or ignored as a duplicate', async () => {
+    const gate = deferred<{ status: string }>()
+    const q = makeIdentifyQueue({ run: () => gate.promise, onSettled: () => {} })
+    expect(q.enqueue({ orderId: 'a' })).toBe(true) // runs at once
+    expect(q.enqueue({ orderId: 'b' })).toBe(true) // waits
+    expect(q.enqueue({ orderId: 'a' })).toBe(false) // duplicate of the running job
+    expect(q.enqueue({ orderId: 'b' })).toBe(false) // duplicate of a waiting job
+    gate.resolve({ status: 'identified' })
     await q.drain()
-    expect(settled).toEqual(['a', 'b'])
+    expect(q.enqueue({ orderId: 'a' })).toBe(true) // settled: a retry is accepted
+    await q.drain()
   })
 
   // Duplicate-orderId decision: a duplicate of a queued or running job is ignored (one outcome per
@@ -339,7 +396,7 @@ describe('makeIdentifyQueue', () => {
     q.enqueue({ orderId: 'a' }) // duplicate of the running job
     q.enqueue({ orderId: 'b' })
     q.enqueue({ orderId: 'b' }) // duplicate of a waiting job
-    expect(q.size()).toBe(2)
+    expect(q.size()).toBe(1) // only `b` waits; `a` is running
     gate.resolve({ status: 'identified' })
     await q.drain()
     expect(started).toEqual(['a', 'b'])
