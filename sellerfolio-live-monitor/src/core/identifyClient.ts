@@ -89,10 +89,24 @@ export type IdentifyFailed = {
   detail?: string
 }
 export type IdentifyAnswer =
-  | { status: 'identified'; attempts?: number; escalated?: boolean }
+  | { status: 'identified'; attempts?: number; escalated?: boolean; identity?: IdentifiedFields }
   | { status: 'skipped'; reason: string }
   | IdentifyFailed
 export type IdentifyOutcome = IdentifyAnswer | { status: 'abandoned'; reason: string }
+
+/** What the server says was identified, as it PERSISTED it — a human's earlier correction already
+ *  wins there, so this is the name the host should read, not whatever the model last answered.
+ *  Every field is optional on the wire: an older worker sends none, and a row must still settle. */
+export type IdentifiedFields = { brand: string | null; item: string | null; color: string | null; size: string | null }
+
+/** Reads the identity defensively. A non-object is ignored entirely; a field of the wrong type
+ *  becomes null rather than reaching the screen as `7` or `[object Object]`. */
+function readIdentity(v: unknown): IdentifiedFields | undefined {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return undefined
+  const o = v as Record<string, unknown>
+  const str = (k: string): string | null => (typeof o[k] === 'string' && o[k] !== '' ? (o[k] as string) : null)
+  return { brand: str('brand'), item: str('item'), color: str('color'), size: str('size') }
+}
 
 /**
  * Should the app try again? Only a `failed` outcome can be retried, and only when `retryable` does
@@ -137,6 +151,8 @@ export function readIdentifyResponse(status: number, body: unknown): IdentifyAns
       const out: Extract<IdentifyAnswer, { status: 'identified' }> = { status: 'identified' }
       if (typeof b.attempts === 'number') out.attempts = b.attempts
       if (typeof b.escalated === 'boolean') out.escalated = b.escalated
+      const identity = readIdentity((b as { identity?: unknown }).identity)
+      if (identity) out.identity = identity
       return out
     }
     if (b?.status === 'skipped' && typeof b.reason === 'string') return { status: 'skipped', reason: b.reason }

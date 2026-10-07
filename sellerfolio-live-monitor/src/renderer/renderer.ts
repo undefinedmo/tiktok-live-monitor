@@ -19,6 +19,7 @@ import { checkLatencyInput, identifyGate, identifyStateFrom, identifyStatus, lat
 // Structured AI-transcript fields (was core/ledger's LedgerTranscript; the products
 // panel still stores per-product transcripts in memory for the session).
 interface LedgerTranscript { brand?: string; item?: string; color?: string; size?: string; retailPrice?: string; summary?: string }
+type IdentifiedFields = { brand: string | null; item: string | null; color: string | null; size: string | null }
 
 interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string; title?: string; code?: string }
 type LabelField = 'itemNumber' | 'custom' | 'buyer' | 'productName' | 'price'
@@ -883,7 +884,9 @@ function renderIdentifications() {
       return td
     }
     tr.appendChild(cell(r.lot || '—', 'mono'))
-    // A lot the server identified has its fields on the server, not here: say so rather than "not said".
+    // The server now reports what it persisted, so a live row usually HAS its fields. When it does
+    // not — an older worker, or a 200 whose identity could not be read — say so with an em dash
+    // rather than "not said", which would claim the brand was never spoken.
     const fieldText = (k: keyof LedgerTranscript) => (r.live && !r.fields ? '—' : idValue(r.fields?.[k]))
     tr.appendChild(cell(fieldText('brand')))
     tr.appendChild(cell(fieldText('item')))
@@ -942,12 +945,29 @@ function noteBoundary(e: JournalEvent): void {
   if (boundaryEvents.length > MAX_BOUNDARY_EVENTS) boundaryEvents.splice(0, boundaryEvents.length - MAX_BOUNDARY_EVENTS)
 }
 /** `note` is what the audio behind an identification should admit to (core/identifyWiring clipNote); it is only said of a success. */
-function settleEntry(entry: Recap, outcome: { status: string; reason?: string; tries?: number }, note = ''): void {
+function settleEntry(entry: Recap, outcome: { status: string; reason?: string; tries?: number; identity?: IdentifiedFields }, note = ''): void {
   const v = viewOutcome(outcome)
   entry.status = v.status
   entry.text = v.text + (v.status === 'done' ? note : '')
+  // The server reports what it PERSISTED, so the row can say what sold instead of showing em
+  // dashes. Never over an operator's correction: `edited` means a human already decided this lot.
+  if (outcome.identity && !entry.edited) {
+    const f = fieldsFromIdentity(outcome.identity)
+    if (f) entry.fields = { ...(entry.fields ?? {}), ...f }
+  }
   persistEntry(entry)
   renderAll()
+}
+
+/** The identity as the five-field shape the rows already render. Blank fields are left out rather
+ *  than written as empty strings, so "not said" still reads as not said. */
+function fieldsFromIdentity(id: IdentifiedFields): LedgerTranscript | null {
+  const out: LedgerTranscript = {}
+  if (id.brand) out.brand = id.brand
+  if (id.item) out.item = id.item
+  if (id.color) out.color = id.color
+  if (id.size) out.size = id.size
+  return Object.keys(out).length ? out : null
 }
 // Fails fast while the worker is unreachable, so an outage costs one quick failure per sale, not the whole retry budget.
 const identifyBreaker = makeBreaker({ threshold: BREAKER_THRESHOLD, cooldownMs: BREAKER_COOLDOWN_MS, now: () => Date.now() })

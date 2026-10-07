@@ -179,6 +179,25 @@ describe('readIdentifyResponse', () => {
   it('reads a bare 200 identified (no spend facts) as identified', () => {
     expect(readIdentifyResponse(200, { status: 'identified' })).toEqual({ status: 'identified' })
   })
+  // The station exists to tell the host WHAT just sold. The server now returns the identity it
+  // persisted, so an identified row must carry it instead of showing em dashes.
+  it('keeps the identity the server reports, so the row can say what sold', () => {
+    expect(readIdentifyResponse(200, {
+      status: 'identified', attempts: 1, escalated: false,
+      identity: { brand: 'Alo Yoga', item: 'Airlift Legging', color: 'black', size: 'M' },
+    })).toEqual({
+      status: 'identified', attempts: 1, escalated: false,
+      identity: { brand: 'Alo Yoga', item: 'Airlift Legging', color: 'black', size: 'M' },
+    })
+  })
+
+  it('tolerates a server that sends no identity, and a malformed one', () => {
+    // An older worker, or a partial write: the row still settles as identified rather than failing.
+    expect(readIdentifyResponse(200, { status: 'identified' })).toEqual({ status: 'identified' })
+    expect(readIdentifyResponse(200, { status: 'identified', identity: 'nonsense' })).toEqual({ status: 'identified' })
+    expect(readIdentifyResponse(200, { status: 'identified', identity: { brand: 7 } }))
+      .toEqual({ status: 'identified', identity: { brand: null, item: null, color: null, size: null } })
+  })
 
   it('does not leak a body it cannot read into a crash or a success', () => {
     for (const body of [null, undefined, 'x', 42, [], { status: 'weird' }, {}]) {
