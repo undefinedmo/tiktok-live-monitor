@@ -51,6 +51,11 @@ describe('keptStem: a file name that cannot escape the folder', () => {
     expect(keptStem('../x')).toBe(keptStem('../x'))
     expect(keptStem('../x')).not.toBe(keptStem('../y'))
   })
+  it('names two long unsafe ids that differ only far into them differently (the whole id is hashed)', () => {
+    const a = '../../a-very-long-order-id/with/slashes/1'
+    const b = '../../a-very-long-order-id/with/slashes/2'
+    expect(keptStem(a)).not.toBe(keptStem(b))
+  })
   it('a safe id and a hashed one can never collide (different first letter)', () => {
     expect(keptStem('abc')[0]).toBe('k')
     expect(keptStem('a b')[0]).toBe('h')
@@ -139,6 +144,24 @@ describe('parseKeptMeta: the file is not trusted', () => {
     const g = good()
     delete g.clip.gapSec
     expect(parseKeptMeta(g)!.clip.gapSec).toBe(0)
+  })
+})
+
+describe('every clip field survives the round trip, with values that are not the defaults', () => {
+  const odd = payload({ clip: { startEpochSec: 1_799_999_901.25, durationSec: 77.5, leadInSec: 1.75, truncated: true, gapSec: -3.5 } })
+
+  it('metaFromWire -> JSON -> parseKeptMeta -> wireFromKept gives the clip back field for field', () => {
+    const meta = parseKeptMeta(JSON.parse(JSON.stringify(metaFromWire(odd, NOW))))!
+    const back = wireFromKept(meta, odd.clip.bytes)
+    expect(back.clip).toEqual(odd.clip)
+    expect(back.job).toEqual(odd.job)
+  })
+  it('and fromWirePayload rebuilds each of them on the clip the queue sends', () => {
+    const p = fromWirePayload(odd)
+    expect({ startEpochSec: p.clip.startEpochSec, durationSec: p.clip.durationSec, leadInSec: p.clip.leadInSec, truncated: p.clip.truncated, gapSec: p.clip.gapSec }).toEqual({
+      startEpochSec: 1_799_999_901.25, durationSec: 77.5, leadInSec: 1.75, truncated: true, gapSec: -3.5,
+    })
+    expect(p.job).toBe(odd.job)
   })
 })
 

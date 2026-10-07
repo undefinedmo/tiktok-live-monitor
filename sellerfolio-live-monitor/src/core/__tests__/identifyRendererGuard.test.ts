@@ -320,8 +320,13 @@ describe('glue: clip caveats and late sales', () => {
   it('a sale that arrives too late is recorded with the too_old reason, through settleEntry (so it is also saved)', () => {
     const b = fnBody(rendererCode, 'recordTooOldSale')
     expect(b).toContain("settleEntry(newEntryFor(s, saleOnThisClock(s)), { status: 'failed', reason: 'too_old' })")
-    expect(b).toContain('seenOrders.markSent(s.orderId)')
-    expect(b.indexOf('seenOrders.has(s.orderId)')).toBeLessThan(b.indexOf('seenOrders.markSent(s.orderId)'))
+    expect(b).toContain('if (seenOrders.has(s.orderId)) return\n  seenOrders.markSent(s.orderId)')
+  })
+  it('the row it makes is the same kind of row as an identified one, newest first, on this machine\'s clock', () => {
+    const made = fnBody(rendererCode, 'newEntryFor')
+    expect(made).toContain("status: 'transcribing', text: '', sale: s, live: true,")
+    expect(made).toContain('recaps.unshift(entry)')
+    expect(fnBody(rendererCode, 'saleOnThisClock')).toContain('return { orderId: s.orderId, roomId: s.roomId ?? watchedRoomId, atEpochSec: serverToLocalSec(s.createdAt, serverTimeOffsetMs) }')
   })
   it('a too-old sale is not sent on its own: the row has no payload, no clip cut and no queue entry', () => {
     const b = fnBody(rendererCode, 'recordTooOldSale')
@@ -359,7 +364,7 @@ describe('glue: retry from a kept clip, one row or all failed', () => {
   it('a kept clip is sent as it was kept (the same job, the same clip), on its own row, in the current show', () => {
     const b = fnBody(rendererCode, 'queueKeptClip')
     expect(b).toContain('payload: fromWirePayload(kept)')
-    expect(b).toContain('show: showGeneration')
+    expect(b).toContain('show: showGeneration, entry }')
     expect(b).toContain("settleEntry(entry, { status: 'failed', reason: 'already_queued' })")
     expect(b.indexOf("entry.status = 'transcribing'")).toBeLessThan(b.indexOf('persistEntry(entry)'))
   })
@@ -371,10 +376,13 @@ describe('glue: retry from a kept clip, one row or all failed', () => {
     expect(b).toContain('identifySale(r.sale, r)')
     expect(b).toContain('if (!recapEnabled || !api || !orderId')
     // a second press while the clip is being read must not queue a second job
-    expect(b).toContain('retryLoading.has(orderId)')
-    expect(b).toContain("if (r.status === 'transcribing') return true")
-    // the kept clip is tried before the buffer
-    expect(b.indexOf('api.clipTake(orderId)')).toBeLessThan(b.indexOf('identifySale(r.sale, r)', b.indexOf('api.clipTake(orderId)')))
+    expect(b).toContain('if (retryLoading.has(orderId)) return true')
+    expect(b).toContain("if (r.status === 'transcribing') return true // another press got there first")
+    // the page may have been switched off while the clip was being read
+    expect(b).toContain('  if (!recapEnabled) return false\n  if (kept) { queueKeptClip(r, kept); return true }')
+    // the kept clip is tried BEFORE the buffer: the sale is used straight away only when no clip is kept
+    expect(b).toContain('if (!keptClips.has(orderId)) {\n    if (!r.sale) return false\n    identifySale(r.sale, r)\n    return true\n  }')
+    expect(b.split('identifySale(r.sale, r)').length - 1).toBe(2) // that one, and the fallback once the disk had nothing
   })
 
   it('the per-row Retry works for a restored row: it asks canRetry (a kept clip), not "is there a sale in memory"', () => {
@@ -399,8 +407,10 @@ describe('glue: retry from a kept clip, one row or all failed', () => {
     const i = rendererCode.indexOf("document.getElementById('idRetryAll')?.addEventListener('click'")
     expect(i).toBeGreaterThan(-1)
     const handler = rendererCode.slice(i, rendererCode.indexOf('\n})\n', i))
-    expect(handler.indexOf('if (!retryAllArmed) {')).toBeGreaterThan(-1)
-    expect(handler.indexOf('void retryAllFailed()')).toBeGreaterThan(handler.indexOf('return\n  }'))
+    expect(handler).toContain('if (!retryAllArmed) {')
+    // the arming branch ENDS in a return, so the first press never reaches the line that runs it
+    expect(handler).toContain('syncRetryAll() }, 4000)\n    return\n  }')
+    expect(handler.indexOf('void retryAllFailed()')).toBeGreaterThan(handler.indexOf('syncRetryAll() }, 4000)\n    return\n  }'))
     expect(handler.split('retryAllFailed()').length - 1).toBe(1)
   })
 

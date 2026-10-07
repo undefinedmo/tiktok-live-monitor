@@ -367,6 +367,15 @@ describe('identifyPayloadFor', () => {
     expect(p?.job).toEqual({ orderId: 'cur', roomId: 'r1', saleEpochSec: 1100, auctionStartEpochSec: 1045, prevBoundaryEpochSec: 1040 })
   })
 
+  // The request uses a sanitised latency; the relabelling must use the SAME one. A NaN relabel would send the
+  // server a clip that starts at NaN while the request looked ordinary.
+  it.each([NaN, Infinity, -4, 61, undefined, null, '8'])('an unusable latency (%s) is no correction at all: same window, the very same clip', (bad) => {
+    const st = store(clip)
+    const p = identifyPayloadFor(sale, [{ type: 'sale', atEpochSec: 1040, orderId: 'prev' }, { type: 'auction_start', atEpochSec: 1045 }], st, bad as number)
+    expect(st.extract).toHaveBeenCalledWith({ startEpochSec: 1038, endEpochSec: 1105 })
+    expect(p?.clip).toBe(clip)
+  })
+
   it('changes nothing else about the clip: same bytes, duration, lead-in, flags', () => {
     const p = identifyPayloadFor(sale, [], store(clip), 10)!
     expect(p.clip.blob).toBe(clip.blob)

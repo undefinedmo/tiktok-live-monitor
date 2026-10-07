@@ -6,7 +6,7 @@
 // Two files per clip: `<stem>.bin` (the audio) then `<stem>.json` (its meta). Each is written to a temp file
 // and renamed, and the meta goes LAST and records the audio's length, so a clip is complete exactly when both
 // exist and agree. A crash between the two leaves an orphan or a mismatch, which reads as "not kept".
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   chooseEvictions,
@@ -95,8 +95,7 @@ export function createClipKeeper(dir: string, opts: { now: () => number }): Clip
         if (!meta) return false
         const stem = keptStem(meta.orderId)
         try {
-          mkdirSync(dir, { recursive: true })
-          atomicWrite(bin(stem), payload.clip.bytes)
+          atomicWrite(bin(stem), payload.clip.bytes) // creates the folder when it is not there
           atomicWrite(json(stem), JSON.stringify(meta)) // last: the clip exists once this does
         } catch {
           dropStem(stem)
