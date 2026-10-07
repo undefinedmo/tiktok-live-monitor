@@ -25,9 +25,13 @@ export class JournalWriter {
     lines.push(line)
     this.count++
     // A journal that cannot be written must not grow without bound and take the app down
-    // with it. Shed the OLDEST line of this file: the newest state is the most useful.
+    // with it. Shed the OLDEST line (the newest state is the most useful) of whichever file holds
+    // the most: the chat journal out-writes everything else, and a flood of it must be what gets
+    // shed, never a sale. On a tie the file just added to sheds, which is what a lone file always did.
     if (this.count > this.maxPending) {
-      lines.shift()
+      let victim = lines
+      for (const l of this.pending.values()) if (l.length > victim.length) victim = l
+      victim.shift()
       this.count--
       this.dropped++
     }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { backoffMs, batchBody, takeLines, verdictFor } from '../journalSync'
+import { backoffMs, batchBody, orderJournalFiles, takeLines, verdictFor } from '../journalSync'
 
 const bytes = (s: string) => new TextEncoder().encode(s)
 
@@ -72,5 +72,27 @@ describe('verdictFor', () => {
     expect(verdictFor(502)).toBe('retry')
     expect(verdictFor(400)).toBe('rejected')
     expect(verdictFor(413)).toBe('rejected')
+  })
+})
+
+describe('orderJournalFiles', () => {
+  it('uploads every non-chat journal before any chat journal, so a chat backlog never delays a sale', () => {
+    const names = ['show-1.chat.jsonl', 'show-1.jsonl', 'show-2.jsonl', 'show-0.chat.jsonl', 'unassigned-2026-10-07.jsonl']
+    expect(orderJournalFiles(names)).toEqual(['show-1.jsonl', 'show-2.jsonl', 'unassigned-2026-10-07.jsonl', 'show-0.chat.jsonl', 'show-1.chat.jsonl'])
+  })
+
+  it('takes journals only: not cursors, not the device id', () => {
+    expect(orderJournalFiles(['device-id', 'show-1.jsonl.cursor', 'show-1.chat.jsonl.cursor', 'show-1.jsonl'])).toEqual(['show-1.jsonl'])
+  })
+
+  it('does not mistake a room whose name contains "chat" for a chat file', () => {
+    expect(orderJournalFiles(['show-chat.jsonl', 'show-a.chat.jsonl', 'show-b.jsonl'])).toEqual(['show-b.jsonl', 'show-chat.jsonl', 'show-a.chat.jsonl'])
+  })
+
+  it('returns nothing for nothing and does not modify its input', () => {
+    expect(orderJournalFiles([])).toEqual([])
+    const input = ['b.jsonl', 'a.jsonl']
+    orderJournalFiles(input)
+    expect(input).toEqual(['b.jsonl', 'a.jsonl'])
   })
 })

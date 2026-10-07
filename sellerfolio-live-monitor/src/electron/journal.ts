@@ -15,6 +15,7 @@ import { Worker } from 'node:worker_threads'
 import { join } from 'node:path'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
+import { buildJournalLine, journalFileName } from '../core/journalLine'
 
 interface Context { room?: string; session?: string; sessionName?: string }
 
@@ -25,6 +26,7 @@ let runId = ''
 let seq = 0
 let ctx: Context = {}
 let file = ''
+let chatFile = ''
 let restarts = 0
 let report: (line: string) => void = () => {}
 let deviceId = ''
@@ -67,14 +69,13 @@ function spawn(): void {
   }
 }
 
-function currentFile(): string {
-  if (!file) {
-    // One file per live room. Records that arrive before the room is known (app launched
-    // early, or never attached) go to a dated catch-all rather than being lost.
-    const name = ctx.room ? `show-${ctx.room}.jsonl` : `unassigned-${new Date().toISOString().slice(0, 10)}.jsonl`
-    file = join(dir, name)
-  }
-  return file
+function currentFile(type = ''): string {
+  // One file per live room, and the chat in its own beside it. Records that arrive before the
+  // room is known (app launched early, or never attached) go to a dated catch-all rather than
+  // being lost. The name is decided in core/journalLine; the cache just keeps a midnight rollover
+  // from splitting one run's catch-all in two.
+  if (type === 'chat') return chatFile || (chatFile = join(dir, journalFileName(ctx.room, 'chat', new Date().toISOString().slice(0, 10))))
+  return file || (file = join(dir, journalFileName(ctx.room, type, new Date().toISOString().slice(0, 10))))
 }
 
 // A stable per-install id, so two machines journaling at the same instant can never mint the
@@ -106,6 +107,7 @@ export function initJournal(directory: string, workerSource: string, onReport?: 
   seq = 0
   restarts = 0
   file = ''
+  chatFile = ''
   ctx = {}
   if (onReport) report = onReport
   spawn()
@@ -113,17 +115,21 @@ export function initJournal(directory: string, workerSource: string, onReport?: 
 
 /** Which show the following records belong to. Changing the room starts a new file. */
 export function setJournalContext(next: Context): void {
-  if (next.room !== ctx.room) file = ''
+  if (next.room !== ctx.room) { file = ''; chatFile = '' }
   ctx = { ...ctx, ...next }
 }
 
-/** Queue one record. Constant-time on the calling thread; never blocks, never throws. */
-export function record(type: string, data: object = {}): void {
+/**
+ * Queue one record. Constant-time on the calling thread; never blocks, never throws.
+ * `id` is for a record that has an identity of its own (a chat line's); without one the id is
+ * `<run>-<seq>`, which is stable for the line in the file but says nothing about the event.
+ */
+export function record(type: string, data: object = {}, id?: string): void {
   const w = worker
   if (!w) return
   try {
-    const line = JSON.stringify({ v: 1, id: `${runId}-${++seq}`, t: Date.now(), room: ctx.room, session: ctx.session, type, ...data })
-    w.postMessage({ kind: 'rec', file: currentFile(), line })
+    const line = buildJournalLine({ runId, seq: id === undefined ? ++seq : seq, nowMs: Date.now(), room: ctx.room, session: ctx.session, type, data, id })
+    w.postMessage({ kind: 'rec', file: currentFile(type), line })
   } catch { /* the journal is best-effort by design */ }
 }
 

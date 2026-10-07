@@ -152,10 +152,16 @@ export interface StreamEvent {
 
 /** A viewer comment decoded from the webcast/im/fetch protobuf stream. */
 export interface ChatMessage {
+  /** TikTok's own id for this message (a decimal string: it is past 2^53). Unique per message. */
+  msgId?: string
+  /** The viewer's TikTok user id, a decimal string. */
   userId?: string
   nickname: string
+  /** The viewer's @handle (unique, unlike the nickname). */
+  handle?: string
   avatarUrl?: string
   text: string
+  /** TikTok's clock, milliseconds (common.timestamp). NOT this machine's clock. 0 when absent. */
   ts: number
 }
 

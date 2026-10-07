@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { buildSync } from 'esbuild'
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -40,6 +40,68 @@ describe('show journal', () => {
     const [a, b] = rows.map((r) => String(r['id']))
     expect(a).toMatch(/^[0-9a-f]{12}\.[0-9a-z]+-1$/)
     expect(b).toBe(a!.replace(/-1$/, '-2'))
+  })
+
+  it('writes chat to its own file with the id it was given, leaving the sequence ids of the other records unbroken', async () => {
+    const dir = tmp()
+    initJournal(dir, WORKER_SRC)
+    setJournalContext({ room: '7692' })
+    record('sale', { lot: '#1' })
+    record('chat', { text: 'is this real?', author: 'Ann' }, 'chat.7653593120676039438')
+    record('chat', { text: 'size?', author: 'Bob' }, 'chat.7653593120676039439')
+    record('sale', { lot: '#2' })
+    expect(await flushJournal()).toBe(true)
+
+    expect(readdirSync(dir).sort()).toEqual(['device-id', 'show-7692.chat.jsonl', 'show-7692.jsonl'])
+    const sales = read(join(dir, 'show-7692.jsonl'))
+    expect(sales.map((r) => r['type'])).toEqual(['sale', 'sale'])
+    expect(String(sales[0]!['id'])).toMatch(/-1$/)
+    expect(String(sales[1]!['id'])).toMatch(/-2$/) // the chat lines did not consume 2 and 3
+    const chat = read(join(dir, 'show-7692.chat.jsonl'))
+    expect(chat.map((r) => r['id'])).toEqual(['chat.7653593120676039438', 'chat.7653593120676039439'])
+    expect(chat[0]).toMatchObject({ v: 1, type: 'chat', room: '7692', text: 'is this real?', author: 'Ann' })
+    expect(typeof chat[0]!['t']).toBe('number')
+  })
+
+  it('moves the chat file along with the room', async () => {
+    const dir = tmp()
+    initJournal(dir, WORKER_SRC)
+    setJournalContext({ room: 'A' })
+    record('chat', { text: 'one' }, 'chat.1')
+    setJournalContext({ room: 'B' })
+    record('chat', { text: 'two' }, 'chat.2')
+    await flushJournal()
+    expect(readdirSync(dir).filter((f) => f.endsWith('.jsonl')).sort()).toEqual(['show-A.chat.jsonl', 'show-B.chat.jsonl'])
+  })
+
+  it('a fresh run starts its own chat file in its own directory, not the previous run file', async () => {
+    const one = tmp()
+    initJournal(one, WORKER_SRC)
+    record('chat', { text: 'first' }, 'chat.1') // no room yet: the dated catch-all
+    await flushJournal()
+    await closeJournal()
+    const two = tmp()
+    initJournal(two, WORKER_SRC)
+    record('chat', { text: 'second' }, 'chat.2')
+    await flushJournal()
+    expect(readdirSync(two).filter((f) => f.endsWith('.jsonl'))).toHaveLength(1)
+    expect(readdirSync(one).filter((f) => f.endsWith('.jsonl'))).toHaveLength(1)
+    expect(read(join(two, readdirSync(two).find((f) => f.endsWith('.chat.jsonl'))!)).map((r) => r['id'])).toEqual(['chat.2'])
+  })
+
+  it('keeps pre-room records of one run in one catch-all file across midnight, chat and the rest alike', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-10-07T23:59:59Z'))
+      const dir = tmp()
+      initJournal(dir, WORKER_SRC)
+      record('chat', { text: 'a' }, 'chat.1'); record('print', { lot: '#1' })
+      vi.setSystemTime(new Date('2026-10-08T00:00:01Z'))
+      record('chat', { text: 'b' }, 'chat.2'); record('print', { lot: '#2' })
+      await flushJournal()
+      expect(readdirSync(dir).filter((f) => f.endsWith('.jsonl')).sort()).toEqual(['unassigned-2026-10-07.chat.jsonl', 'unassigned-2026-10-07.jsonl'])
+      expect(read(join(dir, 'unassigned-2026-10-07.chat.jsonl')).map((r) => r['id'])).toEqual(['chat.1', 'chat.2'])
+    } finally { vi.useRealTimers() }
   })
 
   it('keeps records made before the room is known, then starts the room file', async () => {
@@ -136,6 +198,22 @@ describe('show journal → SellerFolio upload', () => {
 
       const file = journalFile()
       expect(await until(() => { try { return Number(readFileSync(`${file}.cursor`, 'utf8')) === statSync(file).size } catch { return false } })).toBe(true)
+    } finally { await closeJournal(); await s.close() }
+  })
+
+  it('uploads the sales before the chat, even though the chat file sorts first by name', async () => {
+    const s = await server(() => 200)
+    try {
+      const dir = tmp()
+      initJournal(dir, WORKER_SRC)
+      setJournalContext({ room: '7692' })
+      for (let i = 0; i < 3; i++) record('chat', { text: `c${i}` }, `chat.${i}`)
+      record('sale', { lot: '#1' })
+      await flushJournal()
+      setJournalSync({ endpoint: s.url, token: 'sfc_test' })
+      expect(await until(() => s.hits.length >= 2)).toBe(true)
+      expect(s.hits.map((h) => h.body.events.map((e) => e['type']))).toEqual([['sale'], ['chat', 'chat', 'chat']])
+      expect(s.hits[1]!.body.events.map((e) => e['id'])).toEqual(['chat.0', 'chat.1', 'chat.2'])
     } finally { await closeJournal(); await s.close() }
   })
 

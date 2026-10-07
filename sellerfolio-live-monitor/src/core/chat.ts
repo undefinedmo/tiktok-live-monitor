@@ -3,9 +3,10 @@
 // reads the comment text + user as proper UTF-8 (so emoji survive). Portable.
 //
 // WebcastChatMessage payload shape (field numbers):
-//   1 = common  { 4 = timestamp ms }
-//   2 = user    { 1 = id, 3 = nickname, 9 = avatar { 1 = repeated url } }
+//   1 = common  { 2 = message id (varint, unique per message), 4 = timestamp ms (TikTok's clock) }
+//   2 = user    { 1 = id (varint), 3 = nickname, 9 = avatar { 1 = repeated url }, 38 = @handle }
 //   3 = content (the comment text)
+// The ids are 19-digit int64s, past 2^53, so they are read as BigInt and surfaced as decimal strings.
 
 import type { ChatMessage } from './types'
 
@@ -74,13 +75,47 @@ function varintField(b: Uint8Array, start: number, end: number, target: number):
   return out
 }
 
-function parseUser(b: Uint8Array, s: number, e: number): { id?: string; nickname: string; avatarUrl?: string } {
+/** A varint field read exactly (BigInt) as a decimal string. Undefined when absent or zero —
+ *  zero is protobuf's "unset", and an id of "0" would be shared by every message that lacks one. */
+function bigVarintField(b: Uint8Array, start: number, end: number, target: number): string | undefined {
+  let out: bigint = 0n
+  let p = start
+  while (p < end) {
+    let tag = 0
+    ;[tag, p] = readVarint(b, p)
+    const field = tag >> 3
+    const wire = tag & 7
+    if (field === 0) break
+    if (wire === 0) {
+      let v = 0n
+      let shift = 0n
+      let byte = 0
+      do {
+        byte = b[p++]!
+        v |= BigInt(byte & 0x7f) << shift
+        shift += 7n
+      } while ((byte & 0x80) !== 0 && p < end && shift < 70n)
+      if (field === target) out = v
+    } else if (wire === 2) {
+      let len: number
+      ;[len, p] = readVarint(b, p)
+      p = Math.min(p + len, end)
+    } else if (wire === 1) p += 8
+    else if (wire === 5) p += 4
+    else break
+  }
+  return out === 0n ? undefined : out.toString()
+}
+
+function parseUser(b: Uint8Array, s: number, e: number): { id?: string; nickname: string; avatarUrl?: string; handle?: string } {
   let id = ''
   let nickname = ''
   let avatarUrl = ''
+  let handle = ''
   fields(b, s, e, (field, wire, fs, fe) => {
     if (field === 1 && wire === 2) id = utf8(b, fs, fe) // sometimes string-encoded; fine either way
     else if (field === 3 && wire === 2) nickname = utf8(b, fs, fe)
+    else if (field === 38 && wire === 2) handle = utf8(b, fs, fe)
     else if (field === 9 && wire === 2 && !avatarUrl) {
       // avatar message: field 1 = repeated url string → take the first
       fields(b, fs, fe, (af, aw, as, ae) => {
@@ -88,20 +123,25 @@ function parseUser(b: Uint8Array, s: number, e: number): { id?: string; nickname
       })
     }
   })
-  return { id: id || undefined, nickname, avatarUrl: avatarUrl || undefined }
+  // The real stream sends the id as a varint, which fields() skips; a string-encoded one wins.
+  return { id: id || bigVarintField(b, s, e, 1), nickname, avatarUrl: avatarUrl || undefined, handle: handle || undefined }
 }
 
 function parseChatPayload(b: Uint8Array, s: number, e: number): ChatMessage | null {
   let text = ''
   let ts = 0
-  let user: { id?: string; nickname: string; avatarUrl?: string } = { nickname: '' }
+  let msgId: string | undefined
+  let user: { id?: string; nickname: string; avatarUrl?: string; handle?: string } = { nickname: '' }
   fields(b, s, e, (field, wire, fs, fe) => {
     if (field === 3 && wire === 2) text = utf8(b, fs, fe) // content
     else if (field === 2 && wire === 2) user = parseUser(b, fs, fe)
-    else if (field === 1 && wire === 2) ts = varintField(b, fs, fe, 4) // common.timestamp
+    else if (field === 1 && wire === 2) {
+      ts = varintField(b, fs, fe, 4) // common.timestamp
+      msgId = bigVarintField(b, fs, fe, 2) // common.msg_id
+    }
   })
   if (!text) return null
-  return { userId: user.id, nickname: user.nickname, avatarUrl: user.avatarUrl, text, ts }
+  return { msgId, userId: user.id, nickname: user.nickname, handle: user.handle, avatarUrl: user.avatarUrl, text, ts }
 }
 
 /** A decoded webcast/im/fetch poll: the chat comments plus the pagination state the

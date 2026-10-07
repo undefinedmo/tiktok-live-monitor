@@ -48,6 +48,19 @@ function isJsonObject(text: string): boolean {
   }
 }
 
+/**
+ * The journals to upload, in order: every ordinary journal first, then the chat journals. Files
+ * are uploaded one after another until each is caught up, so a long chat backlog (after an
+ * outage, or on first connect) would otherwise sit in front of the sales and delay them by
+ * however long it took to drain. Names are the plain `.jsonl` files only: cursors and the
+ * device id are not journals.
+ */
+export function orderJournalFiles(names: string[]): string[] {
+  const journals = names.filter((n) => n.endsWith('.jsonl')).sort()
+  const isChat = (n: string) => n.endsWith('.chat.jsonl')
+  return [...journals.filter((n) => !isChat(n)), ...journals.filter(isChat)]
+}
+
 /** The request body for a batch — built by joining, so lines are never re-serialized. */
 export function batchBody(deviceId: string, lines: string[]): string {
   return `{"device":${JSON.stringify(deviceId)},"events":[${lines.join(',')}]}`

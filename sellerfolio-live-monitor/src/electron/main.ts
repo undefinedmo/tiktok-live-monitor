@@ -17,6 +17,7 @@ import { DEFAULT_IDENTIFY_URL, identifyPreflight, updateIdentifySettings } from 
 import { loadIdentifySettings, nodeStoreIO, saveIdentifySettings } from './identifyFiles'
 import { parseTrend, paceCentsPerHour, formatCents, STATS_GMV, STATS_ORDERS } from '../core/liveTrend'
 import { decodeChat } from '../core/chat'
+import { ChatJournal, journalChat } from '../core/chatJournal'
 import { evaluateWatchdog } from '../core/watchdog'
 import { initFlightLog, flightLogPath, flog, flushFlightLogSync } from './flightlog'
 import { initJournal, setJournalContext, record, flushJournal, setJournalSync, journalDeviceId } from './journal'
@@ -52,6 +53,7 @@ const auctionResults = new AuctionResults()
 const auctionWatch = new AuctionWatch()
 // Start/end of every auction run, sold or not, for the show journal (see ./journal).
 const auctionJournal = new AuctionJournal()
+const chatJournal = new ChatJournal()
 /** The bundled journal worker, inlined by esbuild.mjs so it needs no file inside app.asar. */
 declare const __JOURNAL_WORKER_SRC__: string
 const journaledFailed = new Set<string>() // order ids already journaled as payment_failed
@@ -452,6 +454,9 @@ ipcMain.on('tt-im-frame', (_e, bytes: Uint8Array) => {
     send({ kind: 'chat', items, ts: now })
   }
   ingestAuctionBytes(raw, now, 'im')
+  // Every chat line goes to the journal, so the questions buyers ask can be found later. Last, and
+  // fenced: nothing here may ever delay or break the auction path above, which prints the labels.
+  try { journalChat(chatJournal, items, now, record) } catch { /* the journal is best-effort */ }
 })
 
 // Source 2b: on-screen "won" feed (DOM observer in preload) → instant winner,

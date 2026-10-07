@@ -10,7 +10,7 @@ import { parentPort } from 'node:worker_threads'
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { JournalWriter } from '../core/journalWriter'
-import { backoffMs, batchBody, takeLines, verdictFor } from '../core/journalSync'
+import { backoffMs, batchBody, orderJournalFiles, takeLines, verdictFor } from '../core/journalSync'
 
 const FLUSH_MS = 250 // the most a crash can lose
 const FLUSH_AT = 200 // ...or sooner, in a burst
@@ -74,7 +74,7 @@ function readFrom(file: string, offset: number, size: number): Uint8Array {
 /** Upload everything outstanding. Returns true when caught up, false when it had to stop. */
 async function syncAll(cfg: SyncConfig): Promise<boolean> {
   if (!existsSync(cfg.dir)) return true
-  const files = readdirSync(cfg.dir).filter((f) => f.endsWith('.jsonl')).sort()
+  const files = orderJournalFiles(readdirSync(cfg.dir))
   let sent = 0
   for (const name of files) {
     const file = join(cfg.dir, name)
