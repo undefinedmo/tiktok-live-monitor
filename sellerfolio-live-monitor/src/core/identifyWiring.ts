@@ -100,6 +100,7 @@ const FAILURE_TEXT: Record<string, string> = {
   'order-not-found': 'The server does not have this order yet',
   no_audio: 'No audio was recorded for this lot',
   already_queued: 'This lot is already being identified',
+  identification_off: 'Identification was turned off in Settings, so nothing was sent',
   bad_request_local: 'The sale times were not valid, so nothing was sent',
   worker_unreachable: 'The identification server is unreachable right now -- press Retry once it is back',
 }

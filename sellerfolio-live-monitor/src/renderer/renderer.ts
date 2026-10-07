@@ -11,6 +11,8 @@ import { makeIdentifyQueue } from '../core/identifyQueue'
 import { BREAKER_COOLDOWN_MS, BREAKER_THRESHOLD, MAX_IDENTIFY_ATTEMPTS, RETRY_BACKOFF_MS, makeBreaker, makeIdentifyRun, serverToLocalSec, toWirePayload, type IdentifyPayload, type WireClip } from '../core/identifySend'
 import type { IdentifyAnswer, IdentifyJob } from '../core/identifyClient'
 import { clipReadyEpochSec, identifyPayloadFor, isRecentSale, viewOutcome, type JournalEvent } from '../core/identifyWiring'
+import { MAX_IDENTIFICATIONS, restoreEntries, rowFromEntry, type IdentificationRow } from '../core/identifyStore'
+import { identifyGate, identifyStateFrom, identifyStatus } from '../core/identifySettings'
 
 // Structured AI-transcript fields (was core/ledger's LedgerTranscript; the products
 // panel still stores per-product transcripts in memory for the session).
@@ -28,6 +30,8 @@ interface LabelTemplate {
   scale?: Partial<Record<LabelField, number>>
   qr?: boolean
 }
+/** What main knows about identification: the two settings, and whether a capture token is saved. */
+interface IdentifyView { baseUrl: string; enabled: boolean; damaged: boolean; defaultBaseUrl: string; ready: boolean }
 declare global {
   interface Window {
     ttLive: { onEvent: (cb: (ev: LiveEvent) => void) => void }
@@ -46,8 +50,11 @@ declare global {
       suggestRegex?: (payload: { title: string; want: string }) => Promise<{ regex?: string; flags?: string; explain?: string; error?: string }>
     }
     identifyAPI?: {
-      ready: () => Promise<{ ready: boolean }>
+      state: () => Promise<IdentifyView>
+      save: (args: { baseUrl?: string; enabled?: boolean }) => Promise<IdentifyView & { ok: boolean; error?: string }>
       identify: (payload: { job: IdentifyJob; clip: WireClip }) => Promise<IdentifyAnswer>
+      rows: () => Promise<IdentificationRow[]>
+      saveRow: (row: IdentificationRow) => Promise<boolean>
     }
     syncAPI?: {
       connection: () => Promise<{ loggedIn: boolean; hasShow: boolean; polling: boolean }>
@@ -571,18 +578,17 @@ let rec: MediaRecorder | null = null
 // chunk per second. A sale's clip is cut from this on demand; nothing is recorded per sale.
 // Epoch seconds from this machine's clock -- the same clock the sale's own timestamp is read against.
 const clipStore = makeClipStore({ capSec: 300, now: () => Date.now() / 1000 })
-// recapEnabled = a Gemini key exists on this computer AND the Settings switch is on. The
-// switch defaults OFF: with a key in the environment this used to send a clip of the show's
-// audio to Google on every sale with nowhere for the answer to go (AI_UI hides the list) —
-// spend and audio leaving the machine, silently. Nothing is captured or sent unless someone
-// turns it on.
-const AI_PREF_KEY = 'tt-ai-transcribe'
-let geminiKeyPresent = false
-let aiTranscribePref = localStorage.getItem(AI_PREF_KEY) === '1'
+// recapEnabled = core/identifyGate: a capture token is saved AND the Settings switch is on. The switch
+// is stored by the main process (identify.json) and is ON by default, so saving a token is what
+// turns identification on; it used to need a Gemini key on this machine plus a switch that defaulted
+// off, back when the answers had nowhere to go. Nothing is captured or sent while it is off, and
+// main refuses to send while it is off whatever this page thinks.
+let geminiKeyPresent = false // the old local-Gemini product transcript only; identification does not use it
 let recapEnabled = false
-// A capture token is saved, so the worker would accept a clip. Identification does not need the
-// Gemini key any more: the server identifies, and this machine only supplies audio and boundaries.
-let identifyReady = false
+let identifyReady = false // a capture token is saved (the SellerFolio sync token: there is no second one)
+let identifyEnabled = true // the Settings switch, as main last reported it
+let identifyDamaged = false // main could not read the setting and switched identification off
+let identifyUrl = ''
 let transcribing = false // the capture lock of transcribeProduct (the local Gemini path) only
 let watchedRoomId: string | null = null
 interface Recap {
@@ -598,8 +604,19 @@ interface Recap {
   fields?: LedgerTranscript
   /** An operator corrected this entry by hand — never silently replaced by a later run. */
   edited?: boolean
-  /** Kept so Retry can re-run THIS lot rather than whatever is selling now. */
+  /** Kept so Retry can re-run THIS lot rather than whatever is selling now. Memory only: a restored row has none. */
   sale?: Sale
+  /** What identifies the row on disk (core/identifyStore). A row without them is never persisted. */
+  orderId?: string
+  roomId?: string | null
+  atEpochSec?: number
+}
+/** Save a row's current state. Fire and forget: a disk that fails must never reach the show. */
+function persistEntry(e: Recap): void {
+  const row = rowFromEntry(e)
+  const api = window.identifyAPI
+  if (!row || !api) return
+  try { void Promise.resolve(api.saveRow(row)).catch(() => {}) } catch { /* the page still shows the row */ }
 }
 const ID_FIELDS: Array<[keyof LedgerTranscript, string, boolean]> = [
   ['brand', 'Brand', false], ['item', 'Item', false], ['color', 'Color', false],
@@ -703,6 +720,7 @@ function idEditor(r: Recap, redraw: () => void): HTMLElement {
     r.fields = next
     r.edited = true
     r.status = 'done'
+    persistEntry(r)
     editing.delete(r)
     redraw()
   })
@@ -774,7 +792,7 @@ function idEntry(r: Recap, current: boolean, redraw: () => void): HTMLElement {
 
 /** The capture lights report what is ACTUALLY running, not what the app can do.
  *  AUDIO is green only while a MediaRecorder is recording the stream's audio track — which needs
- *  both a Gemini key and the Settings switch, and that switch defaults OFF. VIDEO is green only
+ *  a saved capture token and the Settings switch (on by default). VIDEO is green only
  *  while the player is genuinely playing. Anything less and an operator checking "is this
  *  capturing?" gets a reassuring light over nothing. */
 function renderCaptureState() {
@@ -862,7 +880,7 @@ function renderIdentifications() {
     tr.appendChild(cell(fieldText('retailPrice'), 'num mono'))
     tr.appendChild(cell(r.price || null, 'num mono'))
     tr.appendChild(cell(r.edited ? 'You corrected it'
-      : r.status === 'error' ? 'Failed' : r.status === 'abandoned' ? 'Not identified (show ended)' : r.status === 'skipped' ? 'Nothing to identify'
+      : r.status === 'error' ? 'Failed' : r.status === 'abandoned' ? 'Not identified (show ended or app closed)' : r.status === 'skipped' ? 'Nothing to identify'
       : r.status === 'transcribing' ? 'Identifying…' : 'Identified live'))
     const acts = el('td')
     const wrap = el('div', 'rowacts')
@@ -915,6 +933,7 @@ function settleEntry(entry: Recap, outcome: { status: string; reason?: string; t
   const v = viewOutcome(outcome)
   entry.status = v.status
   entry.text = v.text + (v.status === 'done' && truncated ? ' (the audio buffer began late, so the clip is short)' : '')
+  persistEntry(entry)
   renderAll()
 }
 // Fails fast while the worker is unreachable, so an outage costs one quick failure per sale, not the whole retry budget.
@@ -954,22 +973,25 @@ function identifySale(s: Sale, existing?: Recap): void {
     identifiedOrders.add(s.orderId)
     if (identifiedOrders.size > 2000) identifiedOrders.clear()
   }
+  // Everything the server is sent is assembled in core/identifyWiring (tested): this only supplies the
+  // sale on THIS machine's clock, the show's journal, and the store.
+  const sale = { orderId: s.orderId, roomId: s.roomId ?? watchedRoomId, atEpochSec: serverToLocalSec(s.createdAt, serverTimeOffsetMs) }
   const entry: Recap = existing ?? {
     head: `${s.productName.slice(0, 30)} — @${s.buyer.handle ?? s.buyer.username}`,
     lot: s.skuDesc ?? '', price: s.price?.formatted ?? '',
     status: 'transcribing', text: '', sale: s, live: true,
+    orderId: sale.orderId, roomId: sale.roomId, atEpochSec: sale.atEpochSec,
   }
   entry.status = 'transcribing'
   entry.text = ''
   if (!existing) {
     recaps.unshift(entry)
-    if (recaps.length > 200) recaps.pop()
+    if (recaps.length > MAX_IDENTIFICATIONS) recaps.pop()
   }
+  // Written now, not only when it settles: a lot still waiting when the app closes is then on record
+  // as not identified, instead of vanishing.
+  persistEntry(entry)
   renderAll()
-
-  // Everything the server is sent is assembled in core/identifyWiring (tested): this only supplies the
-  // sale on THIS machine's clock, the show's journal, and the store.
-  const sale = { orderId: s.orderId, roomId: s.roomId ?? watchedRoomId, atEpochSec: serverToLocalSec(s.createdAt, serverTimeOffsetMs) }
   const show = showGeneration
   // The clip includes the tail after the sale, so wait for that audio to exist.
   const waitMs = Math.min(MAX_TAIL_WAIT_MS, Math.max(0, (clipReadyEpochSec(sale.atEpochSec) - Date.now() / 1000) * 1000) + CHUNK_SETTLE_MS)
@@ -1008,33 +1030,74 @@ async function transcribeProduct(productId: string, productName: string): Promis
   }
 }
 
-function applyAiPref(): void {
-  recapEnabled = identifyReady && aiTranscribePref
+function applyIdentifyState(): void {
+  const was = recapEnabled
+  const gate = identifyGate({ hasToken: identifyReady, enabled: identifyEnabled })
+  recapEnabled = gate === 'on'
   if (recapEnabled) startAudioCapture() // no-op until the video is playing; its own listener covers that
-  else { stopAudioCapture(); endIdentifyShow('identification was turned off') }
+  else if (was) { stopAudioCapture(); endIdentifyShow('identification was turned off') }
   const sw = document.getElementById('aiTranscribe') as HTMLInputElement | null
   const st = document.getElementById('aiState')
   if (sw) { sw.checked = recapEnabled; sw.disabled = !identifyReady }
   if (st) {
-    const [text, cls] = !identifyReady
-      ? ['No capture token saved — nothing can be sent', 'muted']
-      : recapEnabled
-        ? ['On — a clip of the show’s audio goes to SellerFolio each time an item sells', 'warn-text']
-        : ['Off — no audio is captured and none leaves this computer', 'ok-text']
+    const [text, cls] = identifyStatus(gate, identifyDamaged)
     st.className = 'state ' + cls
     st.textContent = text
   }
+  const url = document.getElementById('idUrl') as HTMLInputElement | null
+  if (url) {
+    if (document.activeElement !== url) url.value = identifyUrl
+    url.placeholder = identifyDefaultUrl
+  }
+  renderAll()
+}
+let identifyDefaultUrl = ''
+/** Ask main what the settings are now (a token may have just been saved or removed) and apply them. */
+async function refreshIdentifyState(): Promise<void> {
+  let told: unknown
+  try { told = await window.identifyAPI?.state() } catch { told = undefined }
+  const s = identifyStateFrom(told) // untrusted over IPC: anything not exactly true is false
+  identifyReady = s.ready
+  identifyEnabled = s.enabled
+  identifyDamaged = s.damaged
+  identifyUrl = s.baseUrl
+  identifyDefaultUrl = s.defaultBaseUrl
+  applyIdentifyState()
 }
 document.getElementById('aiTranscribe')?.addEventListener('change', (e) => {
-  aiTranscribePref = (e.target as HTMLInputElement).checked
-  localStorage.setItem(AI_PREF_KEY, aiTranscribePref ? '1' : '0')
-  applyAiPref()
+  const want = (e.target as HTMLInputElement).checked
+  const api = window.identifyAPI
+  if (!api) { applyIdentifyState(); return }
+  void api.save({ enabled: want }).then(() => refreshIdentifyState(), () => refreshIdentifyState())
 })
+document.getElementById('idUrlSave')?.addEventListener('click', () => {
+  const api = window.identifyAPI
+  const box = document.getElementById('idUrl') as HTMLInputElement | null
+  const st = document.getElementById('idUrlState')
+  if (!api || !box) return
+  void api.save({ baseUrl: box.value }).then(async (r) => {
+    // On a refusal the box keeps what was typed, so it can be corrected rather than retyped.
+    if (r.ok) { await refreshIdentifyState(); box.value = r.baseUrl }
+    if (st) { st.className = 'state ' + (r.ok ? 'ok-text' : 'bad-text'); st.textContent = r.ok ? 'Saved' : (r.error ?? 'Could not save') }
+  }, () => { if (st) { st.className = 'state bad-text'; st.textContent = 'Could not save' } })
+})
+
+/** Bring last session's identifications back. Never throws and never blocks the page: no rows is a valid answer. */
+async function restoreIdentifications(): Promise<void> {
+  let rows: IdentificationRow[] = []
+  try { rows = (await window.identifyAPI?.rows()) ?? [] } catch { rows = [] }
+  if (!Array.isArray(rows)) return
+  for (const e of restoreEntries(recaps, rows, MAX_IDENTIFICATIONS)) {
+    recaps.push(e)
+    // A sale the app is shown again after a restart is already on record: it is not identified twice.
+    identifiedOrders.add(e.orderId)
+  }
+}
 
 async function initRecap() {
   try { geminiKeyPresent = (await window.recapAPI?.enabled())?.enabled ?? false } catch { geminiKeyPresent = false }
-  try { identifyReady = (await window.identifyAPI?.ready())?.ready ?? false } catch { identifyReady = false }
-  applyAiPref()
+  await refreshIdentifyState()
+  await restoreIdentifications()
   // The AI chip lived on the deleted "Current auction item" panel. The Identification section
   // head carries the state now; AI_UI still gates the whole feature without a plumbing rebuild.
   // Opened without the Electron preload (a browser preview), the demo block seeds rows so the
@@ -1772,12 +1835,13 @@ function setupSfSync() {
     void api.save(args).then((r) => {
       tokEl.value = ''
       renderSfSync(r)
+      void refreshIdentifyState() // a token saved here is what turns identification on
       if (!r.ok && r.error) { const st = document.getElementById('sfState'); if (st) { st.className = 'bad-text'; st.textContent = r.error } }
     })
   })
   document.getElementById('sfFolder')?.addEventListener('click', () => void api.openFolder())
   document.getElementById('sfOff')?.addEventListener('click', () => {
-    void api.save({ token: '' }).then(renderSfSync)
+    void api.save({ token: '' }).then((r) => { renderSfSync(r); void refreshIdentifyState() })
   })
 }
 setupSfSync()

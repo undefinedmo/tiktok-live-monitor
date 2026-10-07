@@ -658,10 +658,18 @@
               <div class="modal-box set-card">
                 <h3>Show audio</h3>
                 <label class="switch-row" for="aiTranscribe" style="margin-bottom:0!important;">
-                  <span><b>Identify each lot from the show&rsquo;s audio</b><small>When an item sells, the show&rsquo;s audio around that lot is sent to SellerFolio to work out the brand, item and size. Needs a capture token saved above. Nothing is captured or sent while this is off.</small></span>
+                  <span><b>Identify each lot from the show&rsquo;s audio</b><small>When an item sells, the show&rsquo;s audio around that lot is sent to SellerFolio to work out the brand, item and size. Needs a capture token saved above, and is on as soon as one is. Nothing is captured or sent while this is off.</small></span>
                   <input type="checkbox" id="aiTranscribe" class="switch" />
                 </label>
                 <div id="aiState" class="state muted">&mdash;</div>
+                <div class="field" style="margin-top:14px;">
+                  <label class="f-lbl" for="idUrl">Identification server</label>
+                  <div class="custom-row" style="margin:0;">
+                    <input type="text" id="idUrl" placeholder="http://100.68.11.76:8099" spellcheck="false" />
+                    <button type="button" id="idUrlSave" class="qbtn print" style="flex:none;">Save</button>
+                  </div>
+                  <div id="idUrlState" class="state muted" style="margin-top:6px;">Where clips are sent. Leave it empty for the default; the token goes with every clip, so only this computer, a tailnet (100.x) address or https:// is accepted.</div>
+                </div>
               </div>
 
               <div class="modal-box set-card" style="margin-bottom:0;">

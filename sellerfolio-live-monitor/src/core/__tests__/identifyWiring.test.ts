@@ -235,6 +235,7 @@ describe('viewOutcome', () => {
     ['bad_request_local', /not valid/i],
     ['worker_unreachable', /Retry/],
     ['already_queued', /already being identified/i],
+    ['identification_off', /turned off/i],
   ])('explains failure %s in words, not with the raw code', (reason, re) => {
     const v = viewOutcome({ status: 'failed', reason })
     expect(v.status).toBe('error')
