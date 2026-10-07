@@ -28,6 +28,10 @@ contextBridge.exposeInMainWorld('identifyAPI', {
   rows: () => ipcRenderer.invoke('identify:rows'),
   saveRow: (row: unknown) => ipcRenderer.invoke('identify:save-row', row),
   identify: (payload: unknown) => ipcRenderer.invoke('tt-identify', payload),
+  clipKeep: (payload: unknown) => ipcRenderer.invoke('identify:clip-keep', payload),
+  clipTake: (orderId: string) => ipcRenderer.invoke('identify:clip-take', orderId),
+  clipDrop: (orderId: string) => ipcRenderer.invoke('identify:clip-drop', orderId),
+  clipList: () => ipcRenderer.invoke('identify:clip-list'),
 })
 
 contextBridge.exposeInMainWorld('syncAPI', {

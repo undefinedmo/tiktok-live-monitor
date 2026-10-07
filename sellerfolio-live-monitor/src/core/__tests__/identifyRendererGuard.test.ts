@@ -235,7 +235,7 @@ describe('glue: turning identification off really stops it (second sweep)', () =
   it('on starts the recorder; going from on to off stops it and abandons what is queued', () => {
     const b = body()
     expect(b).toContain('if (recapEnabled) startAudioCapture()')
-    expect(b).toContain("else if (was) { stopAudioCapture(); endIdentifyShow('identification was turned off') }")
+    expect(b).toContain("else if (was) { stopAudioCapture(); endIdentifyShow('identification was turned off'); keptClips.clear() }")
     expect(b).toContain('const was = recapEnabled')
   })
   it('flipping the switch re-reads the state, whether the save worked or not', () => {
@@ -338,5 +338,103 @@ describe('glue: clip caveats and late sales', () => {
   })
   it('the identifications table says WHY a row failed, not just "Failed"', () => {
     expect(rendererCode).toContain("r.status === 'error' ? (r.text || 'Failed')")
+  })
+})
+
+// ── Final fix 5: Retry after an outage. Retry one row, or all, from the clip that failed. ──
+describe('glue: retry from a kept clip, one row or all failed', () => {
+  const html = lf(readFileSync(fileURLToPath(new URL('../../renderer/index.html', import.meta.url)), 'utf8'))
+
+  it('a failed or abandoned clip is kept after the row settles, a settled one clears an earlier keep, and none of it can throw into the show', () => {
+    expect(rendererCode).toContain('settleEntry(job.entry, outcome, clipNote(job.payload.clip))\n    void tidyKeptClip(job, outcome.status)')
+    const b = fnBody(rendererCode, 'tidyKeptClip')
+    expect(b).toContain('shouldKeepClip(status)')
+    expect(b).toContain('await api.clipKeep(await toWirePayload(job.payload))')
+    expect(b).toContain('keptClips.add(job.orderId)')
+    expect(b).toContain('keptClips.delete(job.orderId)')
+    expect(b).toContain('await api.clipDrop(job.orderId)')
+    expect(b).toMatch(/try \{[\s\S]*\} catch \{/)
+  })
+
+  it('a kept clip is sent as it was kept (the same job, the same clip), on its own row, in the current show', () => {
+    const b = fnBody(rendererCode, 'queueKeptClip')
+    expect(b).toContain('payload: fromWirePayload(kept)')
+    expect(b).toContain('show: showGeneration')
+    expect(b).toContain("settleEntry(entry, { status: 'failed', reason: 'already_queued' })")
+    expect(b.indexOf("entry.status = 'transcribing'")).toBeLessThan(b.indexOf('persistEntry(entry)'))
+  })
+
+  it('retryEntry starts from the kept clip when there is one, else from the sale, and tells the caller when there is neither', () => {
+    const b = fnBody(rendererCode, 'retryEntry')
+    expect(b).toContain('!canRetry(r, keptClips)')
+    expect(b).toContain('await api.clipTake(orderId)')
+    expect(b).toContain('identifySale(r.sale, r)')
+    expect(b).toContain('if (!recapEnabled || !api || !orderId')
+    // a second press while the clip is being read must not queue a second job
+    expect(b).toContain('retryLoading.has(orderId)')
+    expect(b).toContain("if (r.status === 'transcribing') return true")
+    // the kept clip is tried before the buffer
+    expect(b.indexOf('api.clipTake(orderId)')).toBeLessThan(b.indexOf('identifySale(r.sale, r)', b.indexOf('api.clipTake(orderId)')))
+  })
+
+  it('the per-row Retry works for a restored row: it asks canRetry (a kept clip), not "is there a sale in memory"', () => {
+    const b = fnBody(rendererCode, 'idRetryButton')
+    expect(b).toContain('!canRetry(r, keptClips)')
+    expect(b).toContain('void retryEntry(r)')
+    expect(b).not.toContain('!r.sale')
+    expect(b).not.toContain('identifySale(')
+  })
+
+  it('"Retry all failed" takes the tested target list, one row after another, and is hidden when there is nothing to retry', () => {
+    expect(fnBody(rendererCode, 'retryAllFailed')).toContain('for (const r of bulkRetryTargets(recaps, keptClips)) await retryEntry(r)')
+    const b = fnBody(rendererCode, 'syncRetryAll')
+    expect(b).toContain('bulkRetryTargets(recaps, keptClips).length')
+    expect(b).toContain("b.style.display = n && recapEnabled ? '' : 'none'")
+    expect(b).toContain('retryAllLabel(n, retryAllArmed)')
+    expect(fnBody(rendererCode, 'renderIdentifications').startsWith('function renderIdentifications() {\n  syncRetryAll()')).toBe(true)
+    expect(html).toContain('id="idRetryAll"')
+  })
+
+  it('it asks twice before it spends model calls: the first press arms, only the second runs', () => {
+    const i = rendererCode.indexOf("document.getElementById('idRetryAll')?.addEventListener('click'")
+    expect(i).toBeGreaterThan(-1)
+    const handler = rendererCode.slice(i, rendererCode.indexOf('\n})\n', i))
+    expect(handler.indexOf('if (!retryAllArmed) {')).toBeGreaterThan(-1)
+    expect(handler.indexOf('void retryAllFailed()')).toBeGreaterThan(handler.indexOf('return\n  }'))
+    expect(handler.split('retryAllFailed()').length - 1).toBe(1)
+  })
+
+  it('last session\'s kept clips are listed at launch, tolerating a failing or malformed answer, after the rows are restored', () => {
+    const b = fnBody(rendererCode, 'restoreKeptClips')
+    expect(b).toContain('await window.identifyAPI?.clipList()')
+    expect(b).toMatch(/try \{[^}]*clipList\(\)[^}]*\} catch/)
+    expect(b).toContain('if (!Array.isArray(ids)) return')
+    expect(b).toContain("typeof id === 'string'")
+    const init = fnBody(rendererCode, 'initRecap')
+    expect(init.indexOf('await restoreKeptClips()')).toBeGreaterThan(init.indexOf('await restoreIdentifications()'))
+  })
+
+  it('the preload passes each clip call through untouched', () => {
+    for (const l of [
+      "clipKeep: (payload: unknown) => ipcRenderer.invoke('identify:clip-keep', payload)",
+      "clipTake: (orderId: string) => ipcRenderer.invoke('identify:clip-take', orderId)",
+      "clipDrop: (orderId: string) => ipcRenderer.invoke('identify:clip-drop', orderId)",
+      "clipList: () => ipcRenderer.invoke('identify:clip-list')",
+    ]) expect(preloadSrc).toContain(l)
+  })
+
+  it('main keeps audio only while identification is ON, and empties the folder when it is turned off', () => {
+    const keep = mainCode.slice(mainCode.indexOf("ipcMain.handle('identify:clip-keep'"))
+    expect(keep).toContain('if (!loadIdentifySettings(IDENTIFY_FILE).enabled) return false\n  return identifyClips.keep(payload)')
+    expect(mainCode).toContain("ipcMain.handle('identify:clip-take', (_e, orderId: string) => identifyClips.load(orderId))")
+    expect(mainCode).toContain("if (!loadIdentifySettings(IDENTIFY_FILE).enabled) { identifyClips.clear(); return [] }")
+    expect(mainCode).toContain('if (!u.next.enabled) identifyClips.clear()')
+    // cleared only AFTER the setting is saved
+    expect(mainCode.indexOf('if (!u.next.enabled) identifyClips.clear()')).toBeGreaterThan(mainCode.indexOf('saveIdentifySettings(IDENTIFY_FILE, u.next)'))
+  })
+
+  it('a failed clip is kept in the user-data folder, through the one keeper', () => {
+    expect(mainCode).toContain("createClipKeeper(join(app.getPath('userData'), 'identify-clips'), { now: () => Date.now() })")
+    expect(mainCode.split('createClipKeeper(').length - 1).toBe(1)
   })
 })

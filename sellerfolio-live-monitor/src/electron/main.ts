@@ -15,6 +15,7 @@ import type { IdentifyJob } from '../core/identifyClient'
 import { createIdentifyStore, type IdentificationRow } from '../core/identifyStore'
 import { DEFAULT_IDENTIFY_URL, identifyPreflight, updateIdentifySettings } from '../core/identifySettings'
 import { loadIdentifySettings, nodeStoreIO, saveIdentifySettings } from './identifyFiles'
+import { createClipKeeper } from './identifyClips'
 import { parseTrend, paceCentsPerHour, formatCents, STATS_GMV, STATS_ORDERS } from '../core/liveTrend'
 import { decodeChat } from '../core/chat'
 import { ChatJournal, journalChat, lotInProgress } from '../core/chatJournal'
@@ -771,6 +772,7 @@ ipcMain.handle('identify:save', (_e, a: { baseUrl?: unknown; enabled?: unknown; 
   const u = updateIdentifySettings(loadIdentifySettings(IDENTIFY_FILE), a ?? {})
   if (!u.ok) return { ok: false, error: u.error, ...identifyView() }
   if (!saveIdentifySettings(IDENTIFY_FILE, u.next)) return { ok: false, error: 'Could not save this setting', ...identifyView() }
+  if (!u.next.enabled) identifyClips.clear() // off means off for audio at rest too: no failed clip stays on this disk
   return { ok: true, ...identifyView() }
 })
 ipcMain.handle('tt-identify', async (_e, payload: { job?: IdentifyJob; clip?: WireClip }) => {
@@ -788,6 +790,21 @@ ipcMain.handle('tt-identify', async (_e, payload: { job?: IdentifyJob; clip?: Wi
   const out = await sendIdentify({ job, clip: wire, cfg: { baseUrl: pre.baseUrl, token: pre.token }, fetch, timeoutMs: IDENTIFY_TIMEOUT_MS })
   if (out.status === 'failed') flog(`[identify] order ${job.orderId} failed: ${out.reason}`) // never the token, never the request
   return out
+})
+
+// Clips that failed to identify, kept on disk so Retry still has the audio after a restart or once the live
+// buffer has moved on (core/identifyKept says what is kept; electron/identifyClips does the files). Only
+// while identification is ON, and emptied when it is turned off.
+const identifyClips = createClipKeeper(join(app.getPath('userData'), 'identify-clips'), { now: () => Date.now() })
+ipcMain.handle('identify:clip-keep', (_e, payload: { job: IdentifyJob; clip: WireClip }) => {
+  if (!loadIdentifySettings(IDENTIFY_FILE).enabled) return false
+  return identifyClips.keep(payload)
+})
+ipcMain.handle('identify:clip-take', (_e, orderId: string) => identifyClips.load(orderId))
+ipcMain.handle('identify:clip-drop', (_e, orderId: string) => { identifyClips.drop(orderId); return true })
+ipcMain.handle('identify:clip-list', () => {
+  if (!loadIdentifySettings(IDENTIFY_FILE).enabled) { identifyClips.clear(); return [] }
+  return identifyClips.list()
 })
 
 // Identifications that survive a restart (core/identifyStore: capped by count with an age backstop,

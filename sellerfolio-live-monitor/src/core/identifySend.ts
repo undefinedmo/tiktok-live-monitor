@@ -77,6 +77,11 @@ export async function toWirePayload(p: IdentifyPayload): Promise<{ job: Identify
   return { job: p.job, clip: await toWireClip(p.clip) }
 }
 
+/** The payload back from its IPC form (a clip kept on disk and read again): the job as it is, the clip rebuilt. */
+export function fromWirePayload(w: { job: IdentifyJob; clip: WireClip }): IdentifyPayload {
+  return { job: w.job, clip: fromWireClip(w.clip) }
+}
+
 const failed = (reason: string, retryable: boolean, detail?: string): IdentifyFailed =>
   detail === undefined ? { status: 'failed', reason, retryable } : { status: 'failed', reason, retryable, detail }
 

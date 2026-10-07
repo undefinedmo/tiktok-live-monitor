@@ -78,7 +78,7 @@ export function lotInProgress(
 /** cyrb53, base 36: a fast deterministic 53-bit string hash. Not cryptographic; it only has to
  *  keep two different texts or viewers from sharing an id part. It must NEVER change, or every
  *  journaled fallback id changes with it. */
-function hash53(s: string): string {
+export function hash53(s: string): string {
   let h1 = 0xdeadbeef
   let h2 = 0x41c6ce57
   for (let i = 0; i < s.length; i++) {

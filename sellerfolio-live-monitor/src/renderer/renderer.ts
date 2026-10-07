@@ -8,7 +8,9 @@ import { labelCode } from '../core/labelCode'
 import { makeClipStore } from '../core/clipRecorder'
 import { AuctionJournal } from '../core/auctionJournal'
 import { makeIdentifyQueue } from '../core/identifyQueue'
-import { BREAKER_COOLDOWN_MS, BREAKER_THRESHOLD, MAX_IDENTIFY_ATTEMPTS, RETRY_BACKOFF_MS, makeBreaker, makeIdentifyRun, serverToLocalSec, toWirePayload, type IdentifyPayload, type WireClip } from '../core/identifySend'
+import { BREAKER_COOLDOWN_MS, BREAKER_THRESHOLD, MAX_IDENTIFY_ATTEMPTS, RETRY_BACKOFF_MS, fromWirePayload, makeBreaker, makeIdentifyRun, serverToLocalSec, toWirePayload, type IdentifyPayload, type WireClip } from '../core/identifySend'
+import { shouldKeepClip } from '../core/identifyKept'
+import { bulkRetryTargets, canRetry, retryAllLabel } from '../core/identifyRetry'
 import type { IdentifyAnswer, IdentifyJob } from '../core/identifyClient'
 import { clipNote, clipReadyEpochSec, createSeenOrders, identifyPayloadFor, splitSalesByAge, viewOutcome, type JournalEvent } from '../core/identifyWiring'
 import { MAX_IDENTIFICATIONS, restoreEntries, rowFromEntry, type IdentificationRow } from '../core/identifyStore'
@@ -55,6 +57,10 @@ declare global {
       identify: (payload: { job: IdentifyJob; clip: WireClip }) => Promise<IdentifyAnswer>
       rows: () => Promise<IdentificationRow[]>
       saveRow: (row: IdentificationRow) => Promise<boolean>
+      clipKeep: (payload: { job: IdentifyJob; clip: WireClip }) => Promise<boolean>
+      clipTake: (orderId: string) => Promise<{ job: IdentifyJob; clip: WireClip } | null>
+      clipDrop: (orderId: string) => Promise<boolean>
+      clipList: () => Promise<string[]>
     }
     syncAPI?: {
       connection: () => Promise<{ loggedIn: boolean; hasShow: boolean; polling: boolean }>
@@ -749,9 +755,9 @@ function idRetryButton(r: Recap, redraw: () => void): HTMLElement {
     }
     if (t) clearTimeout(t)
     armed = false; b.classList.remove('armed')
-    if (!r.sale || !recapEnabled) { b.textContent = recapEnabled ? 'no audio for this lot' : 'audio is off'; setTimeout(() => { b.textContent = 'Retry' }, 1800); return }
+    if (!recapEnabled || !canRetry(r, keptClips)) { b.textContent = recapEnabled ? 'no audio for this lot' : 'audio is off'; setTimeout(() => { b.textContent = 'Retry' }, 1800); return }
     b.textContent = 'Retrying…'
-    identifySale(r.sale, r)
+    void retryEntry(r)
     redraw()
   })
   return b
@@ -856,6 +862,7 @@ function renderAll() { renderRecap(); renderIdentifications() }
 
 let idFilter: 'all' | 'review' | 'edited' = 'all'
 function renderIdentifications() {
+  syncRetryAll()
   const body = document.getElementById('idRows')
   const empty = document.getElementById('idEmpty')
   if (!body) return
@@ -957,9 +964,92 @@ const identifyQueue = makeIdentifyQueue<IdentifyQueueJob, IdentifyAnswer & { tri
     shouldContinue: (job) => job.show === showGeneration && recapEnabled,
     breaker: identifyBreaker,
   }),
-  onSettled: (job, outcome) => settleEntry(job.entry, outcome, clipNote(job.payload.clip)),
+  onSettled: (job, outcome) => {
+    settleEntry(job.entry, outcome, clipNote(job.payload.clip))
+    void tidyKeptClip(job, outcome.status)
+  },
   concurrency: IDENTIFY_CONCURRENCY,
 })
+// ── Retry: from the clip that failed, kept on disk (core/identifyKept), else cut again from the buffer ───────
+/** Orders with a clip kept on disk. A row restored after a restart has no sale, but may still have its clip. */
+const keptClips = new Set<string>()
+/** A failure keeps its clip so a retry has the same audio whenever it is pressed; a success clears an earlier one. Never throws into the show. */
+async function tidyKeptClip(job: IdentifyQueueJob, status: string): Promise<void> {
+  const api = window.identifyAPI
+  if (!api) return
+  try {
+    if (shouldKeepClip(status)) {
+      if (await api.clipKeep(await toWirePayload(job.payload))) keptClips.add(job.orderId)
+      else keptClips.delete(job.orderId)
+    } else if (keptClips.delete(job.orderId)) await api.clipDrop(job.orderId)
+  } catch { /* the row is settled already; at worst Retry cuts the clip again from the buffer */ }
+  renderIdentifications() // the "Retry all" count
+}
+/** Queue a kept clip for another try, on its own row. */
+function queueKeptClip(entry: Recap, kept: { job: IdentifyJob; clip: WireClip }): void {
+  entry.status = 'transcribing'
+  entry.text = ''
+  persistEntry(entry)
+  renderAll()
+  if (!identifyQueue.enqueue({ orderId: kept.job.orderId, payload: fromWirePayload(kept), show: showGeneration, entry })) settleEntry(entry, { status: 'failed', reason: 'already_queued' })
+}
+const retryLoading = new Set<string>() // orders whose kept clip is being read: a second press must not queue a second job
+/**
+ * Retry one row. From the clip that failed when it is on disk (the same audio, even after a restart or once the
+ * live buffer has moved on), else cut again from the buffer with the sale in memory. False when there is nothing
+ * to retry from; the row is then left as it was.
+ */
+async function retryEntry(r: Recap): Promise<boolean> {
+  const api = window.identifyAPI
+  const orderId = r.orderId
+  if (!recapEnabled || !api || !orderId || !canRetry(r, keptClips)) return false
+  if (!keptClips.has(orderId)) {
+    if (!r.sale) return false
+    identifySale(r.sale, r)
+    return true
+  }
+  if (retryLoading.has(orderId)) return true
+  retryLoading.add(orderId)
+  let kept: { job: IdentifyJob; clip: WireClip } | null = null
+  try { kept = await api.clipTake(orderId) } catch { kept = null } finally { retryLoading.delete(orderId) }
+  if (r.status === 'transcribing') return true // another press got there first
+  if (!recapEnabled) return false
+  if (kept) { queueKeptClip(r, kept); return true }
+  keptClips.delete(orderId) // it was not on the disk after all
+  if (r.sale) { identifySale(r.sale, r); return true }
+  settleEntry(r, { status: 'failed', reason: 'no_audio' })
+  return true
+}
+/** Every failed row that can be retried, oldest first. Each one still goes through the queue, so an outage that is not over fails fast. */
+async function retryAllFailed(): Promise<void> {
+  for (const r of bulkRetryTargets(recaps, keptClips)) await retryEntry(r)
+  renderAll()
+}
+let retryAllArmed = false
+let retryAllTimer: ReturnType<typeof setTimeout> | undefined
+/** The "Retry all failed" button: shown while there is anything to retry, and asks twice (every retry can cost a model call). */
+function syncRetryAll(): void {
+  const b = document.getElementById('idRetryAll') as HTMLButtonElement | null
+  if (!b) return
+  const n = bulkRetryTargets(recaps, keptClips).length
+  if (!n) retryAllArmed = false
+  b.style.display = n && recapEnabled ? '' : 'none'
+  b.textContent = retryAllLabel(n, retryAllArmed)
+  b.classList.toggle('armed', retryAllArmed)
+}
+document.getElementById('idRetryAll')?.addEventListener('click', () => {
+  if (!retryAllArmed) {
+    retryAllArmed = true
+    syncRetryAll()
+    retryAllTimer = setTimeout(() => { retryAllArmed = false; syncRetryAll() }, 4000)
+    return
+  }
+  if (retryAllTimer) clearTimeout(retryAllTimer)
+  retryAllArmed = false
+  syncRetryAll()
+  void retryAllFailed()
+})
+
 /** The show changed or identification was turned off: sales still WAITING settle as abandoned. */
 function endIdentifyShow(reason: string): void {
   showGeneration++
@@ -1059,7 +1149,7 @@ function applyIdentifyState(): void {
   const gate = identifyGate({ hasToken: identifyReady, enabled: identifyEnabled, held: identifyHeld })
   recapEnabled = gate === 'on'
   if (recapEnabled) startAudioCapture() // no-op until the video is playing; its own listener covers that
-  else if (was) { stopAudioCapture(); endIdentifyShow('identification was turned off') }
+  else if (was) { stopAudioCapture(); endIdentifyShow('identification was turned off'); keptClips.clear() }
   const sw = document.getElementById('aiTranscribe') as HTMLInputElement | null
   const st = document.getElementById('aiState')
   if (sw) { sw.checked = recapEnabled; sw.disabled = !identifyReady }
@@ -1145,6 +1235,15 @@ async function restoreIdentifications(): Promise<void> {
 }
 
 /** The old switch was in localStorage and defaulted off. An operator who turned it off keeps it off. */
+/** Which orders still have their failed clip on disk, so a restored row can be retried. Never throws. */
+async function restoreKeptClips(): Promise<void> {
+  let ids: string[] = []
+  try { ids = (await window.identifyAPI?.clipList()) ?? [] } catch { ids = [] }
+  if (!Array.isArray(ids)) return
+  for (const id of ids) if (typeof id === 'string') keptClips.add(id)
+  renderAll()
+}
+
 async function migrateLegacyIdentifySwitch(): Promise<void> {
   const api = window.identifyAPI
   if (!api) return
@@ -1158,6 +1257,7 @@ async function initRecap() {
   await migrateLegacyIdentifySwitch() // before the gate is first read, or an opt-out would arm the recorder for a moment
   await refreshIdentifyState()
   await restoreIdentifications()
+  await restoreKeptClips()
   // The AI chip lived on the deleted "Current auction item" panel. The Identification section
   // head carries the state now; AI_UI still gates the whole feature without a plumbing rebuild.
   // Opened without the Electron preload (a browser preview), the demo block seeds rows so the

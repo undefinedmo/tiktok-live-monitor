@@ -6,7 +6,7 @@ import type { StoreIO } from '../core/identifyStore'
 import { parseIdentifySettings, serializeIdentifySettings, type IdentifySettings, type IdentifySettingsRead } from '../core/identifySettings'
 
 /** Write via a temp file and a rename, so a power cut leaves the old file or the new one, never half of either. */
-export function atomicWrite(path: string, text: string): void {
+export function atomicWrite(path: string, text: string | Uint8Array): void {
   mkdirSync(dirname(path), { recursive: true })
   const tmp = `${path}.tmp`
   try {
