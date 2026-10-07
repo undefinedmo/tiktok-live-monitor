@@ -606,7 +606,7 @@ function startRecorder(): void {
   const r = (() => { try { return new MediaRecorder(astream, { mimeType: 'audio/webm' }) } catch { return new MediaRecorder(astream) } })()
   // One continuous recording. The timeslice makes ondataavailable fire every second, and each
   // second lands in the store. Never stop and restart it to cut a clip: the store does that.
-  r.ondataavailable = (e) => { if (e.data.size) clipStore.push(e.data, 1) }
+  r.ondataavailable = (e) => { if (e.data.size) void clipStore.push(e.data, 1) } // never rejects
   rec = r
   r.start(1000)
 }
