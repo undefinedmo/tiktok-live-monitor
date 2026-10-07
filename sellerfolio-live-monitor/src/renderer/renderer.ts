@@ -588,6 +588,7 @@ let recapEnabled = false
 let identifyReady = false // a capture token is saved (the SellerFolio sync token: there is no second one)
 let identifyEnabled = true // the Settings switch, as main last reported it
 let identifyDamaged = false // main could not read the setting and switched identification off
+let identifyHeld = false // an earlier opt-out could not be carried over: unknown means OFF for this session
 let identifyUrl = ''
 let transcribing = false // the capture lock of transcribeProduct (the local Gemini path) only
 let watchedRoomId: string | null = null
@@ -1031,7 +1032,7 @@ async function transcribeProduct(productId: string, productName: string): Promis
 
 function applyIdentifyState(): void {
   const was = recapEnabled
-  const gate = identifyGate({ hasToken: identifyReady, enabled: identifyEnabled })
+  const gate = identifyGate({ hasToken: identifyReady, enabled: identifyEnabled, held: identifyHeld })
   recapEnabled = gate === 'on'
   if (recapEnabled) startAudioCapture() // no-op until the video is playing; its own listener covers that
   else if (was) { stopAudioCapture(); endIdentifyShow('identification was turned off') }
@@ -1039,7 +1040,7 @@ function applyIdentifyState(): void {
   const st = document.getElementById('aiState')
   if (sw) { sw.checked = recapEnabled; sw.disabled = !identifyReady }
   if (st) {
-    const [text, cls] = identifyStatus(gate, identifyDamaged)
+    const [text, cls] = identifyStatus(gate, identifyDamaged, identifyHeld)
     st.className = 'state ' + cls
     st.textContent = text
   }
@@ -1065,6 +1066,7 @@ async function refreshIdentifyState(): Promise<void> {
 }
 document.getElementById('aiTranscribe')?.addEventListener('change', (e) => {
   const want = (e.target as HTMLInputElement).checked
+  identifyHeld = false // an explicit choice here replaces the unknown one
   const api = window.identifyAPI
   if (!api) { applyIdentifyState(); return }
   void api.save({ enabled: want }).then(() => refreshIdentifyState(), () => refreshIdentifyState())
@@ -1097,7 +1099,9 @@ async function restoreIdentifications(): Promise<void> {
 async function migrateLegacyIdentifySwitch(): Promise<void> {
   const api = window.identifyAPI
   if (!api) return
-  try { await migrateLegacySwitch(localStorage, async (enabled) => (await api.save({ enabled })).ok === true) } catch { /* storage unavailable */ }
+  // Unresolved (the opt-out could not be saved, or the old preference could not be read) holds the gate OFF:
+  // falling through to the new default would switch audio on against a choice the operator made.
+  try { identifyHeld = (await migrateLegacySwitch(localStorage, async (enabled) => (await api.save({ enabled })).ok === true)) === 'unresolved' } catch { identifyHeld = true }
 }
 
 async function initRecap() {

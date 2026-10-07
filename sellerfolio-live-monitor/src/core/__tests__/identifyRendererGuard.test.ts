@@ -120,7 +120,7 @@ describe('renderer persists identifications', () => {
 describe('renderer gate', () => {
   it('is identifyGate over a saved token and the stored switch, and nothing else', () => {
     const body = fnBody(rendererCode, 'applyIdentifyState')
-    expect(body).toContain('identifyGate({ hasToken: identifyReady, enabled: identifyEnabled })')
+    expect(body).toContain('identifyGate({ hasToken: identifyReady, enabled: identifyEnabled, held: identifyHeld })')
     expect(body).toContain("recapEnabled = gate === 'on'")
     expect(body).not.toContain('geminiKeyPresent')
   })
@@ -199,7 +199,7 @@ describe('glue: order, wiring and the markup it names', () => {
   it('the switch shows the gate, is disabled without a token, and the status line comes from the tested words', () => {
     const body = fnBody(rendererCode, 'applyIdentifyState')
     expect(body).toContain('sw.checked = recapEnabled; sw.disabled = !identifyReady')
-    expect(body).toContain('identifyStatus(gate, identifyDamaged)')
+    expect(body).toContain('identifyStatus(gate, identifyDamaged, identifyHeld)')
   })
   it('main reports a token only when one is really saved, and hands back what save wrote', () => {
     expect(mainCode).toContain('ready: !!loadSyncSettings().token')
@@ -257,6 +257,8 @@ describe('glue: opt-outs and restored orders (follow-up)', () => {
     expect(init.indexOf('await refreshIdentifyState()')).toBeGreaterThan(mig)
     const body = fnBody(rendererCode, 'migrateLegacyIdentifySwitch')
     expect(body).toContain('migrateLegacySwitch(localStorage, async (enabled) => (await api.save({ enabled })).ok === true)')
+    expect(body).toContain("=== 'unresolved'")
+    expect(body).toContain('catch { identifyHeld = true }')
   })
   it('a show change forgets only the orders sent this show, and the overflow clear no longer lives in the page', () => {
     expect(fnBody(rendererCode, 'endIdentifyShow')).toContain('seenOrders.endShow()')
@@ -267,5 +269,17 @@ describe('glue: opt-outs and restored orders (follow-up)', () => {
     const b = fnBody(rendererCode, 'identifySale')
     expect(b).toContain('if (seenOrders.has(s.orderId)) return')
     expect(b.indexOf('seenOrders.markSent(s.orderId)')).toBeGreaterThan(b.indexOf('seenOrders.has(s.orderId)'))
+  })
+})
+
+describe('glue: an unresolved opt-out holds the gate off (review round)', () => {
+  it('the explicit switch is what releases the hold, and it does so before saving', () => {
+    const idx = rendererCode.indexOf("const want = (e.target as HTMLInputElement).checked")
+    expect(idx).toBeGreaterThanOrEqual(0)
+    const after = rendererCode.slice(idx, idx + 250)
+    expect(after).toContain('identifyHeld = false')
+  })
+  it('nothing else ever clears the hold', () => {
+    expect(rendererCode.split('identifyHeld = false').length - 1).toBe(2) // the declaration and the switch
   })
 })

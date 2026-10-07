@@ -250,7 +250,49 @@ describe('migrateLegacySwitch: an explicit old opt-out survives the new default'
   it('storage that throws changes nothing and does not throw', async () => {
     const boom = { getItem: () => { throw new Error('denied') }, removeItem: () => { throw new Error('denied') } }
     let calls = 0
-    await expect(migrateLegacySwitch(boom, async () => { calls++; return true })).resolves.toBeUndefined()
+    await expect(migrateLegacySwitch(boom, async () => { calls++; return true })).resolves.toBe('unresolved')
     expect(calls).toBe(0)
+  })
+})
+
+// ── Review round: an opt-out that cannot be APPLIED must hold the gate off, not fall through to ON. ──
+describe('migrateLegacySwitch reports whether the old choice is settled', () => {
+  const KEY = 'tt-ai-transcribe'
+  const store = (initial: Record<string, string>, over: Partial<{ getItem: (k: string) => string | null; removeItem: (k: string) => void }> = {}) => {
+    const data = { ...initial }
+    return { data, getItem: (k: string) => (k in data ? (data[k] as string) : null), removeItem: (k: string) => { delete data[k] }, ...over }
+  }
+  it('is "resolved" when nothing was stored, when an old on was cleared, and when the opt-out was saved', async () => {
+    expect(await migrateLegacySwitch(store({}), async () => true)).toBe('resolved')
+    expect(await migrateLegacySwitch(store({ [KEY]: '1' }), async () => true)).toBe('resolved')
+    expect(await migrateLegacySwitch(store({ [KEY]: '0' }), async () => true)).toBe('resolved')
+  })
+  it('is "unresolved" when the opt-out could not be saved: ok:false, or the IPC throwing', async () => {
+    expect(await migrateLegacySwitch(store({ [KEY]: '0' }), async () => false)).toBe('unresolved')
+    expect(await migrateLegacySwitch(store({ [KEY]: '0' }), async () => { throw new Error('ipc') })).toBe('unresolved')
+  })
+  it('is "unresolved" when the old preference cannot even be read: unknown is not "no opt-out"', async () => {
+    const s = store({}, { getItem: () => { throw new Error('denied') } })
+    expect(await migrateLegacySwitch(s, async () => true)).toBe('unresolved')
+  })
+  it('is still "resolved" when the opt-out saved but the old key could not be cleared (it is applied; it will just be re-applied)', async () => {
+    const s = store({ [KEY]: '0' }, { removeItem: () => { throw new Error('denied') } })
+    expect(await migrateLegacySwitch(s, async () => true)).toBe('resolved')
+  })
+})
+
+describe('the gate holds OFF while the old choice is unresolved', () => {
+  it('held means off, whatever the setting says', () => {
+    expect(identifyGate({ hasToken: true, enabled: true, held: true })).toBe('off')
+    expect(identifyGate({ hasToken: true, enabled: true, held: false })).toBe('on')
+    expect(identifyGate({ hasToken: true, enabled: true })).toBe('on')
+  })
+  it('without a token it is still "no token" (nothing to hold)', () => {
+    expect(identifyGate({ hasToken: false, enabled: true, held: true })).toBe('no_token')
+  })
+  it('the status line says why it is off, so the operator can turn it on knowingly', () => {
+    const [text] = identifyStatus('off', false, true)
+    expect(text).toMatch(/earlier|previous|carried over/i)
+    expect(text).not.toBe(identifyStatus('off', false, false)[0])
   })
 })

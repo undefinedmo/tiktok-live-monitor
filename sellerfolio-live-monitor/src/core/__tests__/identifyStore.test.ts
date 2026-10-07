@@ -3,6 +3,7 @@ import {
   MAX_AGE_SEC,
   MAX_IDENTIFICATIONS,
   STORE_VERSION,
+  FUTURE_SLACK_SEC,
   createIdentifyStore,
   entryFromRow,
   restoreEntries,
@@ -455,5 +456,123 @@ describe('identifyStore: sweep additions', () => {
     for (let i = 0; i < 5; i++) s.save(row('b', NOW_SEC - 10, { text: `again ${i}` })) // lines pile up -> rewrite
     expect(io.replaces.length).toBeGreaterThan(0)
     expect(open(io, { maxCount: 2 }).load().map((r) => r.orderId)).toEqual(['b', 'a'])
+  })
+})
+
+// ── Review round: four things a reviewer found the suite would let through. ──────────────────────
+
+describe('identifyStore: the retention decision is pinned, not just bounded', () => {
+  it('is exactly 2000 rows and exactly 30 days', () => {
+    expect(MAX_IDENTIFICATIONS).toBe(2000)
+    expect(MAX_AGE_SEC).toBe(30 * 24 * 60 * 60)
+  })
+  it('a store with default options keeps 2000 rows and no more', () => {
+    const io = memIO()
+    const s = open(io)
+    s.load()
+    for (let i = 0; i < 2001; i++) s.save(row(String(i), NOW_SEC - 5000 + i))
+    const rows = open(io).load()
+    expect(rows).toHaveLength(2000)
+    expect(rows[0]?.orderId).toBe('2000')
+    expect(rows.at(-1)?.orderId).toBe('1') // the oldest ('0') went
+  })
+  it('a store with default options drops a sale 31 days old and keeps one 29 days old', () => {
+    const io = memIO()
+    const s = open(io)
+    s.load()
+    s.save(row('old', NOW_SEC - 31 * 86_400))
+    s.save(row('recent', NOW_SEC - 29 * 86_400))
+    expect(open(io).load().map((r) => r.orderId)).toEqual(['recent'])
+  })
+})
+
+describe('identifyStore: an unreadable file is never rewritten, even much later', () => {
+  it('keeps appending to it and never replaces it, however many rows pile up', () => {
+    const original = JSON.stringify({ v: STORE_VERSION, ...row('precious', NOW_SEC - 50) }) + '\n'
+    const io = memIO(original)
+    io.failRead = true
+    const s = open(io, { maxCount: 2 })
+    expect(s.load()).toEqual([])
+    for (let i = 0; i < 40; i++) s.save(row(`n${i}`, NOW_SEC - 40 + i)) // far past 3 x maxCount lines
+    expect(io.replaces).toEqual([])
+    expect(io.text?.startsWith(original)).toBe(true) // what was in the file is still there, untouched
+  })
+  it('compaction is allowed again once a later load reads the file', () => {
+    const io = memIO(JSON.stringify({ v: STORE_VERSION, ...row('a', NOW_SEC - 50) }) + '\n')
+    io.failRead = true
+    const s = open(io, { maxCount: 2 })
+    s.load()
+    io.failRead = false
+    s.load()
+    for (let i = 0; i < 12; i++) s.save(row(`n${i}`, NOW_SEC - 40 + i))
+    expect(io.replaces.length).toBeGreaterThan(0)
+  })
+})
+
+describe('identifyStore: lines from a newer version are kept exactly', () => {
+  it('a CRLF line, and a line with leading spaces, come through a rewrite byte for byte', () => {
+    const crlf = JSON.stringify({ v: STORE_VERSION + 1, orderId: 'F1', atEpochSec: NOW_SEC - 5 }) + '\r'
+    const spaced = '   ' + JSON.stringify({ v: STORE_VERSION + 1, orderId: 'F2', atEpochSec: NOW_SEC - 5 }) + '  '
+    const good = JSON.stringify({ v: STORE_VERSION, ...row('1') })
+    const io = memIO([crlf, spaced, good, 'garbage'].join('\n') + '\n')
+    open(io).load()
+    expect(io.replaces).toHaveLength(1)
+    expect(io.text?.split('\n')).toContain(crlf)
+    expect(io.text?.split('\n')).toContain(spaced)
+  })
+})
+
+describe('identifyStore: a wrong station clock cannot make a row immortal', () => {
+  const DAY = 86_400
+  it('a row dated far in the future is stored as "now", so it ages like any other', () => {
+    let nowMs = NOW_MS
+    const io = memIO()
+    const s = createIdentifyStore(io, { now: () => nowMs })
+    s.load()
+    s.save(row('future', NOW_SEC + 40 * DAY))
+    s.save(row('real', NOW_SEC - 10))
+    expect(JSON.parse(lines(io.text)[0] ?? '{}').atEpochSec).toBe(NOW_SEC)
+    nowMs = NOW_MS + 31 * DAY * 1000 // a month later, the clock now right
+    expect(createIdentifyStore(io, { now: () => nowMs }).load().map((r) => r.orderId)).toEqual([])
+  })
+  it('a row a little ahead (within the slack) keeps its own time', () => {
+    const io = memIO()
+    const s = open(io)
+    s.load()
+    s.save(row('skewed', NOW_SEC + 600))
+    expect(open(io).load()[0]?.atEpochSec).toBe(NOW_SEC + 600)
+  })
+  it('a row just past the slack is clamped, one just inside it is not', () => {
+    expect(FUTURE_SLACK_SEC).toBe(3600)
+    const io = memIO()
+    const s = open(io)
+    s.load()
+    s.save(row('inside', NOW_SEC + FUTURE_SLACK_SEC))
+    s.save(row('outside', NOW_SEC + FUTURE_SLACK_SEC + 1))
+    const byId = Object.fromEntries(open(io).load().map((r) => [r.orderId, r.atEpochSec]))
+    expect(byId.inside).toBe(NOW_SEC + FUTURE_SLACK_SEC)
+    expect(byId.outside).toBe(NOW_SEC)
+  })
+  it('a far-future row cannot hold the top of the list against newer real sales', () => {
+    const io = memIO()
+    const s = open(io, { maxCount: 3 })
+    s.load()
+    s.save(row('future', NOW_SEC + 40 * DAY))
+    for (let i = 0; i < 4; i++) s.save(row(`r${i}`, NOW_SEC + i)) // each at or after "now"
+    const ids = open(io, { maxCount: 3 }).load().map((r) => r.orderId)
+    expect(ids).not.toContain('future')
+  })
+  it('a file already holding a future-dated row is repaired on load, so the clamp sticks', () => {
+    const line = JSON.stringify({ v: STORE_VERSION, ...row('future', NOW_SEC + 40 * DAY) })
+    const io = memIO(line + '\n')
+    const [r] = open(io).load()
+    expect(r?.atEpochSec).toBe(NOW_SEC)
+    expect(io.replaces).toHaveLength(1)
+    expect(JSON.parse(lines(io.text)[0] ?? '{}').atEpochSec).toBe(NOW_SEC)
+  })
+  it('a file with no future rows is not rewritten for that reason', () => {
+    const io = memIO(JSON.stringify({ v: STORE_VERSION, ...row('ok', NOW_SEC - 5) }) + '\n')
+    open(io).load()
+    expect(io.replaces).toEqual([])
   })
 })

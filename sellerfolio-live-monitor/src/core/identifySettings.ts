@@ -77,15 +77,18 @@ export type IdentifyGate = 'on' | 'off' | 'no_token'
  * depends on anything else on this machine (it used to need a Gemini key: the model now runs on
  * the server, and this machine only supplies audio and times).
  */
-export function identifyGate(s: { hasToken: boolean; enabled: boolean }): IdentifyGate {
+export function identifyGate(s: { hasToken: boolean; enabled: boolean; held?: boolean }): IdentifyGate {
   if (!s.hasToken) return 'no_token'
+  // `held`: an earlier opt-out could not be carried over. Unknown means off, not the new default.
+  if (s.held) return 'off'
   return s.enabled ? 'on' : 'off'
 }
 
 /** [text, css class] for the Settings state line. */
-export function identifyStatus(gate: IdentifyGate, damaged: boolean): [string, string] {
+export function identifyStatus(gate: IdentifyGate, damaged: boolean, held = false): [string, string] {
   if (gate === 'no_token') return ['No capture token saved — nothing can be sent', 'muted']
   if (gate === 'on') return ['On — a clip of the show’s audio goes to SellerFolio each time an item sells', 'warn-text']
+  if (held) return ['Off — your earlier setting could not be carried over, so it is off until you turn it on here', 'warn-text']
   return damaged
     ? ['Off — this setting could not be read, so it was switched off. Turn it on again if you want it', 'warn-text']
     : ['Off — no audio is captured and none leaves this computer', 'ok-text']
@@ -150,18 +153,34 @@ export const LEGACY_SWITCH_KEY = 'tt-ai-transcribe'
  * choice to keep audio off; an absent one is no choice at all and takes the new default.
  * One-shot: the old key is cleared once the opt-out is saved, so it cannot override a later choice
  * made on the new switch. If the save fails the key stays and the opt-out is retried next launch.
- * Never throws (storage can be unavailable; the page must still start).
+ * Never throws (storage can be unavailable; the page must still start). It reports whether the choice is
+ * settled: 'unresolved' (could not read the old preference, or could not save the opt-out) must be treated
+ * as OFF for the session by the caller, or the failure path would switch audio on against the operator's choice.
  */
 export async function migrateLegacySwitch(
   storage: { getItem(k: string): string | null; removeItem(k: string): void },
   saveEnabled: (enabled: boolean) => Promise<boolean>,
-): Promise<void> {
+): Promise<'resolved' | 'unresolved'> {
+  let stored: string | null
   try {
-    const stored = storage.getItem(LEGACY_SWITCH_KEY)
-    if (stored === null) return
-    if (stored !== '1' && !(await saveEnabled(false))) return
+    stored = storage.getItem(LEGACY_SWITCH_KEY)
+  } catch {
+    return 'unresolved' // cannot tell whether there was an opt-out
+  }
+  if (stored === null) return 'resolved'
+  if (stored !== '1') {
+    let saved = false
+    try {
+      saved = await saveEnabled(false)
+    } catch {
+      saved = false
+    }
+    if (!saved) return 'unresolved' // the key stays, and it is retried next launch
+  }
+  try {
     storage.removeItem(LEGACY_SWITCH_KEY)
   } catch {
-    /* unreadable storage or a down IPC: change nothing; try again next launch */
+    /* the opt-out is applied; at worst it is applied again next launch */
   }
+  return 'resolved'
 }

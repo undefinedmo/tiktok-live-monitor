@@ -30,8 +30,15 @@
 export const STORE_VERSION = 1
 /** Rows kept. Not 30: a whole show (up to ~900 lots) and the next one, ~1 MB on disk. */
 export const MAX_IDENTIFICATIONS = 2000
-/** Rows whose sale is older than this are dropped. Rows dated in the future (a wrong clock) are kept. */
+/** Rows whose sale is older than this are dropped. */
 export const MAX_AGE_SEC = 30 * 24 * 60 * 60
+/**
+ * A row dated more than this far ahead of the station clock is stored as "now". A wrong clock is not
+ * hypothetical in this app (it has had one clock bug already), and a future-dated row would otherwise
+ * sort first forever and never reach the age limit. An hour covers ordinary skew between the server's
+ * clock and this one, so those rows keep their own time.
+ */
+export const FUTURE_SLACK_SEC = 3600
 /** The file is rewritten when it holds this many times the cap in lines, so it is bounded mid-session. */
 const COMPACT_FACTOR = 3
 
@@ -143,6 +150,8 @@ export function createIdentifyStore(
   let seq = 0
   let loaded = false
   let linesOnDisk = 0
+  /** The last read failed: the file is unreadable, not empty. It is never rewritten while that stands. */
+  let unreadable = false
   /** The file may not end in a newline (a torn write, or it could not be read): start the next append on a fresh line. */
   let needsNewline = false
   let pending: string[] = []
@@ -155,6 +164,11 @@ export function createIdentifyStore(
       .sort((a, b) => b.row.atEpochSec - a.row.atEpochSec || b.seq - a.seq)
       .slice(0, maxCount)
   }
+  /** A row dated beyond the slack is stored as now (see FUTURE_SLACK_SEC). Returns the same object when nothing changes. */
+  function clampFuture(row: IdentificationRow): IdentificationRow {
+    const nowSec = opts.now() / 1000
+    return row.atEpochSec > nowSec + FUTURE_SLACK_SEC ? { ...row, atEpochSec: nowSec } : row
+  }
   function prune(): void {
     if (rows.size === 0) return
     const keep = retained()
@@ -162,6 +176,9 @@ export function createIdentifyStore(
   }
   /** Rewrite the file from memory. True when it was written. Never throws. */
   function compact(): boolean {
+    // A file that could not be read is not known to be empty. Replacing it with only what is in memory
+    // would destroy what is in it, however long ago the read failed.
+    if (unreadable) return false
     prune()
     if (foreign.length > maxCount) foreign = foreign.slice(foreign.length - maxCount)
     const own = [...rows.values()].sort((a, b) => a.seq - b.seq).map((e) => encode(e.row))
@@ -181,6 +198,7 @@ export function createIdentifyStore(
 
   function load(): IdentificationRow[] {
     loaded = true
+    unreadable = false
     rows = new Map()
     foreign = []
     seq = 0
@@ -192,6 +210,7 @@ export function createIdentifyStore(
       // Unreadable (locked, permissions): no rows, and the file is NOT rewritten -- that would answer a
       // transient lock by destroying what is in it. Appends still go, on a fresh line.
       needsNewline = true
+      unreadable = true
       return []
     }
     if (text === null || text === '') {
@@ -202,30 +221,34 @@ export function createIdentifyStore(
     const endsClean = text.endsWith('\n')
     let nonBlank = 0
     let bad = 0
+    let clamped = 0
     for (const line of text.split('\n')) {
       if (!line.trim()) continue
       nonBlank++
       const p = parseLine(line)
       if (p.kind === 'bad') bad++
-      else if (p.kind === 'foreign') foreign.push(line.trim())
+      else if (p.kind === 'foreign') foreign.push(line) // exactly as found: a rewrite must not change a line this version cannot read
       else {
-        rows.delete(p.row.orderId) // re-inserting moves it to the end: the last line wins
-        rows.set(p.row.orderId, { row: p.row, seq: seq++ })
+        const row = clampFuture(p.row)
+        if (row !== p.row) clamped++
+        rows.delete(row.orderId) // re-inserting moves it to the end: the last line wins
+        rows.set(row.orderId, { row, seq: seq++ })
       }
     }
     prune()
     linesOnDisk = nonBlank
     needsNewline = !endsClean
     // Damage, redundancy (superseded or evicted lines) or a torn tail: write it back clean.
-    if (!endsClean || bad > 0 || nonBlank !== rows.size + foreign.length) compact()
+    if (!endsClean || bad > 0 || clamped > 0 || nonBlank !== rows.size + foreign.length) compact()
     return ordered()
   }
 
   function save(input: IdentificationRow): boolean {
     try {
       if (!loaded) load()
-      const row = normalize(input, false)
-      if (!row) return false
+      const normalized = normalize(input, false)
+      if (!normalized) return false
+      const row = clampFuture(normalized)
       rows.delete(row.orderId)
       rows.set(row.orderId, { row, seq: seq++ })
       pending.push(encode(row))
