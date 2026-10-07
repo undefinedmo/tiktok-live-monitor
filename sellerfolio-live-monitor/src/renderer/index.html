@@ -670,6 +670,18 @@
                   </div>
                   <div id="idUrlState" class="state muted" style="margin-top:6px;">Where clips are sent. Leave it empty for the default; the token goes with every clip, so only this computer, a tailnet (100.x) address or https:// is accepted.</div>
                 </div>
+                <div class="field" style="margin-top:14px;">
+                  <label class="f-lbl" for="idLatency">Stream delay (seconds)</label>
+                  <div class="custom-row" style="margin:0;">
+                    <input type="text" id="idLatency" placeholder="0" inputmode="decimal" spellcheck="false" style="max-width:120px;" />
+                    <button type="button" id="idLatencySave" class="qbtn print" style="flex:none;">Save</button>
+                  </div>
+                  <div id="idLatencyState" class="state muted" style="margin-top:6px;">&mdash;</div>
+                  <details class="adv" style="margin-top:8px;">
+                    <summary>How to measure it</summary>
+                    <p class="muted">The audio the app records is the stream you are watching, which runs a few seconds behind the show. Pick a lot and note the clock time its sale appears in this app. Then listen to the clip that was sent for it and find when the gavel is heard. The difference between the two times is the delay. Repeat for several lots and enter the middle value.</p>
+                  </details>
+                </div>
               </div>
 
               <div class="modal-box set-card" style="margin-bottom:0;">

@@ -24,7 +24,7 @@ contextBridge.exposeInMainWorld('recapAPI', {
 
 contextBridge.exposeInMainWorld('identifyAPI', {
   state: () => ipcRenderer.invoke('identify:state'),
-  save: (args: { baseUrl?: string; enabled?: boolean }) => ipcRenderer.invoke('identify:save', args),
+  save: (args: { baseUrl?: string; enabled?: boolean; streamLatencySec?: number }) => ipcRenderer.invoke('identify:save', args),
   rows: () => ipcRenderer.invoke('identify:rows'),
   saveRow: (row: unknown) => ipcRenderer.invoke('identify:save-row', row),
   identify: (payload: unknown) => ipcRenderer.invoke('tt-identify', payload),

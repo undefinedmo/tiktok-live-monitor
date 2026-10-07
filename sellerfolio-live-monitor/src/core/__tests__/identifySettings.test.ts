@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_IDENTIFY_URL,
   checkBaseUrlInput,
+  checkLatencyInput,
+  latencyNote,
   identifyGate,
   identifyPreflight,
   identifyStateFrom,
@@ -14,7 +16,7 @@ import {
 
 describe('identification is ON by default once a token exists (defect 5)', () => {
   it('no file at all: the default worker address, enabled', () => {
-    expect(parseIdentifySettings(null)).toEqual({ baseUrl: DEFAULT_IDENTIFY_URL, enabled: true, damaged: false })
+    expect(parseIdentifySettings(null)).toEqual({ baseUrl: DEFAULT_IDENTIFY_URL, enabled: true, damaged: false, streamLatencySec: 0 })
     expect(DEFAULT_IDENTIFY_URL).toBe('http://100.68.11.76:8099')
   })
   it('a file that says nothing about enabled leaves it on (the address alone was configurable before)', () => {
@@ -52,7 +54,7 @@ describe('a damaged settings file fails CLOSED: it must never switch audio on', 
     ['null', 'null'],
     ['an empty file', ''],
   ])('%s: default address, OFF, flagged', (_n, text) => {
-    expect(parseIdentifySettings(text)).toEqual({ baseUrl: DEFAULT_IDENTIFY_URL, enabled: false, damaged: true })
+    expect(parseIdentifySettings(text)).toEqual({ baseUrl: DEFAULT_IDENTIFY_URL, enabled: false, damaged: true, streamLatencySec: 0 })
   })
   it.each([['"false"'], ['0'], ['null'], ['"yes"'], ['[]']])('enabled=%s is not a boolean: OFF and flagged', (v) => {
     expect(parseIdentifySettings(`{"enabled":${v}}`)).toMatchObject({ enabled: false, damaged: true })
@@ -72,7 +74,7 @@ describe('a saved address that would carry the token somewhere unsafe is not use
     [''],
     ['42'],
   ])('%s falls back to the default, keeping the switch', (u) => {
-    expect(parseIdentifySettings(JSON.stringify({ baseUrl: u, enabled: false }))).toEqual({ baseUrl: DEFAULT_IDENTIFY_URL, enabled: false, damaged: false })
+    expect(parseIdentifySettings(JSON.stringify({ baseUrl: u, enabled: false }))).toEqual({ baseUrl: DEFAULT_IDENTIFY_URL, enabled: false, damaged: false, streamLatencySec: 0 })
   })
   it('a saved address with stray spaces is trimmed, not kept as typed', () => {
     expect(parseIdentifySettings('{"baseUrl":"  http://100.68.11.76:8099  "}').baseUrl).toBe('http://100.68.11.76:8099')
@@ -84,14 +86,14 @@ describe('a saved address that would carry the token somewhere unsafe is not use
 
 describe('serialize', () => {
   it('round trips through parse', () => {
-    const s = { baseUrl: 'https://worker.example.com', enabled: false }
+    const s = { baseUrl: 'https://worker.example.com', enabled: false, streamLatencySec: 6.5 }
     expect(parseIdentifySettings(serializeIdentifySettings(s))).toEqual({ ...s, damaged: false })
   })
-  it('writes only the address and the switch, never a token', () => {
-    const text = serializeIdentifySettings({ baseUrl: 'http://100.68.11.76:8099', enabled: true, token: 'sfc_SECRET', tokenEnc: 'abc' } as never)
+  it('writes only the address, the switch and the latency, never a token', () => {
+    const text = serializeIdentifySettings({ baseUrl: 'http://100.68.11.76:8099', enabled: true, streamLatencySec: 0, token: 'sfc_SECRET', tokenEnc: 'abc' } as never)
     expect(text).not.toContain('SECRET')
     expect(text).not.toContain('tokenEnc')
-    expect(Object.keys(JSON.parse(text)).sort()).toEqual(['baseUrl', 'enabled'])
+    expect(Object.keys(JSON.parse(text)).sort()).toEqual(['baseUrl', 'enabled', 'streamLatencySec'])
   })
 })
 
@@ -127,11 +129,11 @@ describe('checkBaseUrlInput (what the Settings box accepts)', () => {
 // main.ts runs this before every POST. It is the check that makes "off" mean off even if the page
 // disagrees (a clip queued before the switch was turned off, a stale renderer).
 describe('identifyPreflight: the last check before a clip leaves the machine', () => {
-  const on = { baseUrl: 'http://100.68.11.76:8099', enabled: true }
+  const on = { baseUrl: 'http://100.68.11.76:8099', enabled: true, streamLatencySec: 0 }
   it('sends with a token and the switch on, to the configured address', () => {
     expect(identifyPreflight('sfc_x', on)).toEqual({ ok: true, baseUrl: 'http://100.68.11.76:8099', token: 'sfc_x' })
     // an address other than the default: the preflight must hand back the CONFIGURED one
-    expect(identifyPreflight('sfc_x', { baseUrl: 'https://w.example.com', enabled: true })).toMatchObject({ ok: true, baseUrl: 'https://w.example.com' })
+    expect(identifyPreflight('sfc_x', { baseUrl: 'https://w.example.com', enabled: true, streamLatencySec: 0 })).toMatchObject({ ok: true, baseUrl: 'https://w.example.com' })
   })
   it('refuses without a token, with the reason the token path already explains', () => {
     expect(identifyPreflight('', on)).toEqual({ ok: false, reason: 'bad_token' })
@@ -145,14 +147,14 @@ describe('identifyPreflight: the last check before a clip leaves the machine', (
 })
 
 describe('updateIdentifySettings (the Settings save)', () => {
-  const cur = { baseUrl: 'http://100.68.11.76:8099', enabled: true }
+  const cur = { baseUrl: 'http://100.68.11.76:8099', enabled: true, streamLatencySec: 0 }
   it('changes only what was sent', () => {
     expect(updateIdentifySettings(cur, { enabled: false })).toEqual({ ok: true, next: { ...cur, enabled: false } })
-    expect(updateIdentifySettings(cur, { baseUrl: 'https://w.example.com/' })).toEqual({ ok: true, next: { baseUrl: 'https://w.example.com', enabled: true } })
+    expect(updateIdentifySettings(cur, { baseUrl: 'https://w.example.com/' })).toEqual({ ok: true, next: { baseUrl: 'https://w.example.com', enabled: true, streamLatencySec: 0 } })
     expect(updateIdentifySettings(cur, {})).toEqual({ ok: true, next: cur })
   })
   it('a value that is merely truthy does not switch it on: only the boolean true does', () => {
-    const off = { baseUrl: 'http://100.68.11.76:8099', enabled: false }
+    const off = { baseUrl: 'http://100.68.11.76:8099', enabled: false, streamLatencySec: 0 }
     for (const v of ['yes', 1, {}, [], 'true']) expect(updateIdentifySettings(off, { enabled: v })).toEqual({ ok: true, next: off })
   })
   it('an unsafe address is refused and nothing changes', () => {
@@ -166,19 +168,19 @@ describe('updateIdentifySettings (the Settings save)', () => {
   it('saving the address of a damaged (OFF) setting does not switch it back on', () => {
     const damaged = parseIdentifySettings('garbage')
     const r = updateIdentifySettings(damaged, { baseUrl: 'http://localhost:8099' })
-    expect(r).toEqual({ ok: true, next: { baseUrl: 'http://localhost:8099', enabled: false } })
+    expect(r).toEqual({ ok: true, next: { baseUrl: 'http://localhost:8099', enabled: false, streamLatencySec: 0 } })
   })
   it('the result carries no damaged flag into the file', () => {
     const damaged = parseIdentifySettings('garbage')
     const r = updateIdentifySettings(damaged, { enabled: true })
-    expect(r.ok && Object.keys(r.next).sort()).toEqual(['baseUrl', 'enabled'])
+    expect(r.ok && Object.keys(r.next).sort()).toEqual(['baseUrl', 'enabled', 'streamLatencySec'])
   })
 })
 
 describe('identifyStateFrom: what the page believes, from what main told it', () => {
-  const view = { baseUrl: 'http://100.68.11.76:8099', enabled: true, damaged: false, defaultBaseUrl: DEFAULT_IDENTIFY_URL, ready: true }
+  const view = { baseUrl: 'http://100.68.11.76:8099', enabled: true, damaged: false, defaultBaseUrl: DEFAULT_IDENTIFY_URL, ready: true, streamLatencySec: 0 }
   it('takes every field as reported', () => {
-    expect(identifyStateFrom(view)).toEqual({ ready: true, enabled: true, damaged: false, baseUrl: view.baseUrl, defaultBaseUrl: DEFAULT_IDENTIFY_URL })
+    expect(identifyStateFrom(view)).toEqual({ ready: true, enabled: true, damaged: false, baseUrl: view.baseUrl, defaultBaseUrl: DEFAULT_IDENTIFY_URL, streamLatencySec: 0 })
     expect(identifyStateFrom({ ...view, ready: false, enabled: false, damaged: true, baseUrl: 'https://w.example.com' })).toMatchObject({ ready: false, enabled: false, damaged: true, baseUrl: 'https://w.example.com' })
   })
   it.each([[undefined], [null], ['x'], [42], [[]], [{}]])('fails CLOSED on %s: not ready, not enabled', (v) => {
@@ -189,6 +191,100 @@ describe('identifyStateFrom: what the page believes, from what main told it', ()
   })
   it('keeps the default address when main sends a bad one', () => {
     expect(identifyStateFrom({ ...view, baseUrl: 7, defaultBaseUrl: null })).toMatchObject({ baseUrl: DEFAULT_IDENTIFY_URL, defaultBaseUrl: DEFAULT_IDENTIFY_URL })
+  })
+})
+
+// ── Stream latency (final fix 1). See core/identifyWiring "STREAM LATENCY". ─────────────────────────────
+describe('the stream latency setting', () => {
+  it('is 0 -- no correction, exactly the behaviour before it existed -- when there is no file, no field, or a bad one', () => {
+    expect(parseIdentifySettings(null).streamLatencySec).toBe(0)
+    expect(parseIdentifySettings('{"enabled":true}').streamLatencySec).toBe(0)
+    for (const v of ['"7"', '-1', '61', 'null', '[]', '{}', '1e999', 'true']) {
+      expect(parseIdentifySettings(`{"streamLatencySec":${v}}`).streamLatencySec, v).toBe(0)
+    }
+  })
+  it('is read as stored, fractional seconds included, up to the maximum', () => {
+    expect(parseIdentifySettings('{"streamLatencySec":6.5}').streamLatencySec).toBe(6.5)
+    expect(parseIdentifySettings('{"streamLatencySec":0}').streamLatencySec).toBe(0)
+    expect(parseIdentifySettings('{"streamLatencySec":60}').streamLatencySec).toBe(60)
+  })
+  it('a bad latency does not make the file damaged or switch identification off (it is not what decides whether audio leaves)', () => {
+    expect(parseIdentifySettings('{"enabled":true,"streamLatencySec":"x"}')).toMatchObject({ enabled: true, damaged: false, streamLatencySec: 0 })
+  })
+  it('a damaged file has no correction either', () => {
+    expect(parseIdentifySettings('garbage').streamLatencySec).toBe(0)
+  })
+  it('serialises a value that makes no sense as 0, so the file never holds one', () => {
+    const w = (v: number) => JSON.parse(serializeIdentifySettings({ baseUrl: 'http://localhost:8099', enabled: true, streamLatencySec: v })).streamLatencySec
+    expect(w(NaN)).toBe(0)
+    expect(w(-4)).toBe(0)
+    expect(w(900)).toBe(0)
+    expect(w(9)).toBe(9)
+  })
+
+  describe('checkLatencyInput (what the Settings box accepts)', () => {
+    it('empty means 0 (no correction)', () => {
+      expect(checkLatencyInput('   ')).toEqual({ ok: true, sec: 0 })
+    })
+    it('takes whole and fractional seconds, with or without a trailing "s"', () => {
+      expect(checkLatencyInput('8')).toEqual({ ok: true, sec: 8 })
+      expect(checkLatencyInput(' 6.5 ')).toEqual({ ok: true, sec: 6.5 })
+      expect(checkLatencyInput('12s')).toEqual({ ok: true, sec: 12 })
+      expect(checkLatencyInput('0')).toEqual({ ok: true, sec: 0 })
+      expect(checkLatencyInput('60')).toEqual({ ok: true, sec: 60 })
+    })
+    it.each([['-1'], ['60.1'], ['61'], ['abc'], ['1,5'], ['1e3'], ['Infinity'], ['NaN'], ['8 seconds late']])('rejects %j with a reason', (v) => {
+      const r = checkLatencyInput(v)
+      expect(r.ok).toBe(false)
+      if (!r.ok) expect(r.error.length).toBeGreaterThan(10)
+    })
+  })
+
+  describe('updateIdentifySettings', () => {
+    const cur = { baseUrl: 'http://100.68.11.76:8099', enabled: true, streamLatencySec: 3 }
+    it('changes the latency and nothing else', () => {
+      expect(updateIdentifySettings(cur, { streamLatencySec: 9.5 })).toEqual({ ok: true, next: { ...cur, streamLatencySec: 9.5 } })
+      expect(updateIdentifySettings(cur, { streamLatencySec: 0 })).toEqual({ ok: true, next: { ...cur, streamLatencySec: 0 } })
+    })
+    it('leaves it alone when it is not sent, and when it is the wrong type (never coerced)', () => {
+      expect(updateIdentifySettings(cur, { enabled: false })).toEqual({ ok: true, next: { ...cur, enabled: false } })
+      expect(updateIdentifySettings(cur, { streamLatencySec: '12' })).toEqual({ ok: true, next: cur })
+      expect(updateIdentifySettings(cur, { streamLatencySec: null })).toEqual({ ok: true, next: cur })
+    })
+    it.each([[-1], [60.5], [NaN], [Infinity]])('refuses %s and changes nothing', (v) => {
+      const r = updateIdentifySettings(cur, { streamLatencySec: v, enabled: false })
+      expect(r.ok).toBe(false)
+    })
+    it('saving only the latency of a damaged (OFF) setting keeps it OFF', () => {
+      const r = updateIdentifySettings(parseIdentifySettings('garbage'), { streamLatencySec: 7 })
+      expect(r).toEqual({ ok: true, next: { baseUrl: DEFAULT_IDENTIFY_URL, enabled: false, streamLatencySec: 7 } })
+    })
+  })
+
+  it('identifyStateFrom reads it from main, and anything else is 0', () => {
+    const view = { baseUrl: 'http://100.68.11.76:8099', enabled: true, damaged: false, defaultBaseUrl: DEFAULT_IDENTIFY_URL, ready: true }
+    expect(identifyStateFrom({ ...view, streamLatencySec: 8.5 }).streamLatencySec).toBe(8.5)
+    for (const v of ['8', -2, 99, null, undefined, NaN]) expect(identifyStateFrom({ ...view, streamLatencySec: v }).streamLatencySec).toBe(0)
+    expect(identifyStateFrom(undefined).streamLatencySec).toBe(0)
+  })
+
+  // The Settings text. Until it has been measured the identifications cannot be trusted; the page must say so.
+  describe('latencyNote', () => {
+    it('at 0 says it has not been measured and that identifications are not trustworthy', () => {
+      const n = latencyNote(0)
+      expect(n.cls).toBe('warn-text')
+      expect(n.text).toMatch(/not been measured/i)
+      expect(n.text).toMatch(/not trustworthy|cannot be trusted/i)
+    })
+    it('above 0 says what it is correcting for, in seconds', () => {
+      const n = latencyNote(8)
+      expect(n.cls).not.toBe('warn-text')
+      expect(n.text).toContain('8 s')
+      expect(n.text).not.toMatch(/not been measured/i)
+    })
+    it('a fractional value reads as itself', () => {
+      expect(latencyNote(6.5).text).toContain('6.5 s')
+    })
   })
 })
 

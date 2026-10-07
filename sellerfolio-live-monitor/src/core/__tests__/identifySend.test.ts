@@ -25,7 +25,7 @@ const cfg = { baseUrl: 'http://100.68.11.76:8099', token: 'secret-token' }
 const job = { orderId: 'o1', roomId: 'r1', saleEpochSec: 1700000000, auctionStartEpochSec: 1699999970, prevBoundaryEpochSec: 1699999900 }
 // Exactly what extract() returns for a request that landed mid-chunk: the bytes start 2 s BEFORE the
 // requested start, and run past the requested end. These are NOT the window that was asked for.
-const clip: ExtractedClip = { blob: new Blob(['audio-bytes']), startEpochSec: 1699999958, durationSec: 47, leadInSec: 2, truncated: false }
+const clip: ExtractedClip = { blob: new Blob(['audio-bytes']), startEpochSec: 1699999958, durationSec: 47, leadInSec: 2, truncated: false, gapSec: 0 }
 const REQUESTED = { startEpochSec: 1699999960, endEpochSec: 1700000003 }
 
 const jsonRes = (status: number, body: unknown) => new Response(JSON.stringify(body), { status })
@@ -105,7 +105,7 @@ describe('the clip crosses IPC whole', () => {
   })
 
   it('the wire type has no field a requested window could ride in', async () => {
-    expect(Object.keys(await toWireClip(clip)).sort()).toEqual(['bytes', 'durationSec', 'leadInSec', 'startEpochSec', 'truncated'])
+    expect(Object.keys(await toWireClip(clip)).sort()).toEqual(['bytes', 'durationSec', 'gapSec', 'leadInSec', 'startEpochSec', 'truncated'])
   })
 })
 
@@ -116,7 +116,7 @@ describe('toWirePayload', () => {
 
   it('puts every field of the extracted clip on the wire unchanged, and the job untouched', async () => {
     const w = await toWirePayload({ job: payloadJob, clip })
-    for (const k of ['startEpochSec', 'durationSec', 'leadInSec', 'truncated'] as const) expect(w.clip[k], k).toBe(clip[k])
+    for (const k of ['startEpochSec', 'durationSec', 'leadInSec', 'truncated', 'gapSec'] as const) expect(w.clip[k], k).toBe(clip[k])
     expect(new TextDecoder().decode(w.clip.bytes)).toBe('audio-bytes')
     expect(w.job).toEqual(payloadJob)
     expect(w.job).toBe(payloadJob)
@@ -125,7 +125,7 @@ describe('toWirePayload', () => {
   it('has exactly the clip keys and the job keys, so nothing can ride along', async () => {
     const w = await toWirePayload({ job: payloadJob, clip })
     expect(Object.keys(w).sort()).toEqual(['clip', 'job'])
-    expect(Object.keys(w.clip).sort()).toEqual(['bytes', 'durationSec', 'leadInSec', 'startEpochSec', 'truncated'])
+    expect(Object.keys(w.clip).sort()).toEqual(['bytes', 'durationSec', 'gapSec', 'leadInSec', 'startEpochSec', 'truncated'])
   })
 
   it('keeps a truncated clip truncated', async () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makeClipStore, findClusterStart } from '../clipRecorder'
+import { makeClipStore, findClusterStart, clipTimingSuspect, CLIP_TIMING_TOLERANCE_SEC } from '../clipRecorder'
 
 // The EBML id of a WebM Cluster: where the init segment (EBML header + Segment + Tracks) ends.
 const CLUSTER = [0x1f, 0x43, 0xb6, 0x75]
@@ -173,6 +173,76 @@ describe('makeClipStore', () => {
       await store.push(blobOf([5]), 1)
       const got = store.extract({ startEpochSec: 0, endEpochSec: 5000 })
       expect(await bytes(got!.blob)).toEqual([0xdd, 0xdd, 5])
+    })
+  })
+
+  // THE TIMELINE MUST AGREE WITH THE BYTES. A chunk is stamped by the clock when it ARRIVES, and its
+  // duration is nominal. Two real failures make the two disagree, and the server plans against the
+  // timeline: a rebuffer drops the zero-size chunks (the seconds are simply not in the clip but are
+  // still in `last.end - first.start`), and a clock that stands still stamps several chunks at one instant.
+  // `gapSec` is `(last.end - first.start) - sum(durations)`: how much of the timeline has no audio under it
+  // (positive), or how much audio there is beyond the timeline (negative). 0 for a healthy recording.
+  describe('the clip timeline against its bytes', () => {
+    /** Push 1 s chunks arriving at the given clock readings (a header first). */
+    async function arrivingAt(readings: number[], dur = 1) {
+      let t = 0
+      const store = makeClipStore({ capSec: 300, now: () => t })
+      await store.push(blobOf(HEADER), dur)
+      for (const r of readings) { t = r; await store.push(blobOf([1]), dur) }
+      return store
+    }
+    const all = { startEpochSec: 1000, endEpochSec: 5000 } // the buffer reaches back this far, so nothing is truncated
+
+    it('is 0 for an unbroken recording', async () => {
+      const got = (await recordingOf(30)).extract({ startEpochSec: 1005, endEpochSec: 1020 })!
+      expect(got.gapSec).toBe(0)
+      expect(clipTimingSuspect(got)).toBe(false)
+    })
+
+    // The reviewer's case: five seconds missing in the middle of 3 s of audio.
+    it('reports five missing seconds: 8 s of timeline over 3 s of audio', async () => {
+      const got = (await arrivingAt([1001, 1002, 1008])).extract(all)! // chunks [1000,1001) [1001,1002) [1007,1008)
+      expect(got.durationSec).toBe(8) // the timeline, as before
+      expect(got.gapSec).toBe(5) //      ... and now it says it is 5 s longer than the audio
+      expect(got.truncated).toBe(false) // a gap is NOT "the buffer began late": that flag keeps its meaning
+      expect(clipTimingSuspect(got)).toBe(true)
+    })
+
+    // The reviewer's other case: a frozen clock stamps four chunks at one instant.
+    it('reports a frozen clock: 1 s of timeline over 4 s of audio', async () => {
+      const got = (await arrivingAt([1001, 1001, 1001, 1001])).extract(all)!
+      expect(got.durationSec).toBe(1)
+      expect(got.gapSec).toBe(-3)
+      expect(got.truncated).toBe(false)
+      expect(clipTimingSuspect(got)).toBe(true)
+    })
+
+    it('counts only the chunks in the clip, not the ones outside it', async () => {
+      // a gap of 5 s BEFORE the requested window must not make the window's clip look broken
+      const store = await arrivingAt([1001, 1002, 1008, 1009, 1010, 1011])
+      const got = store.extract({ startEpochSec: 1007, endEpochSec: 1012 })!
+      expect(got.gapSec).toBe(0)
+    })
+
+    it('is 0 for a single chunk', async () => {
+      expect((await arrivingAt([1001])).extract(all)!.gapSec).toBe(0)
+    })
+
+    it('is rounded to the millisecond, so float dust never reads as a gap', async () => {
+      const got = (await arrivingAt([1001.1, 1002.1, 1003.1, 1004.1, 1005.1])).extract(all)!
+      expect(got.gapSec).toBe(0)
+    })
+
+    // Chunk arrival jitters by a few hundred ms and a recorder's slices are not exactly 1 s; those must
+    // not raise the alarm. The tolerance is exact, not a ">= something": it is the line between a clip
+    // whose timing is trusted and one that is flagged.
+    it('tolerates exactly CLIP_TIMING_TOLERANCE_SEC either way and flags anything beyond it', () => {
+      expect(CLIP_TIMING_TOLERANCE_SEC).toBe(2)
+      expect(clipTimingSuspect({ gapSec: 2 })).toBe(false)
+      expect(clipTimingSuspect({ gapSec: -2 })).toBe(false)
+      expect(clipTimingSuspect({ gapSec: 2.001 })).toBe(true)
+      expect(clipTimingSuspect({ gapSec: -2.001 })).toBe(true)
+      expect(clipTimingSuspect({ gapSec: 0 })).toBe(false)
     })
   })
 

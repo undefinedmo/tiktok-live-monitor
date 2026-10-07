@@ -44,9 +44,9 @@ describe('renderer hand-off to identification', () => {
   })
 
   it('goes through the tested functions', () => {
-    expect(code).toContain('identifyPayloadFor(sale, boundaryEvents, clipStore)')
-    expect(code).toContain('clipReadyEpochSec(sale.atEpochSec)')
-    expect(code).toContain('isRecentSale(s.createdAt, Date.now(), serverTimeOffsetMs)')
+    expect(code).toContain('identifyPayloadFor(sale, boundaryEvents, clipStore, identifyLatencySec)')
+    expect(code).toContain('clipReadyEpochSec(sale.atEpochSec, identifyLatencySec)')
+    expect(code).toContain('splitSalesByAge(freshSales, Date.now(), serverTimeOffsetMs)')
   })
 
   // A second Retry on a lot that is still being identified must not leave its row on "Identifying…".
@@ -85,8 +85,10 @@ describe('renderer persists identifications', () => {
   it('writes a row when the sale is queued, so a lot lost to a closed app is on record', () => {
     const body = fnBody(rendererCode, 'identifySale')
     expect(body).toContain('persistEntry(entry)')
-    expect(body).toContain('orderId: sale.orderId')
-    expect(body).toContain('atEpochSec: sale.atEpochSec')
+    expect(body).toContain('newEntryFor(s, sale)')
+    const made = fnBody(rendererCode, 'newEntryFor')
+    expect(made).toContain('orderId: sale.orderId')
+    expect(made).toContain('atEpochSec: sale.atEpochSec')
   })
   it('writes the row again when it settles', () => {
     expect(fnBody(rendererCode, 'settleEntry')).toContain('persistEntry(entry)')
@@ -127,7 +129,7 @@ describe('renderer gate', () => {
   it('takes the answer from main through identifyStateFrom and assigns every field from it', () => {
     const body = fnBody(rendererCode, 'refreshIdentifyState')
     expect(body).toContain('identifyStateFrom(told)')
-    for (const f of ['identifyReady = s.ready', 'identifyEnabled = s.enabled', 'identifyDamaged = s.damaged', 'identifyUrl = s.baseUrl', 'identifyDefaultUrl = s.defaultBaseUrl']) expect(body).toContain(f)
+    for (const f of ['identifyReady = s.ready', 'identifyEnabled = s.enabled', 'identifyDamaged = s.damaged', 'identifyUrl = s.baseUrl', 'identifyDefaultUrl = s.defaultBaseUrl', 'identifyLatencySec = s.streamLatencySec']) expect(body).toContain(f)
     expect(body.indexOf('applyIdentifyState()')).toBeGreaterThan(body.indexOf('identifyDefaultUrl = s.defaultBaseUrl'))
   })
   it('no longer reads the switch from localStorage, where main could not see it', () => {
@@ -210,14 +212,14 @@ describe('glue: order, wiring and the markup it names', () => {
   it('the preload passes each argument through untouched', () => {
     for (const l of [
       "state: () => ipcRenderer.invoke('identify:state')",
-      "save: (args: { baseUrl?: string; enabled?: boolean }) => ipcRenderer.invoke('identify:save', args)",
+      "save: (args: { baseUrl?: string; enabled?: boolean; streamLatencySec?: number }) => ipcRenderer.invoke('identify:save', args)",
       "rows: () => ipcRenderer.invoke('identify:rows')",
       "saveRow: (row: unknown) => ipcRenderer.invoke('identify:save-row', row)",
       "identify: (payload: unknown) => ipcRenderer.invoke('tt-identify', payload)",
     ]) expect(preloadSrc).toContain(l)
   })
   it('every element the page looks up for these settings exists in the markup (a typo is a silent no-op)', () => {
-    for (const id of ['aiTranscribe', 'aiState', 'idUrl', 'idUrlSave', 'idUrlState']) {
+    for (const id of ['aiTranscribe', 'aiState', 'idUrl', 'idUrlSave', 'idUrlState', 'idLatency', 'idLatencySave', 'idLatencyState']) {
       expect(rendererCode, `renderer looks up ${id}`).toContain(`getElementById('${id}')`)
       expect(html, `markup has ${id}`).toContain(`id="${id}"`)
     }
@@ -281,5 +283,60 @@ describe('glue: an unresolved opt-out holds the gate off (review round)', () => 
   })
   it('nothing else ever clears the hold', () => {
     expect(rendererCode.split('identifyHeld = false').length - 1).toBe(2) // the declaration and the switch
+  })
+})
+
+// ── Stream latency (final fix 1): the setting reaches the two places that use it, and nowhere is it re-derived. ──
+describe('glue: the stream latency reaches the window and the wait, and is saved through the tested checks', () => {
+  it('identifySale hands the setting to the tested window and to the tail wait, both', () => {
+    const b = fnBody(rendererCode, 'identifySale')
+    expect(b).toContain('clipReadyEpochSec(sale.atEpochSec, identifyLatencySec)')
+    expect(b).toContain('identifyPayloadFor(sale, boundaryEvents, clipStore, identifyLatencySec)')
+  })
+  it('the page holds one value, defaulting to 0 (uncorrected), and only the refresh from main sets it', () => {
+    expect(rendererCode).toContain('let identifyLatencySec = 0')
+    expect(rendererCode.split('identifyLatencySec = ').length - 1).toBe(2) // the declaration and refreshIdentifyState
+  })
+  it('the box is checked by checkLatencyInput, saved by main, then re-read', () => {
+    expect(rendererCode).toContain('checkLatencyInput(box.value)')
+    expect(rendererCode).toContain('api.save({ streamLatencySec: c.sec })')
+    expect(rendererCode).toContain('await refreshIdentifyState()')
+  })
+  it('the standing note under the box comes from the tested words, so "not measured" is always said at 0', () => {
+    expect(fnBody(rendererCode, 'applyIdentifyState')).toContain('latencyNote(identifyLatencySec)')
+  })
+  it('main reports it with the other settings, and saves it through the one writer', () => {
+    expect(mainCode).toContain('streamLatencySec: s.streamLatencySec')
+    expect(mainCode).toContain('a: { baseUrl?: unknown; enabled?: unknown; streamLatencySec?: unknown }')
+  })
+})
+
+// ── Final fix 2 and 3: the clip's own caveats reach the row, and a late sale gets a row instead of silence. ──
+describe('glue: clip caveats and late sales', () => {
+  it('a settled row carries the tested note for ITS clip (truncated and/or a timeline that disagrees with the audio)', () => {
+    expect(rendererCode).toContain('settleEntry(job.entry, outcome, clipNote(job.payload.clip))')
+    expect(fnBody(rendererCode, 'settleEntry')).toContain("v.text + (v.status === 'done' ? note : '')")
+  })
+  it('a sale that arrives too late is recorded with the too_old reason, through settleEntry (so it is also saved)', () => {
+    const b = fnBody(rendererCode, 'recordTooOldSale')
+    expect(b).toContain("settleEntry(newEntryFor(s, saleOnThisClock(s)), { status: 'failed', reason: 'too_old' })")
+    expect(b).toContain('seenOrders.markSent(s.orderId)')
+    expect(b.indexOf('seenOrders.has(s.orderId)')).toBeLessThan(b.indexOf('seenOrders.markSent(s.orderId)'))
+  })
+  it('a too-old sale is not sent on its own: the row has no payload, no clip cut and no queue entry', () => {
+    const b = fnBody(rendererCode, 'recordTooOldSale')
+    for (const forbidden of ['identifyPayloadFor', 'identifyQueue', 'enqueue', 'identifySale(']) expect(b).not.toContain(forbidden)
+  })
+  it('every too-old sale of a batch is recorded, after the render and before identification, and nothing filters by age any more', () => {
+    const at = rendererCode.indexOf('for (const s of tooOld) recordTooOldSale(s)')
+    expect(at).toBeGreaterThan(rendererCode.indexOf("$('feedCount').title"))
+    expect(rendererCode.indexOf('for (const s of toIdentify) identifySale(s)')).toBeGreaterThan(at)
+    expect(rendererCode).not.toMatch(/\.filter\([^)]*isRecentSale/)
+  })
+  it('the identification gate applies to the record too: with identification off there is no row', () => {
+    expect(fnBody(rendererCode, 'recordTooOldSale')).toContain('if (!recapEnabled || !window.identifyAPI) return')
+  })
+  it('the identifications table says WHY a row failed, not just "Failed"', () => {
+    expect(rendererCode).toContain("r.status === 'error' ? (r.text || 'Failed')")
   })
 })

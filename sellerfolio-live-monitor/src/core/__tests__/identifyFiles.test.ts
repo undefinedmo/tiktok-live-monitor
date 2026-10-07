@@ -109,12 +109,17 @@ describe('nodeStoreIO under the store', () => {
 
 describe('identify.json', () => {
   it('no file: defaults, on', () => {
-    expect(loadIdentifySettings(join(dir, 'identify.json'))).toEqual({ baseUrl: DEFAULT_IDENTIFY_URL, enabled: true, damaged: false })
+    expect(loadIdentifySettings(join(dir, 'identify.json'))).toEqual({ baseUrl: DEFAULT_IDENTIFY_URL, enabled: true, damaged: false, streamLatencySec: 0 })
   })
   it('round trips what was saved', () => {
     const f = join(dir, 'identify.json')
-    expect(saveIdentifySettings(f, { baseUrl: 'https://w.example.com', enabled: false })).toBe(true)
-    expect(loadIdentifySettings(f)).toEqual({ baseUrl: 'https://w.example.com', enabled: false, damaged: false })
+    expect(saveIdentifySettings(f, { baseUrl: 'https://w.example.com', enabled: false, streamLatencySec: 7.5 })).toBe(true)
+    expect(loadIdentifySettings(f)).toEqual({ baseUrl: 'https://w.example.com', enabled: false, damaged: false, streamLatencySec: 7.5 })
+  })
+  it('a file written before the latency existed reads as 0: no correction, nothing else changes', () => {
+    const f = join(dir, 'identify.json')
+    writeFileSync(f, '{"baseUrl":"https://w.example.com","enabled":true}')
+    expect(loadIdentifySettings(f)).toEqual({ baseUrl: 'https://w.example.com', enabled: true, damaged: false, streamLatencySec: 0 })
   })
   it('a truncated file reads as OFF, not as the default "on"', () => {
     const f = join(dir, 'identify.json')
@@ -129,7 +134,7 @@ describe('identify.json', () => {
   it('saving into a place that cannot be written reports false rather than throwing', () => {
     const f = join(dir, 'blocker')
     writeFileSync(f, 'a file where a folder is needed')
-    expect(saveIdentifySettings(join(f, 'identify.json'), { baseUrl: DEFAULT_IDENTIFY_URL, enabled: true })).toBe(false)
+    expect(saveIdentifySettings(join(f, 'identify.json'), { baseUrl: DEFAULT_IDENTIFY_URL, enabled: true, streamLatencySec: 0 })).toBe(false)
     expect(existsSync(join(dir, 'blocker', 'identify.json'))).toBe(false)
   })
 })

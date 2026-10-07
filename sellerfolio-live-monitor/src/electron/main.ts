@@ -756,18 +756,18 @@ ipcMain.handle('sf-sync:save', (_e, a: { baseUrl?: string; token?: string }) => 
 // The POST is made here, not in the renderer: there is no CORS in the main process, and the capture
 // token (the same one the journal sync uses, decrypted by loadSyncSettings) never reaches the page.
 // The endpoint is the Linux worker over the tailnet -- NEVER hq. Two settings live in identify.json
-// beside sf-sync.json (the address, and whether identification is on); core/identifySettings decides
+// beside sf-sync.json (the address, whether identification is on, and the stream delay); core/identifySettings decides
 // what they mean, including that an address the token must not go to is not used and that an
 // unreadable file reads as OFF. There is no second token: sendIdentify gets the sync token.
 const IDENTIFY_FILE = join(app.getPath('userData'), 'identify.json')
 const identifyFailed = (reason: string) => ({ status: 'failed' as const, reason, retryable: false })
 function identifyView() {
   const s = loadIdentifySettings(IDENTIFY_FILE)
-  return { baseUrl: s.baseUrl, enabled: s.enabled, damaged: s.damaged, defaultBaseUrl: DEFAULT_IDENTIFY_URL, ready: !!loadSyncSettings().token }
+  return { baseUrl: s.baseUrl, enabled: s.enabled, damaged: s.damaged, streamLatencySec: s.streamLatencySec, defaultBaseUrl: DEFAULT_IDENTIFY_URL, ready: !!loadSyncSettings().token }
 }
 // The renderer decides when to record audio; this only reports the settings and whether a token exists.
 ipcMain.handle('identify:state', () => identifyView())
-ipcMain.handle('identify:save', (_e, a: { baseUrl?: unknown; enabled?: unknown }) => {
+ipcMain.handle('identify:save', (_e, a: { baseUrl?: unknown; enabled?: unknown; streamLatencySec?: unknown }) => {
   const u = updateIdentifySettings(loadIdentifySettings(IDENTIFY_FILE), a ?? {})
   if (!u.ok) return { ok: false, error: u.error, ...identifyView() }
   if (!saveIdentifySettings(IDENTIFY_FILE, u.next)) return { ok: false, error: 'Could not save this setting', ...identifyView() }

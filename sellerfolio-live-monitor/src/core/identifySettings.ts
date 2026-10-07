@@ -1,14 +1,16 @@
 // The identification feature's settings, and the one rule for whether audio may leave this machine.
-// Two values live in `identify.json` beside the journal: where the worker is, and whether the
-// feature is on. The capture token is NOT here -- it is the existing SellerFolio sync token, kept
+// Three values live in `identify.json` beside the journal: where the worker is, whether the
+// feature is on, and how far the captured stream lags the show (`streamLatencySec`: see the STREAM
+// LATENCY note in identifyWiring, which says what it is and how to measure it). The capture token is NOT here -- it is the existing SellerFolio sync token, kept
 // encrypted in sf-sync.json, and this file has no field it could ride in.
 // Pure: the file is read and written by main.ts, which passes the text through these.
 import { identifyBaseUrlOk } from './identifySend'
+import { MAX_STREAM_LATENCY_SEC, safeLatencySec } from './identifyWiring'
 
 /** The Linux worker over the tailnet. Never hq. */
 export const DEFAULT_IDENTIFY_URL = 'http://100.68.11.76:8099'
 
-export type IdentifySettings = { baseUrl: string; enabled: boolean }
+export type IdentifySettings = { baseUrl: string; enabled: boolean; streamLatencySec: number }
 export type IdentifySettingsRead = IdentifySettings & {
   /** The file existed but could not be trusted. It is read as OFF, and the Settings screen says why. */
   damaged: boolean
@@ -28,24 +30,55 @@ export type IdentifySettingsRead = IdentifySettings & {
  *   check the send path makes; the file is not trusted to have been written by this app).
  */
 export function parseIdentifySettings(text: string | null): IdentifySettingsRead {
-  if (text === null) return { baseUrl: DEFAULT_IDENTIFY_URL, enabled: true, damaged: false }
+  if (text === null) return { baseUrl: DEFAULT_IDENTIFY_URL, enabled: true, damaged: false, streamLatencySec: 0 }
   let j: unknown
   try {
     j = JSON.parse(text)
   } catch {
-    return { baseUrl: DEFAULT_IDENTIFY_URL, enabled: false, damaged: true }
+    return { baseUrl: DEFAULT_IDENTIFY_URL, enabled: false, damaged: true, streamLatencySec: 0 }
   }
-  if (!j || typeof j !== 'object' || Array.isArray(j)) return { baseUrl: DEFAULT_IDENTIFY_URL, enabled: false, damaged: true }
-  const o = j as { baseUrl?: unknown; enabled?: unknown }
+  if (!j || typeof j !== 'object' || Array.isArray(j)) return { baseUrl: DEFAULT_IDENTIFY_URL, enabled: false, damaged: true, streamLatencySec: 0 }
+  const o = j as { baseUrl?: unknown; enabled?: unknown; streamLatencySec?: unknown }
   const baseUrl = typeof o.baseUrl === 'string' && identifyBaseUrlOk(o.baseUrl.trim()) ? o.baseUrl.trim() : DEFAULT_IDENTIFY_URL
-  if (o.enabled === undefined) return { baseUrl, enabled: true, damaged: false }
-  if (typeof o.enabled !== 'boolean') return { baseUrl, enabled: false, damaged: true }
-  return { baseUrl, enabled: o.enabled, damaged: false }
+  // A latency that makes no sense is "no correction" (0), and does NOT make the file damaged: it is not
+  // what decides whether audio leaves this machine, so it must not be able to switch anything off.
+  const streamLatencySec = safeLatencySec(o.streamLatencySec)
+  if (o.enabled === undefined) return { baseUrl, enabled: true, damaged: false, streamLatencySec }
+  if (typeof o.enabled !== 'boolean') return { baseUrl, enabled: false, damaged: true, streamLatencySec }
+  return { baseUrl, enabled: o.enabled, damaged: false, streamLatencySec }
 }
 
-/** The text to write. Exactly the two settings: whatever else the object holds is not written. */
+/** The text to write. Exactly the three settings: whatever else the object holds is not written. */
 export function serializeIdentifySettings(s: IdentifySettings): string {
-  return JSON.stringify({ baseUrl: s.baseUrl, enabled: s.enabled })
+  return JSON.stringify({ baseUrl: s.baseUrl, enabled: s.enabled, streamLatencySec: safeLatencySec(s.streamLatencySec) })
+}
+
+export type LatencyCheck = { ok: true; sec: number } | { ok: false; error: string }
+
+/** What the Settings box accepts for the stream latency: seconds, whole or fractional, 0 to the maximum. Empty means 0. */
+export function checkLatencyInput(raw: string): LatencyCheck {
+  const typed = raw.trim().replace(/\s*s$/i, '')
+  if (!typed) return { ok: true, sec: 0 }
+  if (!/^\d+(\.\d+)?$/.test(typed)) return { ok: false, error: 'Enter the delay in seconds, for example 8 or 6.5.' }
+  const sec = Number(typed)
+  if (!Number.isFinite(sec) || sec > MAX_STREAM_LATENCY_SEC) return { ok: false, error: `Enter a delay between 0 and ${MAX_STREAM_LATENCY_SEC} seconds.` }
+  return { ok: true, sec }
+}
+
+/**
+ * What the Settings screen says under the latency box. At 0 it says what is true: nobody has measured the
+ * delay, so every clip is cut L seconds early and identifications are not trustworthy. A value says what
+ * it is correcting for.
+ */
+export function latencyNote(sec: number): { text: string; cls: string } {
+  const v = safeLatencySec(sec)
+  if (v === 0) {
+    return {
+      cls: 'warn-text',
+      text: 'The stream delay has not been measured. The audio the app records lags the show, so until this is set, clips are cut from the wrong moment and identifications are not trustworthy. To measure it, see the note beside it.',
+    }
+  }
+  return { cls: 'ok-text', text: `Correcting for a stream delay of ${v} s: each clip is cut ${v} s later in the recording than the sale time.` }
 }
 
 export type BaseUrlCheck = { ok: true; baseUrl: string } | { ok: false; error: string }
@@ -115,18 +148,38 @@ export type SettingsUpdate = { ok: true; next: IdentifySettings } | { ok: false;
  * setting reads as OFF, and saving just its address keeps it OFF: a field that was not touched is
  * not switched on by the save.
  */
-export function updateIdentifySettings(cur: IdentifySettings, a: { baseUrl?: unknown; enabled?: unknown }): SettingsUpdate {
+export function updateIdentifySettings(
+  cur: IdentifySettings,
+  a: { baseUrl?: unknown; enabled?: unknown; streamLatencySec?: unknown },
+): SettingsUpdate {
   let baseUrl = cur.baseUrl
   if (typeof a.baseUrl === 'string') {
     const c = checkBaseUrlInput(a.baseUrl)
     if (!c.ok) return { ok: false, error: c.error }
     baseUrl = c.baseUrl
   }
-  return { ok: true, next: { baseUrl, enabled: typeof a.enabled === 'boolean' ? a.enabled : cur.enabled } }
+  // A number is validated, not clamped: 61 is a typo for something, and saving 60 would hide it. Any other
+  // type is ignored, like the other fields.
+  let streamLatencySec = cur.streamLatencySec
+  if (typeof a.streamLatencySec === 'number') {
+    if (!Number.isFinite(a.streamLatencySec) || a.streamLatencySec < 0 || a.streamLatencySec > MAX_STREAM_LATENCY_SEC) {
+      return { ok: false, error: `Enter a delay between 0 and ${MAX_STREAM_LATENCY_SEC} seconds.` }
+    }
+    streamLatencySec = a.streamLatencySec
+  }
+  return { ok: true, next: { baseUrl, enabled: typeof a.enabled === 'boolean' ? a.enabled : cur.enabled, streamLatencySec } }
 }
 
 /** What the Settings page knows about identification, as the main process last reported it. */
-export type IdentifyState = { ready: boolean; enabled: boolean; damaged: boolean; baseUrl: string; defaultBaseUrl: string }
+export type IdentifyState = {
+  ready: boolean
+  enabled: boolean
+  damaged: boolean
+  baseUrl: string
+  defaultBaseUrl: string
+  /** Seconds the captured stream lags the show; 0 = uncorrected / not measured. */
+  streamLatencySec: number
+}
 
 /**
  * Read main's answer to "what are the settings?". The answer crosses IPC, so it is untrusted: anything
@@ -141,6 +194,7 @@ export function identifyStateFrom(v: unknown): IdentifyState {
     damaged: o.damaged === true,
     baseUrl: typeof o.baseUrl === 'string' && o.baseUrl ? o.baseUrl : DEFAULT_IDENTIFY_URL,
     defaultBaseUrl: typeof o.defaultBaseUrl === 'string' && o.defaultBaseUrl ? o.defaultBaseUrl : DEFAULT_IDENTIFY_URL,
+    streamLatencySec: safeLatencySec(o.streamLatencySec),
   }
 }
 

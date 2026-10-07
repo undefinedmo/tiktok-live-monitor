@@ -10,9 +10,9 @@ import { AuctionJournal } from '../core/auctionJournal'
 import { makeIdentifyQueue } from '../core/identifyQueue'
 import { BREAKER_COOLDOWN_MS, BREAKER_THRESHOLD, MAX_IDENTIFY_ATTEMPTS, RETRY_BACKOFF_MS, makeBreaker, makeIdentifyRun, serverToLocalSec, toWirePayload, type IdentifyPayload, type WireClip } from '../core/identifySend'
 import type { IdentifyAnswer, IdentifyJob } from '../core/identifyClient'
-import { clipReadyEpochSec, createSeenOrders, identifyPayloadFor, isRecentSale, viewOutcome, type JournalEvent } from '../core/identifyWiring'
+import { clipNote, clipReadyEpochSec, createSeenOrders, identifyPayloadFor, splitSalesByAge, viewOutcome, type JournalEvent } from '../core/identifyWiring'
 import { MAX_IDENTIFICATIONS, restoreEntries, rowFromEntry, type IdentificationRow } from '../core/identifyStore'
-import { identifyGate, identifyStateFrom, identifyStatus, migrateLegacySwitch } from '../core/identifySettings'
+import { checkLatencyInput, identifyGate, identifyStateFrom, identifyStatus, latencyNote, migrateLegacySwitch } from '../core/identifySettings'
 
 // Structured AI-transcript fields (was core/ledger's LedgerTranscript; the products
 // panel still stores per-product transcripts in memory for the session).
@@ -31,7 +31,7 @@ interface LabelTemplate {
   qr?: boolean
 }
 /** What main knows about identification: the two settings, and whether a capture token is saved. */
-interface IdentifyView { baseUrl: string; enabled: boolean; damaged: boolean; defaultBaseUrl: string; ready: boolean }
+interface IdentifyView { baseUrl: string; enabled: boolean; damaged: boolean; defaultBaseUrl: string; ready: boolean; streamLatencySec: number }
 declare global {
   interface Window {
     ttLive: { onEvent: (cb: (ev: LiveEvent) => void) => void }
@@ -51,7 +51,7 @@ declare global {
     }
     identifyAPI?: {
       state: () => Promise<IdentifyView>
-      save: (args: { baseUrl?: string; enabled?: boolean }) => Promise<IdentifyView & { ok: boolean; error?: string }>
+      save: (args: { baseUrl?: string; enabled?: boolean; streamLatencySec?: number }) => Promise<IdentifyView & { ok: boolean; error?: string }>
       identify: (payload: { job: IdentifyJob; clip: WireClip }) => Promise<IdentifyAnswer>
       rows: () => Promise<IdentificationRow[]>
       saveRow: (row: IdentificationRow) => Promise<boolean>
@@ -590,6 +590,7 @@ let identifyEnabled = true // the Settings switch, as main last reported it
 let identifyDamaged = false // main could not read the setting and switched identification off
 let identifyHeld = false // an earlier opt-out could not be carried over: unknown means OFF for this session
 let identifyUrl = ''
+let identifyLatencySec = 0 // how far the recorded stream lags the show (core/identifyWiring: STREAM LATENCY); 0 = not measured
 let transcribing = false // the capture lock of transcribeProduct (the local Gemini path) only
 let watchedRoomId: string | null = null
 interface Recap {
@@ -884,7 +885,7 @@ function renderIdentifications() {
     tr.appendChild(cell(fieldText('retailPrice'), 'num mono'))
     tr.appendChild(cell(r.price || null, 'num mono'))
     tr.appendChild(cell(r.edited ? 'You corrected it'
-      : r.status === 'error' ? 'Failed' : r.status === 'abandoned' ? 'Not identified (show ended or app closed)' : r.status === 'skipped' ? 'Nothing to identify'
+      : r.status === 'error' ? (r.text || 'Failed') : r.status === 'abandoned' ? 'Not identified (show ended or app closed)' : r.status === 'skipped' ? 'Nothing to identify'
       : r.status === 'transcribing' ? 'Identifying…' : 'Identified live'))
     const acts = el('td')
     const wrap = el('div', 'rowacts')
@@ -933,10 +934,11 @@ function noteBoundary(e: JournalEvent): void {
   boundaryEvents.push(e)
   if (boundaryEvents.length > MAX_BOUNDARY_EVENTS) boundaryEvents.splice(0, boundaryEvents.length - MAX_BOUNDARY_EVENTS)
 }
-function settleEntry(entry: Recap, outcome: { status: string; reason?: string; tries?: number }, truncated = false): void {
+/** `note` is what the audio behind an identification should admit to (core/identifyWiring clipNote); it is only said of a success. */
+function settleEntry(entry: Recap, outcome: { status: string; reason?: string; tries?: number }, note = ''): void {
   const v = viewOutcome(outcome)
   entry.status = v.status
-  entry.text = v.text + (v.status === 'done' && truncated ? ' (the audio buffer began late, so the clip is short)' : '')
+  entry.text = v.text + (v.status === 'done' ? note : '')
   persistEntry(entry)
   renderAll()
 }
@@ -955,7 +957,7 @@ const identifyQueue = makeIdentifyQueue<IdentifyQueueJob, IdentifyAnswer & { tri
     shouldContinue: (job) => job.show === showGeneration && recapEnabled,
     breaker: identifyBreaker,
   }),
-  onSettled: (job, outcome) => settleEntry(job.entry, outcome, job.payload.clip.truncated),
+  onSettled: (job, outcome) => settleEntry(job.entry, outcome, clipNote(job.payload.clip)),
   concurrency: IDENTIFY_CONCURRENCY,
 })
 /** The show changed or identification was turned off: sales still WAITING settle as abandoned. */
@@ -965,6 +967,34 @@ function endIdentifyShow(reason: string): void {
   boundaryJournal = new AuctionJournal()
   seenOrders.endShow()
   identifyQueue.abandonAll(reason)
+}
+
+/** A sale on THIS machine's clock: what the row and the window are built from. */
+function saleOnThisClock(s: Sale) {
+  return { orderId: s.orderId, roomId: s.roomId ?? watchedRoomId, atEpochSec: serverToLocalSec(s.createdAt, serverTimeOffsetMs) }
+}
+/** The row for a sale, newest first, kept to the store's cap. Not yet drawn or saved. */
+function newEntryFor(s: Sale, sale: { orderId: string; roomId: string | null; atEpochSec: number }): Recap {
+  const entry: Recap = {
+    head: `${s.productName.slice(0, 30)} — @${s.buyer.handle ?? s.buyer.username}`,
+    lot: s.skuDesc ?? '', price: s.price?.formatted ?? '',
+    status: 'transcribing', text: '', sale: s, live: true,
+    orderId: sale.orderId, roomId: sale.roomId, atEpochSec: sale.atEpochSec,
+  }
+  recaps.unshift(entry)
+  if (recaps.length > MAX_IDENTIFICATIONS) recaps.pop()
+  return entry
+}
+/**
+ * A sale that reached the app too late to identify on its own (late-landing order rows are normal) gets a
+ * row saying so, not silence. It is not sent: the operator can press Retry, which cuts from whatever the
+ * buffer still holds.
+ */
+function recordTooOldSale(s: Sale): void {
+  if (!recapEnabled || !window.identifyAPI) return
+  if (seenOrders.has(s.orderId)) return
+  seenOrders.markSent(s.orderId)
+  settleEntry(newEntryFor(s, saleOnThisClock(s)), { status: 'failed', reason: 'too_old' })
 }
 
 /** Identify one sale. `existing` is a row being retried: it is reused, not duplicated. */
@@ -978,29 +1008,20 @@ function identifySale(s: Sale, existing?: Recap): void {
   }
   // Everything the server is sent is assembled in core/identifyWiring (tested): this only supplies the
   // sale on THIS machine's clock, the show's journal, and the store.
-  const sale = { orderId: s.orderId, roomId: s.roomId ?? watchedRoomId, atEpochSec: serverToLocalSec(s.createdAt, serverTimeOffsetMs) }
-  const entry: Recap = existing ?? {
-    head: `${s.productName.slice(0, 30)} — @${s.buyer.handle ?? s.buyer.username}`,
-    lot: s.skuDesc ?? '', price: s.price?.formatted ?? '',
-    status: 'transcribing', text: '', sale: s, live: true,
-    orderId: sale.orderId, roomId: sale.roomId, atEpochSec: sale.atEpochSec,
-  }
+  const sale = saleOnThisClock(s)
+  const entry = existing ?? newEntryFor(s, sale)
   entry.status = 'transcribing'
   entry.text = ''
-  if (!existing) {
-    recaps.unshift(entry)
-    if (recaps.length > MAX_IDENTIFICATIONS) recaps.pop()
-  }
   // Written now, not only when it settles: a lot still waiting when the app closes is then on record
   // as not identified, instead of vanishing.
   persistEntry(entry)
   renderAll()
   const show = showGeneration
   // The clip includes the tail after the sale, so wait for that audio to exist.
-  const waitMs = Math.min(MAX_TAIL_WAIT_MS, Math.max(0, (clipReadyEpochSec(sale.atEpochSec) - Date.now() / 1000) * 1000) + CHUNK_SETTLE_MS)
+  const waitMs = Math.min(MAX_TAIL_WAIT_MS, Math.max(0, (clipReadyEpochSec(sale.atEpochSec, identifyLatencySec) - Date.now() / 1000) * 1000) + CHUNK_SETTLE_MS)
   setTimeout(() => {
     if (show !== showGeneration || !recapEnabled) { settleEntry(entry, { status: 'abandoned', reason: 'identification stopped' }); return }
-    const payload = identifyPayloadFor(sale, boundaryEvents, clipStore)
+    const payload = identifyPayloadFor(sale, boundaryEvents, clipStore, identifyLatencySec)
     if (!payload) { settleEntry(entry, { status: 'failed', reason: 'no_audio' }); return }
     // A refusal means this order is already queued or running: say so on the row rather than leave it
     // on "Identifying…" (the job that holds the order settles the same row with its real outcome).
@@ -1052,9 +1073,18 @@ function applyIdentifyState(): void {
     if (document.activeElement !== url) url.value = identifyUrl
     url.placeholder = identifyDefaultUrl
   }
+  const lat = document.getElementById('idLatency') as HTMLInputElement | null
+  if (lat && document.activeElement !== lat) lat.value = identifyLatencySec ? String(identifyLatencySec) : ''
+  const latState = document.getElementById('idLatencyState')
+  if (latState && !latStateHeld) {
+    const n = latencyNote(identifyLatencySec)
+    latState.className = 'state ' + n.cls
+    latState.textContent = n.text
+  }
   renderAll()
 }
 let identifyDefaultUrl = ''
+let latStateHeld = false // a save result is showing under the delay box; the standing note comes back on the next change
 /** Ask main what the settings are now (a token may have just been saved or removed) and apply them. */
 async function refreshIdentifyState(): Promise<void> {
   let told: unknown
@@ -1065,6 +1095,7 @@ async function refreshIdentifyState(): Promise<void> {
   identifyDamaged = s.damaged
   identifyUrl = s.baseUrl
   identifyDefaultUrl = s.defaultBaseUrl
+  identifyLatencySec = s.streamLatencySec
   applyIdentifyState()
 }
 document.getElementById('aiTranscribe')?.addEventListener('change', (e) => {
@@ -1084,6 +1115,21 @@ document.getElementById('idUrlSave')?.addEventListener('click', () => {
     if (r.ok) { await refreshIdentifyState(); box.value = r.baseUrl }
     if (st) { st.className = 'state ' + (r.ok ? 'ok-text' : 'bad-text'); st.textContent = r.ok ? 'Saved' : (r.error ?? 'Could not save') }
   }, () => { if (st) { st.className = 'state bad-text'; st.textContent = 'Could not save' } })
+})
+
+document.getElementById('idLatencySave')?.addEventListener('click', () => {
+  const api = window.identifyAPI
+  const box = document.getElementById('idLatency') as HTMLInputElement | null
+  const st = document.getElementById('idLatencyState')
+  if (!api || !box) return
+  const c = checkLatencyInput(box.value)
+  // A refusal keeps what was typed, so it can be corrected rather than retyped.
+  if (!c.ok) { if (st) { st.className = 'state bad-text'; st.textContent = c.error; latStateHeld = true } return }
+  latStateHeld = false
+  void api.save({ streamLatencySec: c.sec }).then(async (r) => {
+    if (r.ok) { await refreshIdentifyState(); box.value = identifyLatencySec ? String(identifyLatencySec) : '' }
+    else if (st) { st.className = 'state bad-text'; st.textContent = r.error ?? 'Could not save'; latStateHeld = true }
+  }, () => { if (st) { st.className = 'state bad-text'; st.textContent = 'Could not save'; latStateHeld = true } })
 })
 
 /** Bring last session's identifications back. Never throws and never blocks the page: no rows is a valid answer. */
@@ -2027,7 +2073,8 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       }
       // EVERY fresh sale is identified, not just the first of a batch: two sales in one second must both get an outcome.
       for (const s of freshSales) noteBoundary({ type: 'sale', atEpochSec: serverToLocalSec(s.createdAt, serverTimeOffsetMs), orderId: s.orderId })
-      const toIdentify = freshSales.filter((s) => s.paymentStatus !== 'failed' && isRecentSale(s.createdAt, Date.now(), serverTimeOffsetMs))
+      // A sale that arrives late is recorded (reason too_old), not filtered out: late order rows are normal.
+      const { toIdentify, tooOld } = splitSalesByAge(freshSales, Date.now(), serverTimeOffsetMs)
 
       // ── THEN UI ──────────────────────────────────────────────────────────
       lastByProduct = ev.byProduct
@@ -2048,6 +2095,7 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       if (!salesAuthoritative) stats.sales = String(ev.totalSales)
       renderStats()
       $('feedCount').title = `${ev.totalSales} sales · $${(ev.totalCents / 100).toFixed(0)}`
+      for (const s of tooOld) recordTooOldSale(s)
       for (const s of toIdentify) identifySale(s) // identification — after print + render
       break
     }

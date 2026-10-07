@@ -29,6 +29,29 @@ export type ExtractedClip = {
   leadInSec: number
   /** The buffer did not reach back to the requested start; the clip begins where the buffer does. */
   truncated: boolean
+  /**
+   * How far the clip's TIMELINE (`durationSec`, last end - first start) disagrees with its AUDIO (the
+   * sum of the chunks' own durations), in seconds, to the millisecond. 0 for a healthy recording.
+   * Positive: the timeline is longer than the audio -- chunks never arrived (a rebuffer sends
+   * zero-size chunks, which are dropped), so the seconds are in the timeline and not in the bytes.
+   * Negative: there is more audio than timeline -- the clock stood still while chunks kept coming.
+   * Either way the server plans a window against a timeline the bytes do not have; see
+   * `clipTimingSuspect`. Not `truncated`, which keeps its one meaning (the buffer began late).
+   */
+  gapSec: number
+}
+
+/**
+ * How far the timeline and the audio may disagree before the clip's timing is not to be trusted.
+ * Chunks arrive a few hundred ms apart rather than exactly 1 s and a recorder's slices are not exactly
+ * their nominal length, so a little is normal; a rebuffer loses whole seconds. Two is above the first
+ * and below the second.
+ */
+export const CLIP_TIMING_TOLERANCE_SEC = 2
+
+/** Does the clip's timeline disagree with its audio by more than the tolerance (either way)? */
+export function clipTimingSuspect(clip: { gapSec: number }): boolean {
+  return Math.abs(clip.gapSec) > CLIP_TIMING_TOLERANCE_SEC
 }
 
 /**
@@ -114,12 +137,15 @@ export function makeClipStore(opts: { capSec: number; now: () => number }) {
       const picked = w.chunks as StoredChunk[]
       const first = picked[0]!
       const last = picked[picked.length - 1]!
+      const durationSec = last.startEpochSec + last.durationSec - first.startEpochSec
+      const audioSec = picked.reduce((sum, c) => sum + c.durationSec, 0)
       return {
         blob: new Blob([init, ...picked.map((c) => c.blob)]),
         startEpochSec: first.startEpochSec,
-        durationSec: last.startEpochSec + last.durationSec - first.startEpochSec,
+        durationSec,
         leadInSec: w.startEpochSec - first.startEpochSec,
         truncated: w.truncated,
+        gapSec: Math.round((durationSec - audioSec) * 1000) / 1000,
       }
     },
 

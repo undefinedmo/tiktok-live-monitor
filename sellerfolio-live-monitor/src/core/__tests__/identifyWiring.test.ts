@@ -14,7 +14,12 @@ import {
   clipRequestFor,
   createSeenOrders,
   viewOutcome,
+  MAX_STREAM_LATENCY_SEC,
+  safeLatencySec,
+  clipNote,
+  splitSalesByAge,
 } from '../identifyWiring'
+import { makeClipStore } from '../clipRecorder'
 
 describe('boundariesForSale', () => {
   it('prefers the auction_start event, and falls back to the previous sale', () => {
@@ -166,7 +171,15 @@ describe('clipRequestFor', () => {
   const b = (auctionStartEpochSec: number | null, prevBoundaryEpochSec: number | null) => ({ saleEpochSec: 1100, auctionStartEpochSec, prevBoundaryEpochSec })
 
   it('uses the named constants', () => {
-    expect([CLIP_LEAD_PAD_SEC, CLIP_TAIL_SEC, NO_BOUNDARY_LOOKBACK_SEC]).toEqual([2, 5, 60])
+    expect([CLIP_LEAD_PAD_SEC, CLIP_TAIL_SEC, NO_BOUNDARY_LOOKBACK_SEC]).toEqual([2, 5, 30])
+  })
+
+  // The first lot of every show (and every lot after a switch off/on) has no boundary, so this is its
+  // whole window. 60 s is what produced the September production incident; 30 s is the measured-defensible
+  // figure. Pinned exactly, on its own: a `>=` here would let it drift back with the suite green.
+  it('looks back exactly 30 s when no boundary is known', () => {
+    expect(NO_BOUNDARY_LOOKBACK_SEC).toBe(30)
+    expect(clipRequestFor(b(null, null)).startEpochSec).toBe(1100 - 30)
   })
 
   it('reaches back to the wall and runs past the sale by the tail', () => {
@@ -205,6 +218,48 @@ describe('clipRequestFor', () => {
   })
 })
 
+// STREAM LATENCY. The audio is the PLAYED stream, which lags real time by some L seconds. A chunk the
+// recorder stamped C holds show-time C - L, so show-time T lives in the chunk stamped T + L. The
+// request is therefore PLUS L. (The brief for this fix said "subtract"; that is the direction from
+// buffer time to show time, which is what the clip's own start label gets -- see identifyPayloadFor.)
+// Each number below is chosen so that a flipped sign lands somewhere else.
+describe('clipRequestFor with a stream latency (buffer time = show time + L)', () => {
+  const b = (auctionStartEpochSec: number | null, prevBoundaryEpochSec: number | null) => ({ saleEpochSec: 1100, auctionStartEpochSec, prevBoundaryEpochSec })
+
+  it('asks for the audio L seconds LATER in the buffer than the show-time window', () => {
+    expect(clipRequestFor(b(null, 1040), 10)).toEqual({ startEpochSec: 1040 - CLIP_LEAD_PAD_SEC + 10, endEpochSec: 1100 + CLIP_TAIL_SEC + 10 })
+    expect(clipRequestFor(b(null, 1040), 10)).toEqual({ startEpochSec: 1048, endEpochSec: 1115 })
+  })
+
+  it("is exactly today's request when L is 0, and when it is not given", () => {
+    expect(clipRequestFor(b(1000, 1040), 0)).toEqual(clipRequestFor(b(1000, 1040)))
+    expect(clipRequestFor(b(1000, 1040))).toEqual({ startEpochSec: 998, endEpochSec: 1105 })
+  })
+
+  it('moves the whole window, so its length does not change', () => {
+    const a = clipRequestFor(b(1000, 1040))
+    const c = clipRequestFor(b(1000, 1040), 7.5)
+    expect(c.endEpochSec - c.startEpochSec).toBe(a.endEpochSec - a.startEpochSec)
+  })
+
+  it('applies the lookback caps in show time, then shifts', () => {
+    expect(clipRequestFor(b(null, 800), 10).startEpochSec).toBe(1100 - MAX_LOOKBACK_SEC + 10)
+    expect(clipRequestFor(b(null, null), 10).startEpochSec).toBe(1100 - NO_BOUNDARY_LOOKBACK_SEC + 10)
+    expect(clipRequestFor(b(null, null), 10).startEpochSec).toBe(1080)
+  })
+
+  it('a value that makes no sense is no correction at all, never a wild window', () => {
+    for (const bad of [NaN, Infinity, -Infinity, -5, MAX_STREAM_LATENCY_SEC + 1, undefined, null, '12', {}]) {
+      expect(safeLatencySec(bad), String(bad)).toBe(0)
+      expect(clipRequestFor(b(null, 1040), bad as number)).toEqual(clipRequestFor(b(null, 1040)))
+    }
+    expect(safeLatencySec(0)).toBe(0)
+    expect(safeLatencySec(12.5)).toBe(12.5)
+    expect(safeLatencySec(MAX_STREAM_LATENCY_SEC)).toBe(MAX_STREAM_LATENCY_SEC)
+    expect(MAX_STREAM_LATENCY_SEC).toBe(60)
+  })
+})
+
 describe('viewOutcome', () => {
   it('shows an identification as done', () => {
     expect(viewOutcome({ status: 'identified', attempts: 2 })).toMatchObject({ status: 'done' })
@@ -236,12 +291,17 @@ describe('viewOutcome', () => {
     ['bad_request_local', /not valid/i],
     ['worker_unreachable', /Retry/],
     ['already_queued', /already being identified/i],
+    ['too_old', /too late/i],
     ['identification_off', /turned off/i],
   ])('explains failure %s in words, not with the raw code', (reason, re) => {
     const v = viewOutcome({ status: 'failed', reason })
     expect(v.status).toBe('error')
     expect(v.text).toMatch(re)
     expect(v.text).not.toContain('Identification failed (') // the generic fallback
+  })
+
+  it('says what to do about a sale that came in too late: Retry', () => {
+    expect(viewOutcome({ status: 'failed', reason: 'too_old' }).text).toMatch(/Retry/)
   })
 
   it('still says something for a failure code it does not know yet', () => {
@@ -287,7 +347,7 @@ describe('jobForSale', () => {
 
 describe('identifyPayloadFor', () => {
   // What extract() returns for a request landing mid-chunk: it starts EARLIER than asked.
-  const clip: ExtractedClip = { blob: new Blob(['x']), startEpochSec: 1035.5, durationSec: 74.5, leadInSec: 2.5, truncated: false }
+  const clip: ExtractedClip = { blob: new Blob(['x']), startEpochSec: 1035.5, durationSec: 74.5, leadInSec: 2.5, truncated: false, gapSec: 0 }
   const store = (c: ExtractedClip | null) => ({ extract: vi.fn((_want: { startEpochSec: number; endEpochSec: number }) => c) })
   const sale = { orderId: 'cur', roomId: 'r1', atEpochSec: 1100 }
 
@@ -297,6 +357,20 @@ describe('identifyPayloadFor', () => {
     expect(p?.clip).toBe(clip)
     expect(p?.clip.startEpochSec).toBe(1035.5)
     expect(p?.clip.durationSec).toBe(74.5)
+  })
+
+  it('with a latency, asks for the shifted window and tells the server the SHOW time the clip starts at', () => {
+    const st = store(clip)
+    const p = identifyPayloadFor(sale, [{ type: 'sale', atEpochSec: 1040, orderId: 'prev' }, { type: 'auction_start', atEpochSec: 1045 }], st, 10)
+    expect(st.extract).toHaveBeenCalledWith({ startEpochSec: 1048, endEpochSec: 1115 }) // buffer time: later
+    expect(p?.clip.startEpochSec).toBe(1035.5 - 10) // show time: earlier than the buffer's label
+    expect(p?.job).toEqual({ orderId: 'cur', roomId: 'r1', saleEpochSec: 1100, auctionStartEpochSec: 1045, prevBoundaryEpochSec: 1040 })
+  })
+
+  it('changes nothing else about the clip: same bytes, duration, lead-in, flags', () => {
+    const p = identifyPayloadFor(sale, [], store(clip), 10)!
+    expect(p.clip.blob).toBe(clip.blob)
+    expect({ ...p.clip, startEpochSec: 0 }).toEqual({ ...clip, startEpochSec: 0 })
   })
 
   it('asks the store for exactly the window clipRequestFor plans, and builds the job from the same boundaries', () => {
@@ -340,9 +414,92 @@ describe('identifyPayloadFor', () => {
   })
 })
 
+// The end-to-end property, on the REAL clip store: the audio of show-time s is recorded L seconds late
+// (the stream lags), so it is stamped s + L. Each chunk's single byte names the show second it holds, so
+// the bytes of the clip say what the server will hear, and the clip's own start says what it is told.
+describe('identifyPayloadFor on a stream that lags by L seconds', () => {
+  // The first chunk the recorder delivers is the init segment (3 bytes) and a Cluster id; the clip below
+  // never reaches that chunk, so the bytes after the init segment are all show seconds.
+  const HEADER = [0xee, 0xee, 0xee, 0x1f, 0x43, 0xb6, 0x75]
+  const BASE = 900 // show second = BASE + byte
+  async function lagging(L: number) {
+    let now = BASE + L
+    const store = makeClipStore({ capSec: 300, now: () => now })
+    await store.push(new Blob([new Uint8Array(HEADER)]), 1)
+    for (let s = BASE; s < BASE + 250; s++) {
+      now = s + 1 + L // the second [s, s+1) of the show is finished L later than it happened
+      await store.push(new Blob([new Uint8Array([s - BASE])]), 1)
+    }
+    return store
+  }
+  /** The show seconds the bytes hold: everything after the 3-byte init segment, one byte per second. */
+  async function heard(blob: Blob): Promise<number[]> {
+    return Array.from(new Uint8Array(await blob.arrayBuffer())).slice(3).map((n) => BASE + n)
+  }
+  const sale = { orderId: 'cur', roomId: 'r1', atEpochSec: 1100 }
+  const journal = [{ type: 'sale' as const, atEpochSec: 1040, orderId: 'prev' }, { type: 'auction_start' as const, atEpochSec: 1045 }]
+
+  it.each([0, 8, 20])('with L = %s the clip holds the lot, and its start label is the show time of its first second', async (L) => {
+    const store = await lagging(L)
+    const p = identifyPayloadFor(sale, journal, store, L)
+    expect(p).not.toBeNull()
+    const seconds = await heard(p!.clip.blob)
+    expect(seconds.length).toBeGreaterThan(60)
+    // 1. the bytes begin before the lot's wall and run to the end of the tail ...
+    expect(seconds[0]!).toBeLessThanOrEqual(1040 - CLIP_LEAD_PAD_SEC)
+    expect(seconds[seconds.length - 1]!).toBeGreaterThanOrEqual(1100 + CLIP_TAIL_SEC - 1)
+    // 2. ... and the start the server is told is the show time of the FIRST of them.
+    expect(p!.clip.startEpochSec).toBe(seconds[0])
+    // 3. the job speaks show time, untouched by L.
+    expect(p!.job).toEqual({ orderId: 'cur', roomId: 'r1', saleEpochSec: 1100, auctionStartEpochSec: 1045, prevBoundaryEpochSec: 1040 })
+  })
+
+  it('WITHOUT the correction the same stream hands the server a clip whose label is L seconds ahead of its bytes', async () => {
+    const L = 8
+    const store = await lagging(L)
+    const p = identifyPayloadFor(sale, journal, store)!
+    const seconds = await heard(p.clip.blob)
+    expect(p.clip.startEpochSec - seconds[0]!).toBe(L)
+  })
+})
+
+// What an identified row says about the audio it was identified from. Both caveats are about the clip
+// the server was sent: the buffer began late (a short clip), or its timing and its audio disagree.
+describe('clipNote', () => {
+  const ok = { truncated: false, gapSec: 0 }
+  it('says nothing about a healthy clip', () => {
+    expect(clipNote(ok)).toBe('')
+    expect(clipNote({ truncated: false, gapSec: 2 })).toBe('') // within the tolerance
+    expect(clipNote({ truncated: false, gapSec: -2 })).toBe('')
+  })
+  it('says the buffer began late for a truncated clip (the words that were always used)', () => {
+    expect(clipNote({ ...ok, truncated: true })).toBe(' (the audio buffer began late, so the clip is short)')
+  })
+  it('says the audio stalled when the timeline is longer than the audio', () => {
+    expect(clipNote({ ...ok, gapSec: 5 })).toBe(" (the audio stalled for about 5 s, so the clip's timing may be off)")
+  })
+  it("says the clock stood still when there is more audio than timeline", () => {
+    expect(clipNote({ ...ok, gapSec: -3 })).toBe(" (the audio's clock stood still for about 3 s, so the clip's timing may be off)")
+  })
+  it('says both, truncation first', () => {
+    expect(clipNote({ truncated: true, gapSec: 5 })).toBe(
+      " (the audio buffer began late, so the clip is short) (the audio stalled for about 5 s, so the clip's timing may be off)",
+    )
+  })
+  it('rounds a fractional gap to a whole second for reading', () => {
+    expect(clipNote({ ...ok, gapSec: 4.6 })).toContain('about 5 s')
+  })
+})
+
 describe('clipReadyEpochSec', () => {
   it('is when the tail audio exists: the sale plus the tail', () => {
     expect(clipReadyEpochSec(1100)).toBe(1100 + CLIP_TAIL_SEC)
+  })
+  // The tail is L seconds late reaching the buffer too: cutting at sale + tail would find it not yet there.
+  it('is L seconds later on a stream that lags by L', () => {
+    expect(clipReadyEpochSec(1100, 10)).toBe(1115)
+    expect(clipReadyEpochSec(1100, 0)).toBe(1105)
+    expect(clipReadyEpochSec(1100, -3)).toBe(1105)
   })
 })
 
@@ -383,6 +540,50 @@ describe('isRecentSale', () => {
   it('treats an unknown offset as none', () => {
     expect(isRecentSale(NOW - 2000, NOW, undefined)).toBe(true)
     expect(isRecentSale(NOW - 61_000, NOW, undefined)).toBe(false)
+  })
+})
+
+// A late-landing order row is a documented sync behaviour, so "too old" is not a reason to say nothing.
+// splitSalesByAge sorts a batch of fresh sales into those to identify now and those that arrived too late;
+// the renderer gives the second kind a ROW (reason too_old) instead of filtering them away.
+describe('splitSalesByAge: nothing is dropped without a row', () => {
+  const NOW = 1_700_000_100_000
+  const sale = (orderId: string, ageMs: number, paymentStatus = 'paid') => ({ orderId, createdAt: NOW - ageMs, paymentStatus })
+
+  it('splits a batch into recent and too old, keeping order', () => {
+    const batch = [sale('new1', 2000), sale('old1', 61_000), sale('new2', 59_000), sale('old2', 600_000)]
+    const { toIdentify, tooOld } = splitSalesByAge(batch, NOW, 0)
+    expect(toIdentify.map((x) => x.orderId)).toEqual(['new1', 'new2'])
+    expect(tooOld.map((x) => x.orderId)).toEqual(['old1', 'old2'])
+  })
+
+  it('every sale lands in exactly one of the two (none is dropped), except a failed payment', () => {
+    const batch = [sale('a', 1000), sale('b', 70_000), sale('c', 30_000), sale('d', 3_600_000)]
+    const { toIdentify, tooOld } = splitSalesByAge(batch, NOW, 0)
+    expect(toIdentify.length + tooOld.length).toBe(batch.length)
+    expect(new Set([...toIdentify, ...tooOld]).size).toBe(batch.length)
+  })
+
+  it('a sale whose payment failed is a lot nobody bought: neither identified nor recorded, however old', () => {
+    const { toIdentify, tooOld } = splitSalesByAge([sale('f1', 1000, 'failed'), sale('f2', 900_000, 'failed')], NOW, 0)
+    expect(toIdentify).toEqual([])
+    expect(tooOld).toEqual([])
+  })
+
+  it('judges age by the corrected clock, exactly as isRecentSale does (same limit, strict)', () => {
+    const offset = -90_000 // the station clock is 90 s ahead of the server
+    const { toIdentify, tooOld } = splitSalesByAge([sale('ok', 2000), sale('edge', 60_000), sale('edge-1', 59_999)].map((x) => ({ ...x, createdAt: x.createdAt + offset })), NOW, offset)
+    expect(toIdentify.map((x) => x.orderId)).toEqual(['ok', 'edge-1'])
+    expect(tooOld.map((x) => x.orderId)).toEqual(['edge'])
+  })
+
+  it('returns the same objects it was given', () => {
+    const a = sale('a', 70_000)
+    expect(splitSalesByAge([a], NOW, 0).tooOld[0]).toBe(a)
+  })
+
+  it('an empty batch is two empty lists', () => {
+    expect(splitSalesByAge([], NOW, 0)).toEqual({ toIdentify: [], tooOld: [] })
   })
 })
 

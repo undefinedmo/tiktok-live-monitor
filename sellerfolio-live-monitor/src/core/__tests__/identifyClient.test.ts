@@ -11,7 +11,7 @@ const job = {
   prevBoundaryEpochSec: null,
 }
 // Built the way the clip store returns it: the bytes' own start/duration, plus how they relate to the request.
-const clip: ExtractedClip = { blob: new Blob(['x']), startEpochSec: 1699999965, durationSec: 40, leadInSec: 2, truncated: false }
+const clip: ExtractedClip = { blob: new Blob(['x']), startEpochSec: 1699999965, durationSec: 40, leadInSec: 2, truncated: false, gapSec: 0 }
 const cfg = { baseUrl: 'http://100.68.11.76:8099', token: 't' }
 
 const metaOf = (form: FormData) => JSON.parse(form.get('meta') as string) as Record<string, unknown>
