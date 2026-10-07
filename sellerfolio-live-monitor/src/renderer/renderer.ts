@@ -5,6 +5,7 @@ import { labelNeedsHtml } from '../electron/zplLabel' // preview-only: which pri
 import { PrintDedup } from '../core/printDedup'
 import { SaleSeed } from '../core/saleSeed'
 import { labelCode } from '../core/labelCode'
+import { makeClipStore } from '../core/clipRecorder'
 
 // Structured AI-transcript fields (was core/ledger's LedgerTranscript; the products
 // panel still stores per-product transcripts in memory for the session).
@@ -557,8 +558,10 @@ const AI_UI = false
 // ── auction audio → AI transcript (mirrors sellerfolio-live enrichment) ──────
 let astream: MediaStream | null = null
 let rec: MediaRecorder | null = null
-let recChunks: Blob[] = []
-let onStopResolve: ((b: Blob) => void) | null = null
+// The last 5 minutes of show audio (sized from the measured p99 inter-sale gap of 219 s), one
+// chunk per second. A sale's clip is cut from this on demand; nothing is recorded per sale.
+// Epoch seconds from this machine's clock -- the same clock the sale's own timestamp is read against.
+const clipStore = makeClipStore({ capSec: 300, now: () => Date.now() / 1000 })
 // recapEnabled = a Gemini key exists on this computer AND the Settings switch is on. The
 // switch defaults OFF: with a key in the environment this used to send a clip of the show's
 // audio to Google on every sale with nowhere for the answer to go (AI_UI hides the list) —
@@ -569,7 +572,7 @@ let geminiKeyPresent = false
 let aiTranscribePref = localStorage.getItem(AI_PREF_KEY) === '1'
 let recapEnabled = false
 let transcribing = false
-let segmentTimer: ReturnType<typeof setInterval> | undefined
+let watchedRoomId: string | null = null
 interface Recap {
   head: string
   lot: string
@@ -598,19 +601,22 @@ function idIsWeak(r: Recap): boolean {
 }
 const recaps: Recap[] = []
 
-function cycleRecorder() {
+function startRecorder(): void {
   if (!astream) return
-  recChunks = []
-  try { rec = new MediaRecorder(astream, { mimeType: 'audio/webm' }) } catch { rec = new MediaRecorder(astream) }
-  rec.ondataavailable = (e) => { if (e.data.size) recChunks.push(e.data) }
-  rec.onstop = () => {
-    const blob = new Blob(recChunks, { type: 'audio/webm' })
-    const r = onStopResolve
-    onStopResolve = null
-    cycleRecorder()
-    if (r) r(blob)
-  }
-  rec.start(1000)
+  const r = (() => { try { return new MediaRecorder(astream, { mimeType: 'audio/webm' }) } catch { return new MediaRecorder(astream) } })()
+  // One continuous recording. The timeslice makes ondataavailable fire every second, and each
+  // second lands in the store. Never stop and restart it to cut a clip: the store does that.
+  r.ondataavailable = (e) => { if (e.data.size) clipStore.push(e.data, 1) }
+  rec = r
+  r.start(1000)
+}
+/** Drop the recorder without letting its final flush reach the store. */
+function haltRecorder(): void {
+  const r = rec
+  rec = null
+  if (!r) return
+  r.ondataavailable = null
+  try { if (r.state !== 'inactive') r.stop() } catch { /* already stopped */ }
 }
 function startAudioCapture(): void {
   // Off means off: no recorder exists, so there is no clip to send.
@@ -621,20 +627,24 @@ function startAudioCapture(): void {
   const tracks = stream?.getAudioTracks() ?? []
   if (!tracks.length) return
   astream = new MediaStream(tracks)
-  cycleRecorder()
-  segmentTimer = setInterval(() => { if (rec?.state === 'recording' && !onStopResolve) rec.stop() }, 30000) // rolling ≤30s segments
+  startRecorder()
 }
 function stopAudioCapture(): void {
-  if (segmentTimer) { clearInterval(segmentTimer); segmentTimer = undefined }
-  const r = rec
-  astream = null // cycleRecorder (rec.onstop) will not start a new segment
-  rec = null
-  recChunks = []
-  try { if (r && r.state !== 'inactive') r.stop() } catch { /* already stopped */ }
+  astream = null
+  haltRecorder()
+  clipStore.reset() // a later recorder writes a fresh container header; old chunks must not be spliced to it
 }
-function grabClip(): Promise<Blob | null> {
-  if (!rec || rec.state !== 'recording') return Promise.resolve(null)
-  return new Promise((resolve) => { onStopResolve = resolve; rec!.stop() })
+/** A different show: forget the last one's audio, and restart the recorder so the new buffer begins
+ *  at a container header rather than mid-stream. */
+function resetClipBuffer(): void {
+  haltRecorder()
+  clipStore.reset()
+  startRecorder()
+}
+/** The most recent `sec` seconds of buffered audio (whole chunks, so a little more), or null. */
+function recentClip(sec: number): Blob | null {
+  const end = Date.now() / 1000
+  return clipStore.extract({ startEpochSec: end - sec, endEpochSec: end })?.blob ?? null
 }
 
 /** The five fields as a label/value grid — same order and labels as the web app's identity card. */
@@ -850,7 +860,7 @@ function renderIdentifications() {
   }
 }
 async function transcribeSale(s: Sale) {
-  // Acquire the capture lock BEFORE the first await. grabClip() is slow, so checking
+  // Acquire the capture lock BEFORE the first await. Reading the clip back is async, so checking
   // the flag here but only setting it after that await let a burst of sales (e.g. the
   // connect-time backfill firing several 'sales' events in one tick) all pass the guard
   // and fire concurrent Gemini calls. Set-before-await serializes them; the extras drop.
@@ -858,7 +868,7 @@ async function transcribeSale(s: Sale) {
   transcribing = true
   let entry: Recap | undefined
   try {
-    const clip = await grabClip()
+    const clip = recentClip(30)
     if (!clip || clip.size < 2000) return
     entry = {
       head: `${s.productName.slice(0, 30)} — @${s.buyer.handle ?? s.buyer.username}`,
@@ -891,7 +901,7 @@ async function transcribeProduct(productId: string, productName: string): Promis
   productTxBusy.add(productId)
   renderProductsTable()
   try {
-    const clip = await grabClip()
+    const clip = recentClip(30)
     if (!clip || clip.size < 2000) return false
     const audio = new Uint8Array(await clip.arrayBuffer())
     const res = await window.recapAPI.transcribe({ audio, productName, structured: true })
@@ -1727,6 +1737,8 @@ window.ttLive.onEvent((ev: LiveEvent) => {
     }
     case 'room':
       $('room').textContent = ev.roomId.slice(-8)
+      if (watchedRoomId !== null && ev.roomId !== watchedRoomId) resetClipBuffer() // new show: never inherit the last one's audio
+      watchedRoomId = ev.roomId
       if (ev.createdAt) liveStartedAt = ev.createdAt // actual go-live for the elapsed timer
       break
     case 'session':
