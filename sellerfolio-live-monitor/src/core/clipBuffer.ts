@@ -12,10 +12,10 @@ export type ClipWindow = {
   truncated: boolean
 }
 
+// The cap lives in pruneChunks; this works with whatever chunks it is given (do not add a cap parameter).
 export function createClipWindow(
   chunks: ChunkMeta[],
   want: { startEpochSec: number; endEpochSec: number },
-  _capSec: number,
 ): ClipWindow | null {
   const covering = chunks.filter(
     (c) => c.startEpochSec < want.endEpochSec && c.startEpochSec + c.durationSec > want.startEpochSec,
