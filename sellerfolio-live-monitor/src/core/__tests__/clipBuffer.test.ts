@@ -41,4 +41,10 @@ describe('pruneChunks', () => {
     expect(kept).toHaveLength(300)
     expect(kept[0]!.seq).toBe(300) // oldest dropped
   })
+
+  // Pins the duration SUM: counting chunks would keep 10 here, not 3.
+  it('caps by total duration, not by chunk count', () => {
+    const kept = pruneChunks(chunks(10, 1000, 30), 100) // 10 x 30s chunks, 100s cap
+    expect(kept.map((c) => c.seq)).toEqual([7, 8, 9])
+  })
 })

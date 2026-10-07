@@ -12,6 +12,8 @@ export type ClipWindow = {
   truncated: boolean
 }
 
+// startEpochSec is the real clip start, but chunks[0] may begin EARLIER: a consumer concatenating
+// the chunks must trim the lead-in (startEpochSec - chunks[0].startEpochSec).
 // The cap lives in pruneChunks; this works with whatever chunks it is given (do not add a cap parameter).
 export function createClipWindow(
   chunks: ChunkMeta[],
