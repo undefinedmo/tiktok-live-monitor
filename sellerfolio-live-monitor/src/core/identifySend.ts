@@ -39,6 +39,19 @@ export const MAX_IDENTIFY_ATTEMPTS = 3
 /** Waits before retry 1 and retry 2. Short: the sale's lot is already behind the host. */
 export const RETRY_BACKOFF_MS: readonly number[] = [2000, 5000]
 
+/**
+ * The circuit breaker: this many CONSECUTIVE transport failures (a timeout, or the worker not being
+ * reachable at all) open it. Two, not more: each failure can cost the whole 45 s deadline, so the
+ * first sale already pays for one, and a second in a row is not a blip a retry will fix.
+ */
+export const BREAKER_THRESHOLD = 2
+/**
+ * How long it stays open before ONE probe is let through. Thirty seconds: long enough that a down
+ * worker is not hammered, short enough that a tailscale blip (or a worker restart) does not cost
+ * more than a sale or two once it is back. Measured gaps between sales run 20 s and up.
+ */
+export const BREAKER_COOLDOWN_MS = 30_000
+
 /** An ExtractedClip with the Blob flattened to bytes, which is what survives Electron IPC. */
 export type WireClip = Omit<ExtractedClip, 'blob'> & { bytes: Uint8Array<ArrayBuffer> }
 
@@ -119,6 +132,72 @@ export async function sendIdentify(args: {
   return postIdentify(req, { fetch: args.fetch, timeoutMs: args.timeoutMs })
 }
 
+/**
+ * Did the worker fail to ANSWER? A timeout or an unreachable address. A 4xx or 5xx is an answer from
+ * a reachable server and is not a transport failure; neither is a failure raised before any network
+ * call, nor the breaker's own fast failure.
+ */
+export function isTransportFailure(o: { status: string; reason?: string }): boolean {
+  return o.status === 'failed' && (o.reason === 'timeout' || o.reason === 'network_error')
+}
+
+// Failures that say nothing about whether the worker is reachable. (The breaker's own fast failure
+// never gets here: it returns before the call is classified.)
+const NEUTRAL_REASONS = new Set(['bad_request_local', 'attempt_threw'])
+
+export type Breaker = {
+  /** Open and still cooling down: calls fail fast. False once a probe may go through. */
+  isOpen: () => boolean
+  /** Run `send` unless the breaker is open, in which case fail at once with `worker_unreachable`. */
+  guard: (send: () => Promise<IdentifyAnswer>) => Promise<IdentifyAnswer>
+}
+
+/**
+ * A circuit breaker around the POST. An outage then costs ONE fast failure per sale instead of the
+ * full retry budget (3 x 45 s), which at the measured sale pace backs the queue up without end.
+ * `threshold` consecutive transport failures open it; while open every call fails at once without
+ * touching the network; after `cooldownMs` exactly one probe is let through while everyone else
+ * still fails fast. A real answer of any kind (even a 4xx) from the probe closes it; a transport
+ * failure reopens it for another full cooldown. A failure that never reached the network (bad local
+ * request) neither counts nor closes. The fast failure is `retryable: false`, so a sale that hits it
+ * ends there; Retry on the row sends it again once the worker is back.
+ */
+export function makeBreaker(opts: { threshold: number; cooldownMs: number; now: () => number }): Breaker {
+  let consecutive = 0
+  let openUntil: number | null = null // non-null: open (or half open, awaiting the probe)
+  let probing = false
+  const open = () => { openUntil = opts.now() + opts.cooldownMs }
+  return {
+    isOpen: () => openUntil !== null && opts.now() < openUntil,
+    async guard(send) {
+      let probe = false
+      if (openUntil !== null) {
+        if (opts.now() < openUntil || probing) return failed('worker_unreachable', false)
+        probing = true
+        probe = true
+      }
+      let out: IdentifyAnswer
+      try {
+        out = await send()
+      } catch {
+        out = failed('network_error', true)
+      } finally {
+        if (probe) probing = false
+      }
+      if (isTransportFailure(out)) {
+        consecutive++
+        if (probe || (openUntil === null && consecutive >= opts.threshold)) open()
+      } else if (out.status === 'failed' && out.reason !== undefined && NEUTRAL_REASONS.has(out.reason)) {
+        if (probe) open()
+      } else {
+        consecutive = 0
+        openUntil = null
+      }
+      return out
+    },
+  }
+}
+
 export type RetryOptions = {
   /** Total tries, the first included. A positive integer. */
   maxAttempts: number
@@ -167,22 +246,29 @@ export function makeIdentifyRun<J>(deps: {
   shouldContinue: (job: J) => boolean
   /** Default: the POST's own deadline plus a margin for the IPC hop. */
   backstopMs?: number
+  /** Fails fast while the worker is unreachable, and stops the retries that would only add to it. */
+  breaker?: Breaker
 }): (job: J) => Promise<IdentifyAnswer & { tries: number }> {
   const backstopMs = deps.backstopMs ?? IDENTIFY_TIMEOUT_MS + 10_000
   return (job) =>
     identifyWithRetry(
       (n) => {
-        let timer: ReturnType<typeof setTimeout> | undefined
-        const late = new Promise<IdentifyAnswer>((resolve) => {
-          timer = setTimeout(() => resolve(failed('timeout', true)), backstopMs)
-        })
-        return Promise.race([deps.send(job, n), late]).finally(() => clearTimeout(timer))
+        const attempt = () => {
+          let timer: ReturnType<typeof setTimeout> | undefined
+          const late = new Promise<IdentifyAnswer>((resolve) => {
+            timer = setTimeout(() => resolve(failed('timeout', true)), backstopMs)
+          })
+          return Promise.race([deps.send(job, n), late]).finally(() => clearTimeout(timer))
+        }
+        // The breaker sees the raced result, so a hung IPC send counts as a transport failure too.
+        return deps.breaker ? deps.breaker.guard(attempt) : attempt()
       },
       {
         maxAttempts: deps.maxAttempts,
         backoffMs: deps.backoffMs,
         sleep: deps.sleep,
-        shouldContinue: () => deps.shouldContinue(job),
+        // Once the breaker has opened another try would only fail fast: stop, and spend no sleep.
+        shouldContinue: () => deps.shouldContinue(job) && !deps.breaker?.isOpen(),
       },
     )
 }

@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  BREAKER_COOLDOWN_MS,
+  BREAKER_THRESHOLD,
   IDENTIFY_TIMEOUT_MS,
   MAX_IDENTIFY_ATTEMPTS,
   RETRY_BACKOFF_MS,
   fromWireClip,
   identifyBaseUrlOk,
   identifyWithRetry,
+  isTransportFailure,
+  makeBreaker,
   makeIdentifyRun,
   postIdentify,
   sendIdentify,
@@ -445,4 +449,259 @@ describe('identifyBaseUrlOk', () => {
     'http://a100.68.11.76', // text before the address
     'ftp://100.68.11.76', 'not a url', '', 'http://100.68.11.76.evil.com',
   ])('refuses %s', (u) => expect(identifyBaseUrlOk(u)).toBe(false))
+})
+
+describe('isTransportFailure', () => {
+  it('is true for the worker being unreachable or not answering', () => {
+    expect(isTransportFailure(failedWith('timeout'))).toBe(true)
+    expect(isTransportFailure(failedWith('network_error'))).toBe(true)
+  })
+  // A 4xx / 5xx is a real answer from a reachable server: it must not open the breaker.
+  it.each(['bad_token', 'http_503', 'live_identify_unavailable', 'identification_failed', 'audio_too_large', 'bad_request_local', 'worker_unreachable'])(
+    'is false for the answer %s',
+    (reason) => expect(isTransportFailure(failedWith(reason))).toBe(false),
+  )
+  it('is false for an answer that is not a failure', () => {
+    expect(isTransportFailure({ status: 'identified' })).toBe(false)
+    expect(isTransportFailure({ status: 'skipped', reason: 'timeout' })).toBe(false)
+  })
+})
+
+describe('makeBreaker', () => {
+  it('names its constants: two transport failures in a row, thirty seconds', () => {
+    expect(BREAKER_THRESHOLD).toBe(2)
+    expect(BREAKER_COOLDOWN_MS).toBe(30_000)
+  })
+
+  const setup = (over: { threshold?: number; cooldownMs?: number } = {}) => {
+    let t = 1_000_000
+    const breaker = makeBreaker({ threshold: 3, cooldownMs: 1000, now: () => t, ...over })
+    return { breaker, advance: (ms: number) => { t += ms } }
+  }
+  const call = (b: ReturnType<typeof makeBreaker>, answer: IdentifyAnswer | (() => Promise<IdentifyAnswer>)) => {
+    const send = vi.fn(typeof answer === 'function' ? answer : async () => answer)
+    return { send, result: b.guard(send) }
+  }
+
+  it('passes calls through while closed', async () => {
+    const { breaker } = setup()
+    const { send, result } = call(breaker, { status: 'identified' })
+    expect(await result).toEqual({ status: 'identified' })
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(breaker.isOpen()).toBe(false)
+  })
+
+  it('opens after the threshold of consecutive transport failures, and then fails fast without calling', async () => {
+    const { breaker } = setup()
+    for (let i = 0; i < 3; i++) {
+      expect(breaker.isOpen()).toBe(false)
+      expect(await call(breaker, failedWith('timeout')).result).toMatchObject({ reason: 'timeout' })
+    }
+    expect(breaker.isOpen()).toBe(true)
+    const { send, result } = call(breaker, { status: 'identified' })
+    expect(await result).toEqual({ status: 'failed', reason: 'worker_unreachable', retryable: false })
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('one fewer than the threshold does not open it', async () => {
+    const { breaker } = setup()
+    await call(breaker, failedWith('timeout')).result
+    await call(breaker, failedWith('network_error')).result
+    expect(breaker.isOpen()).toBe(false)
+  })
+
+  it('does not count a real answer, and a real answer resets the run', async () => {
+    const { breaker } = setup({ threshold: 2 })
+    await call(breaker, failedWith('timeout')).result
+    await call(breaker, failedWith('http_503')).result // reachable: resets
+    await call(breaker, failedWith('timeout')).result
+    expect(breaker.isOpen()).toBe(false)
+    await call(breaker, failedWith('network_error')).result
+    expect(breaker.isOpen()).toBe(true)
+  })
+
+  it('a success resets the run', async () => {
+    const { breaker } = setup({ threshold: 2 })
+    await call(breaker, failedWith('timeout')).result
+    await call(breaker, { status: 'identified' }).result
+    await call(breaker, failedWith('timeout')).result
+    expect(breaker.isOpen()).toBe(false)
+  })
+
+  it('does not let a failure that never reached the network reset or count', async () => {
+    const { breaker } = setup({ threshold: 2 })
+    await call(breaker, failedWith('timeout')).result
+    await call(breaker, failedWith('bad_request_local', false)).result // neutral
+    await call(breaker, failedWith('timeout')).result
+    expect(breaker.isOpen()).toBe(true)
+  })
+
+  it('counts a send that throws as a transport failure', async () => {
+    const { breaker } = setup({ threshold: 2 })
+    const boom = async (): Promise<IdentifyAnswer> => { throw new Error('ipc closed') }
+    expect(await call(breaker, boom).result).toMatchObject({ status: 'failed', reason: 'network_error' })
+    await call(breaker, boom).result
+    expect(breaker.isOpen()).toBe(true)
+  })
+
+  it('stays open until the cooldown has fully elapsed, then lets exactly one probe through', async () => {
+    const { breaker, advance } = setup({ threshold: 1, cooldownMs: 1000 })
+    await call(breaker, failedWith('timeout')).result
+    advance(999)
+    expect(breaker.isOpen()).toBe(true)
+    expect((await call(breaker, { status: 'identified' }).result)).toMatchObject({ reason: 'worker_unreachable' })
+    advance(1)
+    let release!: (a: IdentifyAnswer) => void
+    const probe = call(breaker, () => new Promise<IdentifyAnswer>((r) => { release = r }))
+    expect(probe.send).toHaveBeenCalledTimes(1)
+    // while the probe is in flight everyone else still fails fast
+    const other = call(breaker, { status: 'identified' })
+    expect(await other.result).toMatchObject({ reason: 'worker_unreachable' })
+    expect(other.send).not.toHaveBeenCalled()
+    release({ status: 'identified' })
+    expect(await probe.result).toEqual({ status: 'identified' })
+    expect(breaker.isOpen()).toBe(false)
+    expect((await call(breaker, { status: 'identified' }).result).status).toBe('identified') // closed again
+  })
+
+  it('a probe that fails reopens it for a full cooldown', async () => {
+    const { breaker, advance } = setup({ threshold: 1, cooldownMs: 1000 })
+    await call(breaker, failedWith('timeout')).result
+    advance(1000)
+    await call(breaker, failedWith('timeout')).result // the probe fails
+    expect(breaker.isOpen()).toBe(true)
+    advance(999)
+    expect(breaker.isOpen()).toBe(true)
+    const again = call(breaker, { status: 'identified' })
+    expect(await again.result).toMatchObject({ reason: 'worker_unreachable' })
+    expect(again.send).not.toHaveBeenCalled()
+    advance(1)
+    expect((await call(breaker, { status: 'identified' }).result).status).toBe('identified')
+  })
+
+  it('a probe that gets a real answer (even a 4xx) closes it: the worker is reachable', async () => {
+    const { breaker, advance } = setup({ threshold: 1, cooldownMs: 1000 })
+    await call(breaker, failedWith('timeout')).result
+    advance(1000)
+    await call(breaker, failedWith('bad_token', false)).result
+    expect(breaker.isOpen()).toBe(false)
+  })
+
+  it('a probe that never reached the network does not close it', async () => {
+    const { breaker, advance } = setup({ threshold: 1, cooldownMs: 1000 })
+    await call(breaker, failedWith('timeout')).result
+    advance(1000)
+    await call(breaker, failedWith('bad_request_local', false)).result
+    expect(breaker.isOpen()).toBe(true)
+  })
+
+  it('reports closed to the retry loop as soon as the cooldown has elapsed, so a probe may go', async () => {
+    const { breaker, advance } = setup({ threshold: 1, cooldownMs: 1000 })
+    await call(breaker, failedWith('timeout')).result
+    advance(1000)
+    expect(breaker.isOpen()).toBe(false)
+  })
+
+  it('a call already in flight when the breaker opens does not push the cooldown back when it fails', async () => {
+    const { breaker, advance } = setup({ threshold: 1, cooldownMs: 1000 })
+    let failLate!: (a: IdentifyAnswer) => void
+    const slow = call(breaker, () => new Promise<IdentifyAnswer>((r) => { failLate = r }))
+    await call(breaker, failedWith('timeout')).result // opens it
+    advance(500)
+    failLate(failedWith('timeout'))
+    await slow.result
+    advance(500) // the cooldown is measured from the failure that opened it
+    const probe = call(breaker, { status: 'identified' })
+    expect((await probe.result).status).toBe('identified')
+    expect(probe.send).toHaveBeenCalledTimes(1)
+  })
+
+  it('once a probe has closed it, calls behind it go through together rather than one at a time', async () => {
+    const { breaker, advance } = setup({ threshold: 1, cooldownMs: 1000 })
+    await call(breaker, failedWith('timeout')).result
+    advance(1000)
+    await call(breaker, { status: 'identified' }).result // the probe succeeds
+    const releases: Array<(a: IdentifyAnswer) => void> = []
+    const first = call(breaker, () => new Promise<IdentifyAnswer>((r) => releases.push(r)))
+    const second = call(breaker, () => new Promise<IdentifyAnswer>((r) => releases.push(r)))
+    expect(first.send).toHaveBeenCalledTimes(1)
+    expect(second.send).toHaveBeenCalledTimes(1)
+    releases.forEach((r) => r({ status: 'identified' }))
+    await Promise.all([first.result, second.result])
+  })
+
+  it('a fast failure is not itself counted, and does not push the cooldown back', async () => {
+    const { breaker, advance } = setup({ threshold: 1, cooldownMs: 1000 })
+    await call(breaker, failedWith('timeout')).result
+    advance(500)
+    await call(breaker, { status: 'identified' }).result // fast-failed, not called
+    advance(500) // cooldown measured from the failure, not from the fast failure
+    expect((await call(breaker, { status: 'identified' }).result).status).toBe('identified')
+  })
+})
+
+describe('an outage costs one fast failure per sale', () => {
+  type J = { orderId: string }
+  const sleep = async () => {}
+  const outage = () => {
+    let t = 0
+    const breaker = makeBreaker({ threshold: 2, cooldownMs: 30_000, now: () => t })
+    const send = vi.fn(async (): Promise<IdentifyAnswer> => failedWith('timeout'))
+    const run = makeIdentifyRun<J>({ send, maxAttempts: 3, backoffMs: [1, 1], sleep, shouldContinue: () => true, breaker })
+    return { breaker, send, run, advance: (ms: number) => { t += ms } }
+  }
+
+  it('after the breaker opens, every later sale fails without touching the network', async () => {
+    const { send, run } = outage()
+    const settled: Array<[string, string | undefined, number]> = []
+    const q = makeIdentifyQueue<J, IdentifyAnswer & { tries: number }>({ run, onSettled: (j, o) => settled.push([j.orderId, o.reason, (o as { tries?: number }).tries ?? 0]) })
+    for (const id of ['a', 'b', 'c', 'd', 'e']) q.enqueue({ orderId: id })
+    await q.drain()
+    // the first sale spends the threshold (2 sends) finding out; it does NOT burn its third try
+    expect(send).toHaveBeenCalledTimes(2)
+    expect(settled).toEqual([
+      ['a', 'timeout', 2],
+      ['b', 'worker_unreachable', 1],
+      ['c', 'worker_unreachable', 1],
+      ['d', 'worker_unreachable', 1],
+      ['e', 'worker_unreachable', 1],
+    ])
+  })
+
+  it('recovers: after the cooldown one sale probes, and the sales behind it go through', async () => {
+    const { send, run, advance } = outage()
+    const settled: string[] = []
+    const q = makeIdentifyQueue<J, IdentifyAnswer & { tries: number }>({ run, onSettled: (j, o) => settled.push(`${j.orderId}:${o.status}`) })
+    q.enqueue({ orderId: 'a' })
+    await q.drain()
+    send.mockImplementation(async () => ({ status: 'identified' }) as IdentifyAnswer) // the worker is back
+    q.enqueue({ orderId: 'b' })
+    await q.drain()
+    expect(settled).toEqual(['a:failed', 'b:failed']) // still inside the cooldown: fast failure
+    advance(30_000)
+    q.enqueue({ orderId: 'c' })
+    q.enqueue({ orderId: 'd' })
+    await q.drain()
+    expect(settled).toEqual(['a:failed', 'b:failed', 'c:identified', 'd:identified'])
+  })
+
+  it('counts a hung IPC send (the backstop) as a transport failure', async () => {
+    const breaker = makeBreaker({ threshold: 2, cooldownMs: 30_000, now: () => 0 })
+    const send = vi.fn(() => never())
+    const run = makeIdentifyRun<J>({ send, maxAttempts: 3, backoffMs: [1, 1], sleep, shouldContinue: () => true, backstopMs: 5, breaker })
+    const out = await run({ orderId: 'a' })
+    expect(out).toMatchObject({ status: 'failed', reason: 'timeout', tries: 2 })
+    expect(breaker.isOpen()).toBe(true)
+  })
+
+  it('does not spend a retry sleep once the breaker has opened', async () => {
+    const sleeps: number[] = []
+    const breaker = makeBreaker({ threshold: 1, cooldownMs: 30_000, now: () => 0 })
+    const run = makeIdentifyRun<J>({
+      send: async () => failedWith('timeout'), maxAttempts: 3, backoffMs: [1000, 1000],
+      sleep: async (ms) => { sleeps.push(ms) }, shouldContinue: () => true, breaker,
+    })
+    expect(await run({ orderId: 'a' })).toMatchObject({ reason: 'timeout', tries: 1 })
+    expect(sleeps).toEqual([])
+  })
 })

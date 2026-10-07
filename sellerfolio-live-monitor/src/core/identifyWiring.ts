@@ -20,9 +20,11 @@ const latest = (times: number[]): number | null => (times.length ? Math.max(...t
 /**
  * The boundaries the server plans its window from.
  *
- * - `auctionStartEpochSec`: the latest `auction_start` at or before the sale. If this lot's own
- *   start was never seen it is the PREVIOUS lot's, which only ever widens the window; the server
- *   clamps at `prevBoundaryEpochSec`, which is why that wall must be right.
+ * - `auctionStartEpochSec`: the latest `auction_start` at or before the sale, UNLESS it is older than
+ *   the wall (`prevBoundaryEpochSec`). Then it belongs to an earlier lot (this lot's own start was never seen), and
+ *   sending it would hand the server the previous lot's window -- the most common identification
+ *   failure measured (71% of errors on THE ALO VAULT 10-04). It is dropped (null) and the
+ *   previous-sale wall does the work. Not left to the server's clamp.
  * - `prevBoundaryEpochSec`: the wall. The previous auction's END when one was seen at or before this
  *   lot started, else the previous sale. Measured on a real show journal: 25 `auction_end` events
  *   against 919 sales, so the previous-sale fallback is the common path. An end is only usable
@@ -35,15 +37,18 @@ export function boundariesForSale(
   journal: readonly JournalEvent[],
 ): SaleBoundaries {
   const at = sale.atEpochSec
-  const start = latest(journal.filter((e) => e.type === 'auction_start' && e.atEpochSec <= at).map((e) => e.atEpochSec))
-  const end =
-    start === null
-      ? null
-      : latest(journal.filter((e) => e.type === 'auction_end' && e.atEpochSec <= start).map((e) => e.atEpochSec))
+  const latestStart = latest(journal.filter((e) => e.type === 'auction_start' && e.atEpochSec <= at).map((e) => e.atEpochSec))
   const prevSale = latest(
     journal.filter((e) => e.type === 'sale' && e.orderId !== sale.orderId && e.atEpochSec < at).map((e) => e.atEpochSec),
   )
-  return { saleEpochSec: at, auctionStartEpochSec: start, prevBoundaryEpochSec: end ?? prevSale }
+  const end =
+    latestStart === null
+      ? null
+      : latest(journal.filter((e) => e.type === 'auction_end' && e.atEpochSec <= latestStart).map((e) => e.atEpochSec))
+  const wall = end ?? prevSale
+  // `end` is at or before the start by construction, so only the previous-sale wall can drop it.
+  const start = latestStart !== null && wall !== null && latestStart < wall ? null : latestStart
+  return { saleEpochSec: at, auctionStartEpochSec: start, prevBoundaryEpochSec: wall }
 }
 
 /** Audio kept ahead of the earliest boundary, so a word spoken as the card flipped is not cut. */
@@ -83,6 +88,7 @@ const FAILURE_TEXT: Record<string, string> = {
   'order-not-found': 'The server does not have this order yet',
   no_audio: 'No audio was recorded for this lot',
   bad_request_local: 'The sale times were not valid, so nothing was sent',
+  worker_unreachable: 'The identification server is unreachable right now -- press Retry once it is back',
 }
 
 /**

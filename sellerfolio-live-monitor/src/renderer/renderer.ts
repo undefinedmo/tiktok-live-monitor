@@ -8,7 +8,7 @@ import { labelCode } from '../core/labelCode'
 import { makeClipStore, type ExtractedClip } from '../core/clipRecorder'
 import { AuctionJournal } from '../core/auctionJournal'
 import { makeIdentifyQueue } from '../core/identifyQueue'
-import { MAX_IDENTIFY_ATTEMPTS, RETRY_BACKOFF_MS, makeIdentifyRun, serverToLocalSec, toWireClip, type WireClip } from '../core/identifySend'
+import { BREAKER_COOLDOWN_MS, BREAKER_THRESHOLD, MAX_IDENTIFY_ATTEMPTS, RETRY_BACKOFF_MS, makeBreaker, makeIdentifyRun, serverToLocalSec, toWireClip, type WireClip } from '../core/identifySend'
 import type { IdentifyAnswer, IdentifyJob } from '../core/identifyClient'
 import { boundariesForSale, clipRequestFor, viewOutcome, type JournalEvent } from '../core/identifyWiring'
 
@@ -914,6 +914,8 @@ function settleEntry(entry: Recap, outcome: { status: string; reason?: string; t
   entry.text = v.text + (v.status === 'done' && truncated ? ' (the audio buffer began late, so the clip is short)' : '')
   renderAll()
 }
+// Fails fast while the worker is unreachable, so an outage costs one quick failure per sale, not the whole retry budget.
+const identifyBreaker = makeBreaker({ threshold: BREAKER_THRESHOLD, cooldownMs: BREAKER_COOLDOWN_MS, now: () => Date.now() })
 const identifyQueue = makeIdentifyQueue<IdentifyQueueJob, IdentifyAnswer & { tries: number }>({
   run: makeIdentifyRun<IdentifyQueueJob>({
     send: async (job) => {
@@ -927,6 +929,7 @@ const identifyQueue = makeIdentifyQueue<IdentifyQueueJob, IdentifyAnswer & { tri
     backoffMs: RETRY_BACKOFF_MS,
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     shouldContinue: (job) => job.show === showGeneration && recapEnabled,
+    breaker: identifyBreaker,
   }),
   onSettled: (job, outcome) => settleEntry(job.entry, outcome, job.clip.truncated),
   concurrency: IDENTIFY_CONCURRENCY,

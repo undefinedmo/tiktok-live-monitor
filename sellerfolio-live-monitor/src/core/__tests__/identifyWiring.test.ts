@@ -11,13 +11,51 @@ import {
 describe('boundariesForSale', () => {
   it('prefers the auction_start event, and falls back to the previous sale', () => {
     const journal = [
-      { type: 'auction_start', atEpochSec: 1000, orderId: null },
+      { type: 'auction_start', atEpochSec: 1050, orderId: null },
       { type: 'sale', atEpochSec: 1040, orderId: 'prev' },
     ] as const
     const b = boundariesForSale({ orderId: 'cur', atEpochSec: 1100 }, [...journal])
     expect(b.saleEpochSec).toBe(1100)
-    expect(b.auctionStartEpochSec).toBe(1000)
+    expect(b.auctionStartEpochSec).toBe(1050)
     expect(b.prevBoundaryEpochSec).toBe(1040) // the previous sale is the wall
+  })
+
+  // CHANGED FROM THE BRIEF. The brief's first test used a start at 1000 with a previous sale at 1040
+  // and asserted the start was returned. A start BEFORE the previous sale belongs to an earlier lot
+  // (this lot's own start was never seen): sending it hands the server the previous lot's window.
+  // That is the most common identification failure measured (THE ALO VAULT 10-04: 71% of errors were
+  // the previous lot), so it is dropped here rather than left to the server's clamp.
+  it('drops an auction_start that is older than the previous sale: it is an earlier lot\'s', () => {
+    const b = boundariesForSale({ orderId: 'cur', atEpochSec: 1100 }, [
+      { type: 'auction_start', atEpochSec: 1000, orderId: null },
+      { type: 'sale', atEpochSec: 1040, orderId: 'prev' },
+    ])
+    expect(b.auctionStartEpochSec).toBeNull()
+    expect(b.prevBoundaryEpochSec).toBe(1040) // the previous-sale fallback still does its job
+  })
+
+  // The wall the start is compared with is the REAL one. When the previous auction's end is known the
+  // start is this lot's own even though the previous order row landed a few seconds after it.
+  it('keeps a start that precedes the previous sale when a known auction_end walls it off', () => {
+    const b = boundariesForSale({ orderId: 'cur', atEpochSec: 1100 }, [
+      { type: 'auction_end', atEpochSec: 1034 },
+      { type: 'auction_start', atEpochSec: 1038 },
+      { type: 'sale', atEpochSec: 1040, orderId: 'prev' },
+    ])
+    expect(b.auctionStartEpochSec).toBe(1038)
+    expect(b.prevBoundaryEpochSec).toBe(1034)
+  })
+
+  it('keeps an auction_start that is exactly at the previous sale', () => {
+    const b = boundariesForSale({ orderId: 'cur', atEpochSec: 1100 }, [
+      { type: 'auction_start', atEpochSec: 1040 },
+      { type: 'sale', atEpochSec: 1040, orderId: 'prev' },
+    ])
+    expect(b.auctionStartEpochSec).toBe(1040)
+  })
+
+  it('keeps an auction_start when there is no wall to compare it with', () => {
+    expect(boundariesForSale({ orderId: 'cur', atEpochSec: 1100 }, [{ type: 'auction_start', atEpochSec: 1000 }]).auctionStartEpochSec).toBe(1000)
   })
 
   // Measured: auction_end fires for a minority of lots (25 ends against 919 sales on show
@@ -72,10 +110,10 @@ describe('boundariesForSale', () => {
       { type: 'sale', atEpochSec: 1200, orderId: 'future' },
       { type: 'sale', atEpochSec: 900, orderId: 'old' },
       { type: 'auction_start', atEpochSec: 1300 },
-      { type: 'auction_start', atEpochSec: 1010 },
+      { type: 'auction_start', atEpochSec: 1095 },
       { type: 'auction_start', atEpochSec: 980 },
     ])
-    expect(b.auctionStartEpochSec).toBe(1010)
+    expect(b.auctionStartEpochSec).toBe(1095)
     expect(b.prevBoundaryEpochSec).toBe(1090)
   })
 
@@ -165,6 +203,7 @@ describe('viewOutcome', () => {
     ['order-not-found', /order yet/i],
     ['order-sale-mismatch', /belongs/i],
     ['bad_request_local', /not valid/i],
+    ['worker_unreachable', /Retry/],
   ])('explains failure %s in words, not with the raw code', (reason, re) => {
     const v = viewOutcome({ status: 'failed', reason })
     expect(v.status).toBe('error')
