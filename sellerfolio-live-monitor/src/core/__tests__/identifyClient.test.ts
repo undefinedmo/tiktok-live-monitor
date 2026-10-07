@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { buildIdentifyRequest, isRetryable, readIdentifyResponse, type IdentifyAnswer, type IdentifyOutcome } from '../identifyClient'
+import type { ExtractedClip } from '../clipRecorder'
 import { makeIdentifyQueue } from '../identifyQueue'
 
 const job = {
@@ -9,7 +10,8 @@ const job = {
   auctionStartEpochSec: 1699999970,
   prevBoundaryEpochSec: null,
 }
-const clip = { blob: new Blob(['x']), startEpochSec: 1699999965, durationSec: 40, truncated: false }
+// Built the way the clip store returns it: the bytes' own start/duration, plus how they relate to the request.
+const clip: ExtractedClip = { blob: new Blob(['x']), startEpochSec: 1699999965, durationSec: 40, leadInSec: 2, truncated: false }
 const cfg = { baseUrl: 'http://100.68.11.76:8099', token: 't' }
 
 const metaOf = (form: FormData) => JSON.parse(form.get('meta') as string) as Record<string, unknown>
@@ -80,15 +82,29 @@ describe('buildIdentifyRequest', () => {
     expect(() => buildIdentifyRequest({ ...job, saleEpochSec: NaN }, clip, cfg)).toThrow(/saleEpochSec/)
   })
 
-  it('never puts the token anywhere but the Authorization header', () => {
-    const { url, form } = buildIdentifyRequest(job, clip, { ...cfg, token: 'SECRET-TOKEN' })
+  it('never puts the token anywhere but the Authorization header', async () => {
+    const { url, headers, form } = buildIdentifyRequest(job, clip, { ...cfg, token: 'SECRET-TOKEN' })
     expect(url).not.toContain('SECRET-TOKEN')
-    expect(form.get('meta') as string).not.toContain('SECRET-TOKEN')
-    try {
-      buildIdentifyRequest({ ...job, saleEpochSec: 1e15 }, clip, { ...cfg, token: 'SECRET-TOKEN' })
-    } catch (e) {
-      expect(String(e)).not.toContain('SECRET-TOKEN')
+    expect(headers).toEqual({ Authorization: 'Bearer SECRET-TOKEN' })
+    // Every multipart entry, field or file: a body is logged and stored wherever it travels.
+    const entries = [...form.entries()]
+    expect(entries.map(([k]) => k).sort()).toEqual(['audio', 'meta'])
+    for (const [k, v] of entries) {
+      const text = typeof v === 'string' ? v : await v.text()
+      expect(text, k).not.toContain('SECRET-TOKEN')
+      expect(k).not.toContain('SECRET-TOKEN')
+      if (typeof v !== 'string') expect(v.name, `${k} filename`).not.toContain('SECRET-TOKEN')
     }
+    const thrown = (): unknown => {
+      try {
+        buildIdentifyRequest({ ...job, saleEpochSec: 1e15 }, clip, { ...cfg, token: 'SECRET-TOKEN' })
+      } catch (e) {
+        return e
+      }
+      return undefined
+    }
+    expect(thrown()).toBeInstanceOf(RangeError)
+    expect(String(thrown())).not.toContain('SECRET-TOKEN')
   })
 })
 
@@ -150,6 +166,8 @@ describe('readIdentifyResponse', () => {
     [502, { status: 'failed', reason: 'some_future_code' }, true], // an unknown failure code: bounded retry
     [500, { error: 'boom' }, true],
     [504, '<html>gateway timeout</html>', true], // a proxy's page, not our JSON
+    [408, {}, true],
+    [425, {}, true],
     [429, {}, true],
     [404, {}, false], // wrong host or path: the same request cannot succeed
   ])('status %i %j -> retryable %s', (status, body, retryable) => {

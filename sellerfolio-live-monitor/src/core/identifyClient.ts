@@ -14,12 +14,15 @@ export type IdentifyJob = {
 }
 
 /**
- * The clip to send. It is the extracted clip itself -- not loose numbers -- because the clip store
- * does not trim: `startEpochSec` / `durationSec` describe the BYTES in `blob`, not the window that
- * was asked for, and the server plans against the audio it receives. Sending the requested window
- * with these bytes would put the server up to one chunk off, on the wrong lot.
+ * The clip to send: the extracted clip ITSELF, whole. Not loose numbers and not a pick of its
+ * fields, because the clip store does not trim -- `startEpochSec` / `durationSec` describe the BYTES
+ * in `blob`, not the window that was asked for, and the server plans against the audio it receives.
+ * Hand-building `{blob, startEpochSec: want.start, durationSec: want.end - want.start}` would type-check
+ * and pass every runtime check yet put the server's window on the wrong lot, and nothing short of
+ * parsing the WebM can catch it. Requiring the whole ExtractedClip (with `leadInSec`, `truncated`) is
+ * the only lever: such a literal is visibly wrong. Take it from `extract`, unchanged.
  */
-export type IdentifyClip = Pick<ExtractedClip, 'blob' | 'startEpochSec' | 'durationSec'>
+export type IdentifyClip = ExtractedClip
 
 export type IdentifyConfig = { baseUrl: string; token: string }
 
