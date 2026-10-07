@@ -678,7 +678,10 @@ function resetClipBuffer(): void {
   clipStore.reset()
   startRecorder()
 }
-/** The most recent `sec` seconds of buffered audio (whole chunks, so a little more), or null. */
+/** The most recent `sec` seconds of buffered audio (whole chunks, so a little more), or null.
+ *  NOT the identification window: that is planned per sale by core/clipBuffer + clipRecorder.
+ *  This is a "right now" grab kept ONLY for transcribeProduct (the local-Gemini Products-table click).
+ *  Do not use it for sales and do not grow it: a second window path is how production drifted before. */
 function recentClip(sec: number): Blob | null {
   const end = Date.now() / 1000
   return clipStore.extract({ startEpochSec: end - sec, endEpochSec: end })?.blob ?? null
