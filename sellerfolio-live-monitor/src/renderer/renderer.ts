@@ -5,7 +5,12 @@ import { labelNeedsHtml } from '../electron/zplLabel' // preview-only: which pri
 import { PrintDedup } from '../core/printDedup'
 import { SaleSeed } from '../core/saleSeed'
 import { labelCode } from '../core/labelCode'
-import { makeClipStore } from '../core/clipRecorder'
+import { makeClipStore, type ExtractedClip } from '../core/clipRecorder'
+import { AuctionJournal } from '../core/auctionJournal'
+import { makeIdentifyQueue } from '../core/identifyQueue'
+import { MAX_IDENTIFY_ATTEMPTS, RETRY_BACKOFF_MS, makeIdentifyRun, serverToLocalSec, toWireClip, type WireClip } from '../core/identifySend'
+import type { IdentifyAnswer, IdentifyJob } from '../core/identifyClient'
+import { boundariesForSale, clipRequestFor, viewOutcome, type JournalEvent } from '../core/identifyWiring'
 
 // Structured AI-transcript fields (was core/ledger's LedgerTranscript; the products
 // panel still stores per-product transcripts in memory for the session).
@@ -39,6 +44,10 @@ declare global {
       enabled: () => Promise<{ enabled: boolean; model: string }>
       transcribe: (payload: { audio: Uint8Array; productName?: string; structured?: boolean }) => Promise<{ text?: string; fields?: LedgerTranscript; error?: string }>
       suggestRegex?: (payload: { title: string; want: string }) => Promise<{ regex?: string; flags?: string; explain?: string; error?: string }>
+    }
+    identifyAPI?: {
+      ready: () => Promise<{ ready: boolean }>
+      identify: (payload: { job: IdentifyJob; clip: WireClip }) => Promise<IdentifyAnswer>
     }
     syncAPI?: {
       connection: () => Promise<{ loggedIn: boolean; hasShow: boolean; polling: boolean }>
@@ -571,13 +580,19 @@ const AI_PREF_KEY = 'tt-ai-transcribe'
 let geminiKeyPresent = false
 let aiTranscribePref = localStorage.getItem(AI_PREF_KEY) === '1'
 let recapEnabled = false
-let transcribing = false
+// A capture token is saved, so the worker would accept a clip. Identification does not need the
+// Gemini key any more: the server identifies, and this machine only supplies audio and boundaries.
+let identifyReady = false
+let transcribing = false // the capture lock of transcribeProduct (the local Gemini path) only
 let watchedRoomId: string | null = null
 interface Recap {
   head: string
   lot: string
   price: string
-  status: 'transcribing' | 'done' | 'error'
+  /** `abandoned` is the queue's third outcome: the show ended with this sale still waiting. */
+  status: 'transcribing' | 'done' | 'error' | 'skipped' | 'abandoned'
+  /** Identified by the server, which wrote the identity: this row has no fields to show. */
+  live?: boolean
   text: string
   /** The five SellerFolio fields. main.ts has always returned these; the old UI threw them away. */
   fields?: LedgerTranscript
@@ -596,8 +611,12 @@ function idValue(v: unknown): string | null {
   return !t || /^(not stated|unknown|n\/?a|none|-+)$/i.test(t) ? null : t
 }
 function idIsWeak(r: Recap): boolean {
-  if (r.status !== 'done') return false
+  if (r.status !== 'done' || (r.live && !r.fields)) return false
   return ID_FIELDS.some(([k]) => idValue(r.fields?.[k]) === null)
+}
+/** Anything that ended without an identity: a failure, an empty clip, or a sale the show outlived. */
+function idUnresolved(r: Recap): boolean {
+  return r.status === 'error' || r.status === 'skipped' || r.status === 'abandoned'
 }
 const recaps: Recap[] = []
 
@@ -706,12 +725,10 @@ function idRetryButton(r: Recap, redraw: () => void): HTMLElement {
     }
     if (t) clearTimeout(t)
     armed = false; b.classList.remove('armed')
-    // transcribeSale holds a single capture lock and DROPS a call made while it is busy, so say
-    // so rather than appearing to do nothing. A real queue belongs with the upload work.
-    if (transcribing) { b.textContent = 'busy — try again'; setTimeout(() => { b.textContent = 'Retry' }, 1800); return }
-    if (!r.sale) { b.textContent = 'no audio for this lot'; setTimeout(() => { b.textContent = 'Retry' }, 1800); return }
+    if (!r.sale || !recapEnabled) { b.textContent = recapEnabled ? 'no audio for this lot' : 'audio is off'; setTimeout(() => { b.textContent = 'Retry' }, 1800); return }
     b.textContent = 'Retrying…'
-    void transcribeSale(r.sale).then(redraw)
+    identifySale(r.sale, r)
+    redraw()
   })
   return b
 }
@@ -727,8 +744,10 @@ function idEntry(r: Recap, current: boolean, redraw: () => void): HTMLElement {
   if (r.price) head.appendChild(el('span', 'price', r.price))
   row.appendChild(head)
 
-  if (r.status === 'error') {
+  if (idUnresolved(r)) {
     row.appendChild(el('div', 'recap-text error', '⚠ ' + r.text))
+  } else if (r.live && !r.fields) {
+    if (r.status !== 'transcribing') row.appendChild(el('div', 'recap-text', r.text))
   } else {
     row.appendChild(idFieldGrid(r))
   }
@@ -737,11 +756,11 @@ function idEntry(r: Recap, current: boolean, redraw: () => void): HTMLElement {
     const bar = el('div', 'id-working')
     bar.appendChild(el('i'))
     row.appendChild(bar)
-    row.appendChild(el('div', 'id-why', 'listening to this lot…'))
+    row.appendChild(el('div', 'id-why', r.live ? 'identifying this lot…' : 'listening to this lot…'))
   } else {
     const acts = el('div', 'id-acts')
     acts.appendChild(el('span', 'id-why',
-      r.edited ? 'you corrected this' : r.status === 'error' ? 'identification failed' : weak ? 'some fields were not said' : 'identified'))
+      r.edited ? 'you corrected this' : r.status === 'error' ? 'identification failed' : r.status === 'abandoned' || r.status === 'skipped' ? 'not identified' : weak ? 'some fields were not said' : 'identified'))
     const override = el('button', 'qbtn sm', 'Override')
     override.addEventListener('click', () => { editing.has(r) ? editing.delete(r) : editing.add(r); redraw() })
     acts.appendChild(override)
@@ -784,12 +803,12 @@ function renderRecap() {
   if (count) count.textContent = String(recaps.filter((r) => r.status === 'done').length)
   const chip = document.getElementById('idReviewChip')
   if (chip) {
-    const n = recaps.filter((r) => idIsWeak(r) || r.status === 'error').length
+    const n = recaps.filter((r) => idIsWeak(r) || idUnresolved(r)).length
     chip.textContent = `${n} need review`
     chip.style.display = n ? '' : 'none'
   }
   if (!recaps.length) {
-    const e = el('div', 'mono', recapEnabled ? 'items are identified as they sell…' : 'set GEMINI_API_KEY to enable')
+    const e = el('div', 'mono', recapEnabled ? 'items are identified as they sell…' : identifyReady ? 'turn on Show audio in Settings to identify items' : 'save a capture token in Settings to enable')
     e.style.cssText = 'padding:14px 16px;color:var(--ink-4);font-size:11px;'
     list.appendChild(e)
     return
@@ -818,7 +837,7 @@ function renderIdentifications() {
   if (!body) return
   const q = ((document.getElementById('idSearch') as HTMLInputElement | null)?.value ?? '').trim().toLowerCase()
   const rows = recaps.filter((r) => {
-    if (idFilter === 'review' && !(idIsWeak(r) || r.status === 'error')) return false
+    if (idFilter === 'review' && !(idIsWeak(r) || idUnresolved(r))) return false
     if (idFilter === 'edited' && !r.edited) return false
     if (!q) return true
     return [r.lot, r.head, r.fields?.brand, r.fields?.item].some((v) => (v ?? '').toLowerCase().includes(q))
@@ -826,20 +845,24 @@ function renderIdentifications() {
   body.replaceChildren()
   if (empty) empty.style.display = rows.length ? 'none' : ''
   for (const r of rows) {
-    const tr = el('tr', idIsWeak(r) || r.status === 'error' ? 'flagged' : undefined)
+    const tr = el('tr', idIsWeak(r) || idUnresolved(r) ? 'flagged' : undefined)
     const cell = (text: string | null, cls?: string) => {
       const td = el('td', cls)
       td.appendChild(el('span', text ? undefined : 'id-none', text ?? 'not said'))
       return td
     }
     tr.appendChild(cell(r.lot || '—', 'mono'))
-    tr.appendChild(cell(idValue(r.fields?.brand)))
-    tr.appendChild(cell(idValue(r.fields?.item)))
-    tr.appendChild(cell(idValue(r.fields?.color)))
-    tr.appendChild(cell(idValue(r.fields?.size), 'mono'))
-    tr.appendChild(cell(idValue(r.fields?.retailPrice), 'num mono'))
+    // A lot the server identified has its fields on the server, not here: say so rather than "not said".
+    const fieldText = (k: keyof LedgerTranscript) => (r.live && !r.fields ? '—' : idValue(r.fields?.[k]))
+    tr.appendChild(cell(fieldText('brand')))
+    tr.appendChild(cell(fieldText('item')))
+    tr.appendChild(cell(fieldText('color')))
+    tr.appendChild(cell(fieldText('size'), 'mono'))
+    tr.appendChild(cell(fieldText('retailPrice'), 'num mono'))
     tr.appendChild(cell(r.price || null, 'num mono'))
-    tr.appendChild(cell(r.edited ? 'You corrected it' : r.status === 'error' ? 'Failed' : 'Identified live'))
+    tr.appendChild(cell(r.edited ? 'You corrected it'
+      : r.status === 'error' ? 'Failed' : r.status === 'abandoned' ? 'Not identified (show ended)' : r.status === 'skipped' ? 'Nothing to identify'
+      : r.status === 'transcribing' ? 'Identifying…' : 'Identified live'))
     const acts = el('td')
     const wrap = el('div', 'rowacts')
     const ov = el('button', 'qbtn sm', 'Override')
@@ -859,44 +882,112 @@ function renderIdentifications() {
     }
   }
 }
-async function transcribeSale(s: Sale) {
-  // Acquire the capture lock BEFORE the first await. Reading the clip back is async, so checking
-  // the flag here but only setting it after that await let a burst of sales (e.g. the
-  // connect-time backfill firing several 'sales' events in one tick) all pass the guard
-  // and fire concurrent Gemini calls. Set-before-await serializes them; the extras drop.
-  if (!recapEnabled || transcribing || !window.recapAPI) return
-  transcribing = true
-  let entry: Recap | undefined
-  try {
-    const clip = recentClip(30)
-    if (!clip || clip.size < 2000) return
-    entry = {
-      head: `${s.productName.slice(0, 30)} — @${s.buyer.handle ?? s.buyer.username}`,
-      lot: s.skuDesc ?? '', price: s.price?.formatted ?? '',
-      status: 'transcribing', text: '', sale: s,
-    }
+// ── live identification: sale → clip → queue → worker → row ────────────────────────────────────
+// Every fresh sale is windowed from the audio buffer, queued, and posted to the identification
+// endpoint by the main process. The queue replaces the old `transcribing` boolean, which silently
+// discarded any sale that arrived while another was in flight. Pure rules live in core/.
+type IdentifyQueueJob = IdentifyJob & {
+  clip: ExtractedClip
+  /** The show this sale belongs to: a retry for a show that has ended is not worth a model call. */
+  show: number
+  entry: Recap
+}
+const MAX_BOUNDARY_EVENTS = 600
+/** Slice time: a chunk is delivered when its second has FINISHED, so the tail lands up to ~1 s late. */
+const CHUNK_SETTLE_MS = 1500
+/** Never wait longer than this for a sale's tail audio, whatever the clocks say. */
+const MAX_TAIL_WAIT_MS = 15_000
+/** Concurrent POSTs. Two, so one slow identification (up to the timeout) does not hold every later sale. */
+const IDENTIFY_CONCURRENCY = 2
+let showGeneration = 0
+let boundaryEvents: JournalEvent[] = [] // this show's auction starts/ends and sales, on THIS machine's clock
+let boundaryJournal = new AuctionJournal()
+const identifiedOrders = new Set<string>() // a sale is identified once unless someone presses Retry
+
+function noteBoundary(e: JournalEvent): void {
+  boundaryEvents.push(e)
+  if (boundaryEvents.length > MAX_BOUNDARY_EVENTS) boundaryEvents.splice(0, boundaryEvents.length - MAX_BOUNDARY_EVENTS)
+}
+function settleEntry(entry: Recap, outcome: { status: string; reason?: string; tries?: number }, truncated = false): void {
+  const v = viewOutcome(outcome)
+  entry.status = v.status
+  entry.text = v.text + (v.status === 'done' && truncated ? ' (the audio buffer began late, so the clip is short)' : '')
+  renderAll()
+}
+const identifyQueue = makeIdentifyQueue<IdentifyQueueJob, IdentifyAnswer & { tries: number }>({
+  run: makeIdentifyRun<IdentifyQueueJob>({
+    send: async (job) => {
+      const api = window.identifyAPI
+      if (!api) return { status: 'failed', reason: 'network_error', retryable: false }
+      const { clip, show: _show, entry: _entry, ...sale } = job
+      // The clip goes whole: its OWN start and duration describe its bytes (see clipRecorder).
+      return api.identify({ job: sale, clip: await toWireClip(clip) })
+    },
+    maxAttempts: MAX_IDENTIFY_ATTEMPTS,
+    backoffMs: RETRY_BACKOFF_MS,
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    shouldContinue: (job) => job.show === showGeneration && recapEnabled,
+  }),
+  onSettled: (job, outcome) => settleEntry(job.entry, outcome, job.clip.truncated),
+  concurrency: IDENTIFY_CONCURRENCY,
+})
+/** The show changed or identification was turned off: sales still WAITING settle as abandoned. */
+function endIdentifyShow(reason: string): void {
+  showGeneration++
+  boundaryEvents = []
+  boundaryJournal = new AuctionJournal()
+  identifiedOrders.clear()
+  identifyQueue.abandonAll(reason)
+}
+
+/** Identify one sale. `existing` is a row being retried: it is reused, not duplicated. */
+function identifySale(s: Sale, existing?: Recap): void {
+  if (!recapEnabled || !window.identifyAPI) return
+  if (!existing) {
+    if (identifiedOrders.has(s.orderId)) return
+    identifiedOrders.add(s.orderId)
+    if (identifiedOrders.size > 2000) identifiedOrders.clear()
+  }
+  const entry: Recap = existing ?? {
+    head: `${s.productName.slice(0, 30)} — @${s.buyer.handle ?? s.buyer.username}`,
+    lot: s.skuDesc ?? '', price: s.price?.formatted ?? '',
+    status: 'transcribing', text: '', sale: s, live: true,
+  }
+  entry.status = 'transcribing'
+  entry.text = ''
+  if (!existing) {
     recaps.unshift(entry)
     if (recaps.length > 200) recaps.pop()
-    renderRecap()
-    const audio = new Uint8Array(await clip.arrayBuffer())
-    // structured: true is what returns brand/item/color/size/retailPrice. The old call omitted it
-    // and rendered the one-line summary instead, which is why the fields never reached the screen.
-    const res = await window.recapAPI.transcribe({ audio, productName: s.productName, structured: true })
-    if (res.fields && Object.keys(res.fields).length) { entry.fields = res.fields; entry.status = 'done' }
-    else entry.status = res.text ? 'done' : 'error'
-    entry.text = res.text ?? res.error ?? 'failed'
-  } catch (e) {
-    if (entry) { entry.status = 'error'; entry.text = (e as Error).message }
-  } finally {
-    transcribing = false
-    renderRecap()
   }
+  renderAll()
+
+  // The sale's time and the boundaries are on this machine's clock, the clock the clip is stamped by.
+  const b = boundariesForSale({ orderId: s.orderId, atEpochSec: serverToLocalSec(s.createdAt, serverTimeOffsetMs) }, boundaryEvents)
+  const want = clipRequestFor(b)
+  const show = showGeneration
+  // The clip must include the tail after the sale, so wait for that audio to exist.
+  const waitMs = Math.min(MAX_TAIL_WAIT_MS, Math.max(0, (want.endEpochSec - Date.now() / 1000) * 1000) + CHUNK_SETTLE_MS)
+  setTimeout(() => {
+    if (show !== showGeneration || !recapEnabled) { settleEntry(entry, { status: 'abandoned', reason: 'identification stopped' }); return }
+    const clip = clipStore.extract(want)
+    if (!clip) { settleEntry(entry, { status: 'failed', reason: 'no_audio' }); return }
+    const accepted = identifyQueue.enqueue({
+      orderId: s.orderId,
+      roomId: s.roomId ?? watchedRoomId,
+      saleEpochSec: b.saleEpochSec,
+      auctionStartEpochSec: b.auctionStartEpochSec,
+      prevBoundaryEpochSec: b.prevBoundaryEpochSec,
+      clip, show, entry,
+    })
+    if (!accepted) { entry.text = 'already being identified'; renderAll() }
+  }, waitMs)
 }
+
 // structured per-product (per-bin) transcription — one capture covers every order of that product
 const productTxBusy = new Set<string>()
 async function transcribeProduct(productId: string, productName: string): Promise<boolean> {
-  // `transcribing` is the shared audio-capture lock (also used by transcribeSale) — only one clip grab at a time
-  if (!recapEnabled || !window.recapAPI || transcribing || productTxBusy.has(productId)) return false
+  // `transcribing` is the capture lock: only one local-Gemini clip grab at a time
+  if (!recapEnabled || !geminiKeyPresent || !window.recapAPI || transcribing || productTxBusy.has(productId)) return false
   transcribing = true
   productTxBusy.add(productId)
   renderProductsTable()
@@ -918,17 +1009,17 @@ async function transcribeProduct(productId: string, productName: string): Promis
 }
 
 function applyAiPref(): void {
-  recapEnabled = geminiKeyPresent && aiTranscribePref
+  recapEnabled = identifyReady && aiTranscribePref
   if (recapEnabled) startAudioCapture() // no-op until the video is playing; its own listener covers that
-  else stopAudioCapture()
+  else { stopAudioCapture(); endIdentifyShow('identification was turned off') }
   const sw = document.getElementById('aiTranscribe') as HTMLInputElement | null
   const st = document.getElementById('aiState')
-  if (sw) { sw.checked = recapEnabled; sw.disabled = !geminiKeyPresent }
+  if (sw) { sw.checked = recapEnabled; sw.disabled = !identifyReady }
   if (st) {
-    const [text, cls] = !geminiKeyPresent
-      ? ['No Gemini key on this computer — nothing can be sent', 'muted']
+    const [text, cls] = !identifyReady
+      ? ['No capture token saved — nothing can be sent', 'muted']
       : recapEnabled
-        ? ['On — a clip of the show’s audio goes to Google each time an item sells', 'warn-text']
+        ? ['On — a clip of the show’s audio goes to SellerFolio each time an item sells', 'warn-text']
         : ['Off — no audio is captured and none leaves this computer', 'ok-text']
     st.className = 'state ' + cls
     st.textContent = text
@@ -942,6 +1033,7 @@ document.getElementById('aiTranscribe')?.addEventListener('change', (e) => {
 
 async function initRecap() {
   try { geminiKeyPresent = (await window.recapAPI?.enabled())?.enabled ?? false } catch { geminiKeyPresent = false }
+  try { identifyReady = (await window.identifyAPI?.ready())?.ready ?? false } catch { identifyReady = false }
   applyAiPref()
   // The AI chip lived on the deleted "Current auction item" panel. The Identification section
   // head carries the state now; AI_UI still gates the whole feature without a plumbing rebuild.
@@ -1737,7 +1829,7 @@ window.ttLive.onEvent((ev: LiveEvent) => {
     }
     case 'room':
       $('room').textContent = ev.roomId.slice(-8)
-      if (watchedRoomId !== null && ev.roomId !== watchedRoomId) resetClipBuffer() // new show: never inherit the last one's audio
+      if (watchedRoomId !== null && ev.roomId !== watchedRoomId) { resetClipBuffer(); endIdentifyShow('the show ended') } // new show: never inherit the last one's audio or queue
       watchedRoomId = ev.roomId
       if (ev.createdAt) liveStartedAt = ev.createdAt // actual go-live for the elapsed timer
       break
@@ -1797,6 +1889,11 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       // Primary listing-change signal for the print dedup (700ms, and per-LISTING —
       // unlike a close event's auctionConfigId, which is per-auction on the im sources).
       setPrintListing(ev.current?.auctionConfigId)
+      // Auction starts and ends, kept to window each sale. Server clock -> this machine's clock.
+      for (const r of boundaryJournal.ingest(ev)) {
+        if (r.type === 'auction_start' && r.startedAtMs) noteBoundary({ type: 'auction_start', atEpochSec: serverToLocalSec(r.startedAtMs, serverTimeOffsetMs) })
+        else if (r.type === 'auction_end') noteBoundary({ type: 'auction_end', atEpochSec: serverToLocalSec(r.seenAtMs, serverTimeOffsetMs) })
+      }
       // Paint as soon as there IS a lot, not only once it has a leader — that guard is
       // what kept both panels blank through the entire bidding window. An empty pin body
       // parses to no `current` at all, so this still holds the last paint rather than
@@ -1837,7 +1934,6 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       // returns history, not a feed, so a waterline has to be set at connect time. It is a
       // core module because getting it wrong reprinted ~20 already-printed labels on every
       // single app restart, and this file has no tests.
-      let recentForRecap: Sale | undefined
       const freshSales = saleSeed.select(ev)
       // EVERY source auto-prints; PrintDedup arbitrates. Single-source modes
       // proved fragile live 2026-07-24: the im auction decode went silent and
@@ -1851,7 +1947,9 @@ window.ttLive.onEvent((ev: LiveEvent) => {
         const lot = (s.skuDesc ?? '').replace(/^#/, '')
         if (lot) setTimeout(() => showSold(lot, s.buyer.username || s.buyer.handle, s.price.formatted), 0)
       }
-      recentForRecap = freshSales.find((s) => s.paymentStatus !== 'failed' && Date.now() - s.createdAt < 60000)
+      // EVERY fresh sale is identified, not just the first of a batch: two sales in one second must both get an outcome.
+      for (const s of freshSales) noteBoundary({ type: 'sale', atEpochSec: serverToLocalSec(s.createdAt, serverTimeOffsetMs), orderId: s.orderId })
+      const toIdentify = freshSales.filter((s) => s.paymentStatus !== 'failed' && Date.now() - s.createdAt < 60000)
 
       // ── THEN UI ──────────────────────────────────────────────────────────
       lastByProduct = ev.byProduct
@@ -1872,7 +1970,7 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       if (!salesAuthoritative) stats.sales = String(ev.totalSales)
       renderStats()
       $('feedCount').title = `${ev.totalSales} sales · $${(ev.totalCents / 100).toFixed(0)}`
-      if (recentForRecap) void transcribeSale(recentForRecap) // AI transcript — after print + render
+      for (const s of toIdentify) identifySale(s) // identification — after print + render
       break
     }
     case 'stream':

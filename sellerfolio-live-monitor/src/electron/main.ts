@@ -10,6 +10,8 @@ import { parsePin } from '../core/pin'
 import { AuctionResults } from '../core/auctionResults'
 import { AuctionWatch } from '../core/auctionWatch'
 import { AuctionJournal } from '../core/auctionJournal'
+import { IDENTIFY_TIMEOUT_MS, identifyBaseUrlOk, sendIdentify, type WireClip } from '../core/identifySend'
+import type { IdentifyJob } from '../core/identifyClient'
 import { parseTrend, paceCentsPerHour, formatCents, STATS_GMV, STATS_ORDERS } from '../core/liveTrend'
 import { decodeChat } from '../core/chat'
 import { evaluateWatchdog } from '../core/watchdog'
@@ -740,6 +742,39 @@ ipcMain.handle('sf-sync:save', (_e, a: { baseUrl?: string; token?: string }) => 
   saveSyncSettings({ baseUrl, token })
   applySync()
   return { ok: true, ...syncView() }
+})
+
+// ── Live identification: POST a sale's clip to the worker ────────────────────
+// The POST is made here, not in the renderer: there is no CORS in the main process, and the capture
+// token (the same one the journal sync uses, decrypted by loadSyncSettings) never reaches the page.
+// The endpoint is the Linux worker over the tailnet -- NEVER hq. The address is a setting: put
+// {"baseUrl": "..."} in identify.json beside sf-sync.json. identifyBaseUrlOk refuses cleartext to
+// anywhere but this machine or the tailnet, since a token goes with every request.
+const IDENTIFY_FILE = join(app.getPath('userData'), 'identify.json')
+const DEFAULT_IDENTIFY_URL = 'http://100.68.11.76:8099'
+function identifyBaseUrl(): string {
+  try {
+    const j = JSON.parse(readFileSync(IDENTIFY_FILE, 'utf8')) as { baseUrl?: unknown }
+    if (typeof j.baseUrl === 'string' && identifyBaseUrlOk(j.baseUrl)) return j.baseUrl
+  } catch { /* no file: the default */ }
+  return DEFAULT_IDENTIFY_URL
+}
+const identifyFailed = (reason: string) => ({ status: 'failed' as const, reason, retryable: false })
+// The renderer decides whether to turn it on; this only says whether it COULD work.
+ipcMain.handle('identify:ready', () => ({ ready: !!loadSyncSettings().token }))
+ipcMain.handle('tt-identify', async (_e, payload: { job?: IdentifyJob; clip?: WireClip }) => {
+  const job = payload?.job
+  const clip = payload?.clip
+  if (!job || typeof job.orderId !== 'string' || !clip || !(clip.bytes instanceof Uint8Array) || !clip.bytes.byteLength) {
+    return identifyFailed('bad_request_local')
+  }
+  const token = loadSyncSettings().token
+  if (!token) return identifyFailed('bad_token')
+  // Copy: structured clone can hand over a view whose buffer is shared or detached later.
+  const wire: WireClip = { ...clip, bytes: new Uint8Array(clip.bytes) }
+  const out = await sendIdentify({ job, clip: wire, cfg: { baseUrl: identifyBaseUrl(), token }, fetch, timeoutMs: IDENTIFY_TIMEOUT_MS })
+  if (out.status === 'failed') flog(`[identify] order ${job.orderId} failed: ${out.reason}`) // never the token, never the request
+  return out
 })
 
 // ── Label printing (mirrors the desktop app: webContents.print of HTML) ──────

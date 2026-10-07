@@ -22,6 +22,11 @@ contextBridge.exposeInMainWorld('recapAPI', {
   suggestRegex: (payload: unknown) => ipcRenderer.invoke('tt-suggest-regex', payload),
 })
 
+contextBridge.exposeInMainWorld('identifyAPI', {
+  ready: () => ipcRenderer.invoke('identify:ready'),
+  identify: (payload: unknown) => ipcRenderer.invoke('tt-identify', payload),
+})
+
 contextBridge.exposeInMainWorld('syncAPI', {
   connection: () => ipcRenderer.invoke('tt-connection'),
   openMonitor: () => ipcRenderer.invoke('tt-open-monitor'),
