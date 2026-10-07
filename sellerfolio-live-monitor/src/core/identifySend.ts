@@ -65,6 +65,18 @@ export function fromWireClip(wire: WireClip): ExtractedClip {
   return { ...own, blob: new Blob([bytes]) }
 }
 
+/** One sale's request: the job (boundaries, no clip window) and the clip EXACTLY as the store extracted it. */
+export type IdentifyPayload = { job: IdentifyJob; clip: ExtractedClip }
+
+/**
+ * The payload as it crosses IPC. The job is passed through as it is, the clip goes through
+ * `toWireClip`; nothing is added, replaced or recomputed here. That is the whole point of keeping it
+ * this small and tested: it is the last place a clip's window could be swapped for another.
+ */
+export async function toWirePayload(p: IdentifyPayload): Promise<{ job: IdentifyJob; clip: WireClip }> {
+  return { job: p.job, clip: await toWireClip(p.clip) }
+}
+
 const failed = (reason: string, retryable: boolean, detail?: string): IdentifyFailed =>
   detail === undefined ? { status: 'failed', reason, retryable } : { status: 'failed', reason, retryable, detail }
 

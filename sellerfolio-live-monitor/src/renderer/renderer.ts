@@ -5,12 +5,12 @@ import { labelNeedsHtml } from '../electron/zplLabel' // preview-only: which pri
 import { PrintDedup } from '../core/printDedup'
 import { SaleSeed } from '../core/saleSeed'
 import { labelCode } from '../core/labelCode'
-import { makeClipStore, type ExtractedClip } from '../core/clipRecorder'
+import { makeClipStore } from '../core/clipRecorder'
 import { AuctionJournal } from '../core/auctionJournal'
 import { makeIdentifyQueue } from '../core/identifyQueue'
-import { BREAKER_COOLDOWN_MS, BREAKER_THRESHOLD, MAX_IDENTIFY_ATTEMPTS, RETRY_BACKOFF_MS, makeBreaker, makeIdentifyRun, serverToLocalSec, toWireClip, type WireClip } from '../core/identifySend'
+import { BREAKER_COOLDOWN_MS, BREAKER_THRESHOLD, MAX_IDENTIFY_ATTEMPTS, RETRY_BACKOFF_MS, makeBreaker, makeIdentifyRun, serverToLocalSec, toWirePayload, type IdentifyPayload, type WireClip } from '../core/identifySend'
 import type { IdentifyAnswer, IdentifyJob } from '../core/identifyClient'
-import { boundariesForSale, clipRequestFor, viewOutcome, type JournalEvent } from '../core/identifyWiring'
+import { clipReadyEpochSec, identifyPayloadFor, isRecentSale, viewOutcome, type JournalEvent } from '../core/identifyWiring'
 
 // Structured AI-transcript fields (was core/ledger's LedgerTranscript; the products
 // panel still stores per-product transcripts in memory for the session).
@@ -715,6 +715,7 @@ function idEditor(r: Recap, redraw: () => void): HTMLElement {
  *  re-transcribe, so one stray click cannot throw away an identity someone corrected by hand. */
 function idRetryButton(r: Recap, redraw: () => void): HTMLElement {
   const b = el('button', 'qbtn sm', 'Retry') as HTMLButtonElement
+  b.disabled = r.status === 'transcribing' // one job per lot: wait for its outcome
   let armed = false
   let t: ReturnType<typeof setTimeout> | undefined
   b.addEventListener('click', () => {
@@ -886,8 +887,10 @@ function renderIdentifications() {
 // Every fresh sale is windowed from the audio buffer, queued, and posted to the identification
 // endpoint by the main process. The queue replaces the old `transcribing` boolean, which silently
 // discarded any sale that arrived while another was in flight. Pure rules live in core/.
-type IdentifyQueueJob = IdentifyJob & {
-  clip: ExtractedClip
+type IdentifyQueueJob = {
+  orderId: string
+  /** What the server is sent, assembled in core/identifyWiring: the job and the extracted clip itself. */
+  payload: IdentifyPayload
   /** The show this sale belongs to: a retry for a show that has ended is not worth a model call. */
   show: number
   entry: Recap
@@ -921,9 +924,7 @@ const identifyQueue = makeIdentifyQueue<IdentifyQueueJob, IdentifyAnswer & { tri
     send: async (job) => {
       const api = window.identifyAPI
       if (!api) return { status: 'failed', reason: 'network_error', retryable: false }
-      const { clip, show: _show, entry: _entry, ...sale } = job
-      // The clip goes whole: its OWN start and duration describe its bytes (see clipRecorder).
-      return api.identify({ job: sale, clip: await toWireClip(clip) })
+      return api.identify(await toWirePayload(job.payload))
     },
     maxAttempts: MAX_IDENTIFY_ATTEMPTS,
     backoffMs: RETRY_BACKOFF_MS,
@@ -931,7 +932,7 @@ const identifyQueue = makeIdentifyQueue<IdentifyQueueJob, IdentifyAnswer & { tri
     shouldContinue: (job) => job.show === showGeneration && recapEnabled,
     breaker: identifyBreaker,
   }),
-  onSettled: (job, outcome) => settleEntry(job.entry, outcome, job.clip.truncated),
+  onSettled: (job, outcome) => settleEntry(job.entry, outcome, job.payload.clip.truncated),
   concurrency: IDENTIFY_CONCURRENCY,
 })
 /** The show changed or identification was turned off: sales still WAITING settle as abandoned. */
@@ -946,6 +947,8 @@ function endIdentifyShow(reason: string): void {
 /** Identify one sale. `existing` is a row being retried: it is reused, not duplicated. */
 function identifySale(s: Sale, existing?: Recap): void {
   if (!recapEnabled || !window.identifyAPI) return
+  // A lot already being identified keeps its one in-flight job; a second Retry must not queue another.
+  if (existing?.status === 'transcribing') return
   if (!existing) {
     if (identifiedOrders.has(s.orderId)) return
     identifiedOrders.add(s.orderId)
@@ -964,25 +967,19 @@ function identifySale(s: Sale, existing?: Recap): void {
   }
   renderAll()
 
-  // The sale's time and the boundaries are on this machine's clock, the clock the clip is stamped by.
-  const b = boundariesForSale({ orderId: s.orderId, atEpochSec: serverToLocalSec(s.createdAt, serverTimeOffsetMs) }, boundaryEvents)
-  const want = clipRequestFor(b)
+  // Everything the server is sent is assembled in core/identifyWiring (tested): this only supplies the
+  // sale on THIS machine's clock, the show's journal, and the store.
+  const sale = { orderId: s.orderId, roomId: s.roomId ?? watchedRoomId, atEpochSec: serverToLocalSec(s.createdAt, serverTimeOffsetMs) }
   const show = showGeneration
-  // The clip must include the tail after the sale, so wait for that audio to exist.
-  const waitMs = Math.min(MAX_TAIL_WAIT_MS, Math.max(0, (want.endEpochSec - Date.now() / 1000) * 1000) + CHUNK_SETTLE_MS)
+  // The clip includes the tail after the sale, so wait for that audio to exist.
+  const waitMs = Math.min(MAX_TAIL_WAIT_MS, Math.max(0, (clipReadyEpochSec(sale.atEpochSec) - Date.now() / 1000) * 1000) + CHUNK_SETTLE_MS)
   setTimeout(() => {
     if (show !== showGeneration || !recapEnabled) { settleEntry(entry, { status: 'abandoned', reason: 'identification stopped' }); return }
-    const clip = clipStore.extract(want)
-    if (!clip) { settleEntry(entry, { status: 'failed', reason: 'no_audio' }); return }
-    const accepted = identifyQueue.enqueue({
-      orderId: s.orderId,
-      roomId: s.roomId ?? watchedRoomId,
-      saleEpochSec: b.saleEpochSec,
-      auctionStartEpochSec: b.auctionStartEpochSec,
-      prevBoundaryEpochSec: b.prevBoundaryEpochSec,
-      clip, show, entry,
-    })
-    if (!accepted) { entry.text = 'already being identified'; renderAll() }
+    const payload = identifyPayloadFor(sale, boundaryEvents, clipStore)
+    if (!payload) { settleEntry(entry, { status: 'failed', reason: 'no_audio' }); return }
+    // A refusal means this order is already queued or running: say so on the row rather than leave it
+    // on "Identifying…" (the job that holds the order settles the same row with its real outcome).
+    if (!identifyQueue.enqueue({ orderId: sale.orderId, payload, show, entry })) settleEntry(entry, { status: 'failed', reason: 'already_queued' })
   }, waitMs)
 }
 
@@ -1952,7 +1949,7 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       }
       // EVERY fresh sale is identified, not just the first of a batch: two sales in one second must both get an outcome.
       for (const s of freshSales) noteBoundary({ type: 'sale', atEpochSec: serverToLocalSec(s.createdAt, serverTimeOffsetMs), orderId: s.orderId })
-      const toIdentify = freshSales.filter((s) => s.paymentStatus !== 'failed' && Date.now() - s.createdAt < 60000)
+      const toIdentify = freshSales.filter((s) => s.paymentStatus !== 'failed' && isRecentSale(s.createdAt, Date.now(), serverTimeOffsetMs))
 
       // ── THEN UI ──────────────────────────────────────────────────────────
       lastByProduct = ev.byProduct

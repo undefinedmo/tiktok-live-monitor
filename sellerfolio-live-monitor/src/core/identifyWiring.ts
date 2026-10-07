@@ -1,5 +1,10 @@
-// The pure part of wiring a sale to the identification endpoint: which boundaries a sale has.
-// Everything here is epoch SECONDS on ONE clock (the caller converts; see serverToLocalSec).
+// The pure part of wiring a sale to the identification endpoint: which boundaries a sale has, which
+// audio to cut for it, and the payload that results. Everything here is epoch SECONDS on ONE clock
+// (the caller converts; see serverToLocalSec). The renderer only calls these: the hand-off from a sale
+// to what the server is sent lives here so that it is tested.
+import type { ExtractedClip } from './clipRecorder'
+import type { IdentifyJob } from './identifyClient'
+import { serverToLocalSec, type IdentifyPayload } from './identifySend'
 
 /** One thing that happened in the show, as the renderer saw it. */
 export type JournalEvent = {
@@ -60,6 +65,12 @@ export const CLIP_TAIL_SEC = 5
  * server owns the window geometry and clamps; this only bounds what is uploaded.
  */
 export const NO_BOUNDARY_LOOKBACK_SEC = 60
+/**
+ * The most audio the app asks for before the sale. After a long gap the wall is minutes back, and the
+ * whole 5-minute buffer would be both worse input (a 60 s window is already 80% foreign talk on
+ * measured shows) and a bigger upload. The server still clamps what it analyses.
+ */
+export const MAX_LOOKBACK_SEC = 120
 
 /**
  * The span of show audio to cut for a sale. Not a window plan -- the server plans, and clamps at the
@@ -70,7 +81,8 @@ export const NO_BOUNDARY_LOOKBACK_SEC = 60
  */
 export function clipRequestFor(b: SaleBoundaries): { startEpochSec: number; endEpochSec: number } {
   const known = [b.auctionStartEpochSec, b.prevBoundaryEpochSec].filter((t): t is number => t !== null)
-  const startEpochSec = known.length ? Math.min(...known) - CLIP_LEAD_PAD_SEC : b.saleEpochSec - NO_BOUNDARY_LOOKBACK_SEC
+  const wanted = known.length ? Math.min(...known) - CLIP_LEAD_PAD_SEC : b.saleEpochSec - NO_BOUNDARY_LOOKBACK_SEC
+  const startEpochSec = Math.max(wanted, b.saleEpochSec - MAX_LOOKBACK_SEC)
   return { startEpochSec, endEpochSec: b.saleEpochSec + CLIP_TAIL_SEC }
 }
 
@@ -87,6 +99,7 @@ const FAILURE_TEXT: Record<string, string> = {
   'order-sale-mismatch': 'The server does not think this order belongs to this sale',
   'order-not-found': 'The server does not have this order yet',
   no_audio: 'No audio was recorded for this lot',
+  already_queued: 'This lot is already being identified',
   bad_request_local: 'The sale times were not valid, so nothing was sent',
   worker_unreachable: 'The identification server is unreachable right now -- press Retry once it is back',
 }
@@ -111,4 +124,46 @@ export function viewOutcome(o: { status: string; reason?: string; tries?: number
     default:
       return { status: 'error', text: `Identification ended in an unexpected state (${o.status})` }
   }
+}
+
+/** The job for a sale: the sale, its room and its boundaries. It carries NOTHING about the clip. */
+export function jobForSale(sale: { orderId: string; roomId: string | null }, b: SaleBoundaries): IdentifyJob {
+  return {
+    orderId: sale.orderId,
+    roomId: sale.roomId,
+    saleEpochSec: b.saleEpochSec,
+    auctionStartEpochSec: b.auctionStartEpochSec,
+    prevBoundaryEpochSec: b.prevBoundaryEpochSec,
+  }
+}
+
+/** When the audio after a sale exists: the clip includes a tail, so cutting earlier would miss it. */
+export function clipReadyEpochSec(saleEpochSec: number): number {
+  return saleEpochSec + CLIP_TAIL_SEC
+}
+
+/**
+ * Everything the server is sent for one sale: the job and THE EXTRACTED CLIP ITSELF (same object,
+ * so its own start/duration describe its own bytes). The boundaries are computed once and feed both
+ * the window asked of the store and the job, so the two cannot disagree. Null when there is no audio.
+ */
+export function identifyPayloadFor(
+  sale: { orderId: string; roomId: string | null; atEpochSec: number },
+  journal: readonly JournalEvent[],
+  store: { extract: (want: { startEpochSec: number; endEpochSec: number }) => ExtractedClip | null },
+): IdentifyPayload | null {
+  const b = boundariesForSale(sale, journal)
+  const clip = store.extract(clipRequestFor(b))
+  return clip ? { job: jobForSale(sale, b), clip } : null
+}
+
+/** A sale this young, by THIS machine's clock after correcting the server timestamp, is worth identifying. */
+export const RECENT_SALE_MAX_AGE_SEC = 60
+
+/**
+ * Is the order recent? `createdAtMs` is the SERVER's clock; comparing it with a local `Date.now()`
+ * would fail every sale once the station's clock ran a minute off TikTok's, with no row, no job and no log.
+ */
+export function isRecentSale(createdAtMs: number, nowMs: number, serverOffsetMs: number | undefined): boolean {
+  return nowMs / 1000 - serverToLocalSec(createdAtMs, serverOffsetMs) < RECENT_SALE_MAX_AGE_SEC
 }

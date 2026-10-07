@@ -15,6 +15,7 @@ import {
   sendIdentify,
   serverToLocalSec,
   toWireClip,
+  toWirePayload,
 } from '../identifySend'
 import { buildIdentifyRequest, type IdentifyAnswer } from '../identifyClient'
 import { makeIdentifyQueue } from '../identifyQueue'
@@ -105,6 +106,40 @@ describe('the clip crosses IPC whole', () => {
 
   it('the wire type has no field a requested window could ride in', async () => {
     expect(Object.keys(await toWireClip(clip)).sort()).toEqual(['bytes', 'durationSec', 'leadInSec', 'startEpochSec', 'truncated'])
+  })
+})
+
+// What the renderer hands the main process. Field-for-field the extracted clip: a requested window, a
+// guessed start, a fixed duration or a dropped boundary here ships the wrong lot with every other test green.
+describe('toWirePayload', () => {
+  const payloadJob = { orderId: 'o1', roomId: 'r1', saleEpochSec: 1700000000, auctionStartEpochSec: null, prevBoundaryEpochSec: 1699999900 }
+
+  it('puts every field of the extracted clip on the wire unchanged, and the job untouched', async () => {
+    const w = await toWirePayload({ job: payloadJob, clip })
+    for (const k of ['startEpochSec', 'durationSec', 'leadInSec', 'truncated'] as const) expect(w.clip[k], k).toBe(clip[k])
+    expect(new TextDecoder().decode(w.clip.bytes)).toBe('audio-bytes')
+    expect(w.job).toEqual(payloadJob)
+    expect(w.job).toBe(payloadJob)
+  })
+
+  it('has exactly the clip keys and the job keys, so nothing can ride along', async () => {
+    const w = await toWirePayload({ job: payloadJob, clip })
+    expect(Object.keys(w).sort()).toEqual(['clip', 'job'])
+    expect(Object.keys(w.clip).sort()).toEqual(['bytes', 'durationSec', 'leadInSec', 'startEpochSec', 'truncated'])
+  })
+
+  it('keeps a truncated clip truncated', async () => {
+    const w = await toWirePayload({ job: payloadJob, clip: { ...clip, truncated: true, leadInSec: 0 } })
+    expect(w.clip.truncated).toBe(true)
+    expect(w.clip.leadInSec).toBe(0)
+  })
+
+  it('is what the main process turns into the clip start the server hears', async () => {
+    const w = await toWirePayload({ job: payloadJob, clip })
+    const seen: FormData[] = []
+    const f = (async (_u: string, init: { body: FormData }) => { seen.push(init.body); return jsonRes(200, { status: 'identified' }) }) as unknown as typeof fetch
+    await sendIdentify({ job: w.job, clip: w.clip, cfg, fetch: f, timeoutMs: 1000 })
+    expect(metaOf(seen[0]!)).toMatchObject({ clipStartEpochSec: clip.startEpochSec, clipDurationSec: clip.durationSec, prevBoundaryEpochSec: 1699999900 })
   })
 })
 
