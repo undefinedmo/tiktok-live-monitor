@@ -75,6 +75,11 @@ describe('metaFromWire: what is written beside the audio', () => {
     expect(JSON.stringify(m)).not.toContain('SECRET')
     expect(Object.keys(m.job).sort()).toEqual(['auctionStartEpochSec', 'orderId', 'prevBoundaryEpochSec', 'roomId', 'saleEpochSec'])
   })
+  it('a room id is kept up to 120 characters and dropped (null) beyond that, like an order id', () => {
+    expect(metaFromWire(payload({ job: { roomId: 'r'.repeat(120) } }), NOW)!.job.roomId).toBe('r'.repeat(120))
+    expect(metaFromWire(payload({ job: { roomId: 'r'.repeat(121) } }), NOW)!.job.roomId).toBeNull()
+    expect(metaFromWire(payload({ job: { roomId: 7 } }), NOW)!.job.roomId).toBeNull()
+  })
   it('keeps a missing boundary as null, and a null room as null', () => {
     const m = metaFromWire(payload({ job: { roomId: null, auctionStartEpochSec: null, prevBoundaryEpochSec: undefined } }), NOW)!
     expect(m.job).toEqual({ orderId: job.orderId, roomId: null, saleEpochSec: job.saleEpochSec, auctionStartEpochSec: null, prevBoundaryEpochSec: null })
@@ -87,6 +92,9 @@ describe('metaFromWire: what is written beside the audio', () => {
     ['a sale time in milliseconds', { job: { saleEpochSec: 1.8e12 } }],
     ['a sale time that is not a number', { job: { saleEpochSec: '1799999980' } }],
     ['a clip start in milliseconds', { clip: { startEpochSec: 1.8e12 } }],
+    ['an auction start in milliseconds', { job: { auctionStartEpochSec: 1.8e12 } }],
+    ['a wall in milliseconds', { job: { prevBoundaryEpochSec: 1.8e12 } }],
+    ['a negative clip duration', { clip: { durationSec: -1 } }],
     ['a clip duration that is NaN', { clip: { durationSec: NaN } }],
     ['no audio bytes', { clip: { bytes: new Uint8Array(0) as Uint8Array<ArrayBuffer> } }],
     ['bytes that are not bytes', { clip: { bytes: 'abc' as never } }],

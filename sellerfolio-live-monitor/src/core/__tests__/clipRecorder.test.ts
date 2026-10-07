@@ -228,9 +228,19 @@ describe('makeClipStore', () => {
       expect((await arrivingAt([1001])).extract(all)!.gapSec).toBe(0)
     })
 
-    it('is rounded to the millisecond, so float dust never reads as a gap', async () => {
-      const got = (await arrivingAt([1001.1, 1002.1, 1003.1, 1004.1, 1005.1])).extract(all)!
-      expect(got.gapSec).toBe(0)
+    // 0.1 s chunks: three of them sum to 0.30000000000000004 and span 0.29999999999999954 (measured), so the
+    // raw difference is dust of either sign. It must read as exactly 0, and never as -0.
+    it.each([3, 7])('is rounded to the millisecond, so float dust (%s chunks of 0.1 s) never reads as a gap', async (n) => {
+      const readings = Array.from({ length: n }, (_, i) => 1000 + (i + 1) * 0.1)
+      const got = (await arrivingAt(readings, 0.1)).extract({ startEpochSec: 999, endEpochSec: 5000 })!
+      expect(got.gapSec).toBe(0) // toBe is Object.is: -0 fails it
+    })
+
+    it('keeps a fractional gap as it is (to the millisecond), not rounded to a whole second', async () => {
+      const got = (await arrivingAt([1001, 1002, 1005.5])).extract(all)! // chunks [1000,1001) [1001,1002) [1004.5,1005.5)
+      expect(got.durationSec).toBe(5.5)
+      expect(got.gapSec).toBe(2.5)
+      expect((await arrivingAt([1001, 1002, 1005.0004])).extract(all)!.gapSec).toBe(2) // 2.0004 -> 2.000
     })
 
     // Chunk arrival jitters by a few hundred ms and a recorder's slices are not exactly 1 s; those must

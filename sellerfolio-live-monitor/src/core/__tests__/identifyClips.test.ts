@@ -159,6 +159,23 @@ describe('createClipKeeper', () => {
     expect(files()).toHaveLength(2)
   })
 
+  it('a damaged or half-written clip is tidied away the next time anything is kept, not left to pile up', () => {
+    const k = keeper()
+    k.keep(payload('aaa', 10))
+    writeFileSync(join(keeperDir, `${keptStem('aaa')}.json`), '{"v":1') // torn
+    writeFileSync(join(keeperDir, 'korphan.bin'), new Uint8Array(5)) // audio whose meta never arrived
+    k.keep(payload('bbb', 10))
+    expect(files()).toEqual([`${keptStem('bbb')}.bin`, `${keptStem('bbb')}.json`])
+  })
+
+  it('a keep that fails part way leaves nothing behind (no audio without its meta)', () => {
+    const k = keeper()
+    mkdirSync(keeperDir, { recursive: true })
+    mkdirSync(join(keeperDir, `${keptStem('111')}.json.tmp`)) // the meta cannot be written: its temp name is a folder
+    expect(k.keep(payload('111'))).toBe(false)
+    expect(files().filter((f) => f.endsWith('.bin'))).toEqual([])
+  })
+
   it('clear removes every kept clip, and only those: it is "off means off" for audio at rest', () => {
     const k = keeper()
     k.keep(payload('111'))

@@ -139,13 +139,14 @@ export function makeClipStore(opts: { capSec: number; now: () => number }) {
       const last = picked[picked.length - 1]!
       const durationSec = last.startEpochSec + last.durationSec - first.startEpochSec
       const audioSec = picked.reduce((sum, c) => sum + c.durationSec, 0)
+      const gap = Math.round((durationSec - audioSec) * 1000) / 1000
       return {
         blob: new Blob([init, ...picked.map((c) => c.blob)]),
         startEpochSec: first.startEpochSec,
         durationSec,
         leadInSec: w.startEpochSec - first.startEpochSec,
         truncated: w.truncated,
-        gapSec: Math.round((durationSec - audioSec) * 1000) / 1000,
+        gapSec: gap === 0 ? 0 : gap, // never -0
       }
     },
 

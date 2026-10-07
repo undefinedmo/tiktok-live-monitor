@@ -414,6 +414,12 @@ describe('glue: retry from a kept clip, one row or all failed', () => {
     expect(init.indexOf('await restoreKeptClips()')).toBeGreaterThan(init.indexOf('await restoreIdentifications()'))
   })
 
+  it('restore puts each listed order into the kept set, and the delay box is filled from the setting', () => {
+    expect(fnBody(rendererCode, 'restoreKeptClips')).toContain("for (const id of ids) if (typeof id === 'string') keptClips.add(id)")
+    expect(fnBody(rendererCode, 'applyIdentifyState')).toContain("lat.value = identifyLatencySec ? String(identifyLatencySec) : ''")
+    expect(rendererCode).toContain("box.value = identifyLatencySec ? String(identifyLatencySec) : ''")
+  })
+
   it('the preload passes each clip call through untouched', () => {
     for (const l of [
       "clipKeep: (payload: unknown) => ipcRenderer.invoke('identify:clip-keep', payload)",
@@ -427,6 +433,7 @@ describe('glue: retry from a kept clip, one row or all failed', () => {
     const keep = mainCode.slice(mainCode.indexOf("ipcMain.handle('identify:clip-keep'"))
     expect(keep).toContain('if (!loadIdentifySettings(IDENTIFY_FILE).enabled) return false\n  return identifyClips.keep(payload)')
     expect(mainCode).toContain("ipcMain.handle('identify:clip-take', (_e, orderId: string) => identifyClips.load(orderId))")
+    expect(mainCode).toContain("ipcMain.handle('identify:clip-drop', (_e, orderId: string) => { identifyClips.drop(orderId); return true })")
     expect(mainCode).toContain("if (!loadIdentifySettings(IDENTIFY_FILE).enabled) { identifyClips.clear(); return [] }")
     expect(mainCode).toContain('if (!u.next.enabled) identifyClips.clear()')
     // cleared only AFTER the setting is saved

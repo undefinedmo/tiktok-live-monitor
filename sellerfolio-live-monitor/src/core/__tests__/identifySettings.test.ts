@@ -211,6 +211,9 @@ describe('the stream latency setting', () => {
   it('a bad latency does not make the file damaged or switch identification off (it is not what decides whether audio leaves)', () => {
     expect(parseIdentifySettings('{"enabled":true,"streamLatencySec":"x"}')).toMatchObject({ enabled: true, damaged: false, streamLatencySec: 0 })
   })
+  it('a stored latency survives a file whose switch is unreadable (the file is damaged, the delay is not)', () => {
+    expect(parseIdentifySettings('{"enabled":"x","streamLatencySec":8}')).toMatchObject({ enabled: false, damaged: true, streamLatencySec: 8 })
+  })
   it('a damaged file has no correction either', () => {
     expect(parseIdentifySettings('garbage').streamLatencySec).toBe(0)
   })
@@ -233,6 +236,10 @@ describe('the stream latency setting', () => {
       expect(checkLatencyInput('0')).toEqual({ ok: true, sec: 0 })
       expect(checkLatencyInput('60')).toEqual({ ok: true, sec: 60 })
     })
+    it('a comma is not a decimal point: it is refused with the instruction, not accepted as something else', () => {
+      expect(checkLatencyInput('1,5')).toEqual({ ok: false, error: 'Enter the delay in seconds, for example 8 or 6.5.' })
+      expect(checkLatencyInput('61')).toEqual({ ok: false, error: 'Enter a delay between 0 and 60 seconds.' })
+    })
     it.each([['-1'], ['60.1'], ['61'], ['abc'], ['1,5'], ['1e3'], ['Infinity'], ['NaN'], ['8 seconds late']])('rejects %j with a reason', (v) => {
       const r = checkLatencyInput(v)
       expect(r.ok).toBe(false)
@@ -254,6 +261,10 @@ describe('the stream latency setting', () => {
     it.each([[-1], [60.5], [NaN], [Infinity]])('refuses %s and changes nothing', (v) => {
       const r = updateIdentifySettings(cur, { streamLatencySec: v, enabled: false })
       expect(r.ok).toBe(false)
+    })
+    it('accepts exactly the maximum, and refuses anything over it', () => {
+      expect(updateIdentifySettings(cur, { streamLatencySec: 60 })).toEqual({ ok: true, next: { ...cur, streamLatencySec: 60 } })
+      expect(updateIdentifySettings(cur, { streamLatencySec: 60.001 }).ok).toBe(false)
     })
     it('saving only the latency of a damaged (OFF) setting keeps it OFF', () => {
       const r = updateIdentifySettings(parseIdentifySettings('garbage'), { streamLatencySec: 7 })
@@ -281,6 +292,7 @@ describe('the stream latency setting', () => {
       expect(n.cls).not.toBe('warn-text')
       expect(n.text).toContain('8 s')
       expect(n.text).not.toMatch(/not been measured/i)
+      expect(n.text).toBe('Correcting for a stream delay of 8 s: each clip is cut 8 s later in the recording than the sale time.')
     })
     it('a fractional value reads as itself', () => {
       expect(latencyNote(6.5).text).toContain('6.5 s')
