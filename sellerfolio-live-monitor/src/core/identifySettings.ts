@@ -140,3 +140,28 @@ export function identifyStateFrom(v: unknown): IdentifyState {
     defaultBaseUrl: typeof o.defaultBaseUrl === 'string' && o.defaultBaseUrl ? o.defaultBaseUrl : DEFAULT_IDENTIFY_URL,
   }
 }
+
+/** Where the old switch lived: the page's localStorage. '1' meant on; anything else (a '0') was an explicit off. */
+export const LEGACY_SWITCH_KEY = 'tt-ai-transcribe'
+
+/**
+ * Carry an operator's explicit opt-out across the move of the switch to the main process, where the
+ * default is now ON. The old switch defaulted OFF, so a stored value that is not '1' is a deliberate
+ * choice to keep audio off; an absent one is no choice at all and takes the new default.
+ * One-shot: the old key is cleared once the opt-out is saved, so it cannot override a later choice
+ * made on the new switch. If the save fails the key stays and the opt-out is retried next launch.
+ * Never throws (storage can be unavailable; the page must still start).
+ */
+export async function migrateLegacySwitch(
+  storage: { getItem(k: string): string | null; removeItem(k: string): void },
+  saveEnabled: (enabled: boolean) => Promise<boolean>,
+): Promise<void> {
+  try {
+    const stored = storage.getItem(LEGACY_SWITCH_KEY)
+    if (stored === null) return
+    if (stored !== '1' && !(await saveEnabled(false))) return
+    storage.removeItem(LEGACY_SWITCH_KEY)
+  } catch {
+    /* unreadable storage or a down IPC: change nothing; try again next launch */
+  }
+}

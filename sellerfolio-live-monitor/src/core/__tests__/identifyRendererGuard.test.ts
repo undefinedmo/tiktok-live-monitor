@@ -110,7 +110,7 @@ describe('renderer persists identifications', () => {
     expect(body).toContain('await window.identifyAPI?.rows()')
     expect(body).toMatch(/try \{[^}]*rows\(\)[^}]*\} catch/)
     expect(body).toContain('restoreEntries(recaps, rows, MAX_IDENTIFICATIONS)')
-    expect(body).toContain('identifiedOrders.add(e.orderId)')
+    expect(body).toContain('seenOrders.markRestored(e.orderId)')
     const init = fnBody(rendererCode, 'initRecap')
     expect(init.indexOf('await refreshIdentifyState()')).toBeGreaterThanOrEqual(0)
     expect(init.indexOf('await restoreIdentifications()')).toBeGreaterThan(init.indexOf('await refreshIdentifyState()'))
@@ -246,5 +246,26 @@ describe('glue: turning identification off really stops it (second sweep)', () =
     const b = fnBody(rendererCode, 'refreshIdentifyState')
     expect(b).not.toMatch(/\breturn\b/)
     expect(b).toContain('catch { told = undefined }')
+  })
+})
+
+describe('glue: opt-outs and restored orders (follow-up)', () => {
+  it('migrates the old localStorage opt-out BEFORE the gate is first read', () => {
+    const init = fnBody(rendererCode, 'initRecap')
+    const mig = init.indexOf('await migrateLegacyIdentifySwitch()')
+    expect(mig).toBeGreaterThanOrEqual(0)
+    expect(init.indexOf('await refreshIdentifyState()')).toBeGreaterThan(mig)
+    const body = fnBody(rendererCode, 'migrateLegacyIdentifySwitch')
+    expect(body).toContain('migrateLegacySwitch(localStorage, async (enabled) => (await api.save({ enabled })).ok === true)')
+  })
+  it('a show change forgets only the orders sent this show, and the overflow clear no longer lives in the page', () => {
+    expect(fnBody(rendererCode, 'endIdentifyShow')).toContain('seenOrders.endShow()')
+    expect(rendererCode).not.toContain('identifiedOrders')
+    expect(rendererCode).toContain('const seenOrders = createSeenOrders()')
+  })
+  it('a sale is skipped when it has been seen, and marked sent otherwise', () => {
+    const b = fnBody(rendererCode, 'identifySale')
+    expect(b).toContain('if (seenOrders.has(s.orderId)) return')
+    expect(b.indexOf('seenOrders.markSent(s.orderId)')).toBeGreaterThan(b.indexOf('seenOrders.has(s.orderId)'))
   })
 })

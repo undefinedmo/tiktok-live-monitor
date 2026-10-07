@@ -10,9 +10,9 @@ import { AuctionJournal } from '../core/auctionJournal'
 import { makeIdentifyQueue } from '../core/identifyQueue'
 import { BREAKER_COOLDOWN_MS, BREAKER_THRESHOLD, MAX_IDENTIFY_ATTEMPTS, RETRY_BACKOFF_MS, makeBreaker, makeIdentifyRun, serverToLocalSec, toWirePayload, type IdentifyPayload, type WireClip } from '../core/identifySend'
 import type { IdentifyAnswer, IdentifyJob } from '../core/identifyClient'
-import { clipReadyEpochSec, identifyPayloadFor, isRecentSale, viewOutcome, type JournalEvent } from '../core/identifyWiring'
+import { clipReadyEpochSec, createSeenOrders, identifyPayloadFor, isRecentSale, viewOutcome, type JournalEvent } from '../core/identifyWiring'
 import { MAX_IDENTIFICATIONS, restoreEntries, rowFromEntry, type IdentificationRow } from '../core/identifyStore'
-import { identifyGate, identifyStateFrom, identifyStatus } from '../core/identifySettings'
+import { identifyGate, identifyStateFrom, identifyStatus, migrateLegacySwitch } from '../core/identifySettings'
 
 // Structured AI-transcript fields (was core/ledger's LedgerTranscript; the products
 // panel still stores per-product transcripts in memory for the session).
@@ -923,7 +923,7 @@ const IDENTIFY_CONCURRENCY = 2
 let showGeneration = 0
 let boundaryEvents: JournalEvent[] = [] // this show's auction starts/ends and sales, on THIS machine's clock
 let boundaryJournal = new AuctionJournal()
-const identifiedOrders = new Set<string>() // a sale is identified once unless someone presses Retry
+const seenOrders = createSeenOrders() // a sale is identified once unless someone presses Retry; restored orders are never forgotten
 
 function noteBoundary(e: JournalEvent): void {
   boundaryEvents.push(e)
@@ -959,7 +959,7 @@ function endIdentifyShow(reason: string): void {
   showGeneration++
   boundaryEvents = []
   boundaryJournal = new AuctionJournal()
-  identifiedOrders.clear()
+  seenOrders.endShow()
   identifyQueue.abandonAll(reason)
 }
 
@@ -969,9 +969,8 @@ function identifySale(s: Sale, existing?: Recap): void {
   // A lot already being identified keeps its one in-flight job; a second Retry must not queue another.
   if (existing?.status === 'transcribing') return
   if (!existing) {
-    if (identifiedOrders.has(s.orderId)) return
-    identifiedOrders.add(s.orderId)
-    if (identifiedOrders.size > 2000) identifiedOrders.clear()
+    if (seenOrders.has(s.orderId)) return
+    seenOrders.markSent(s.orderId)
   }
   // Everything the server is sent is assembled in core/identifyWiring (tested): this only supplies the
   // sale on THIS machine's clock, the show's journal, and the store.
@@ -1090,12 +1089,20 @@ async function restoreIdentifications(): Promise<void> {
   for (const e of restoreEntries(recaps, rows, MAX_IDENTIFICATIONS)) {
     recaps.push(e)
     // A sale the app is shown again after a restart is already on record: it is not identified twice.
-    identifiedOrders.add(e.orderId)
+    seenOrders.markRestored(e.orderId)
   }
+}
+
+/** The old switch was in localStorage and defaulted off. An operator who turned it off keeps it off. */
+async function migrateLegacyIdentifySwitch(): Promise<void> {
+  const api = window.identifyAPI
+  if (!api) return
+  try { await migrateLegacySwitch(localStorage, async (enabled) => (await api.save({ enabled })).ok === true) } catch { /* storage unavailable */ }
 }
 
 async function initRecap() {
   try { geminiKeyPresent = (await window.recapAPI?.enabled())?.enabled ?? false } catch { geminiKeyPresent = false }
+  await migrateLegacyIdentifySwitch() // before the gate is first read, or an opt-out would arm the recorder for a moment
   await refreshIdentifyState()
   await restoreIdentifications()
   // The AI chip lived on the deleted "Current auction item" panel. The Identification section

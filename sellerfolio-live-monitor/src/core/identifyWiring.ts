@@ -168,3 +168,26 @@ export const RECENT_SALE_MAX_AGE_SEC = 60
 export function isRecentSale(createdAtMs: number, nowMs: number, serverOffsetMs: number | undefined): boolean {
   return nowMs / 1000 - serverToLocalSec(createdAtMs, serverOffsetMs) < RECENT_SALE_MAX_AGE_SEC
 }
+
+/**
+ * Orders that must not be identified (uploaded) again. Two kinds, because they have different lives:
+ * `sent` are this show's sales, forgotten when the show changes (or the set grows past `cap`); `restored`
+ * came back from disk, were identified in an earlier session, and are never forgotten -- a restored order
+ * the app is shown again later is not worth a multi-megabyte upload that competes with live sales.
+ */
+export function createSeenOrders(cap = 2000) {
+  const sent = new Set<string>()
+  const restored = new Set<string>()
+  return {
+    has: (id: string): boolean => sent.has(id) || restored.has(id),
+    markSent(id: string): void {
+      sent.add(id)
+      if (sent.size > cap) {
+        sent.clear()
+        sent.add(id)
+      }
+    },
+    markRestored: (id: string): void => void restored.add(id),
+    endShow: (): void => sent.clear(),
+  }
+}

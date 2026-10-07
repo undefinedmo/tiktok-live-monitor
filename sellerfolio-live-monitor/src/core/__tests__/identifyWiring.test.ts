@@ -12,6 +12,7 @@ import {
   NO_BOUNDARY_LOOKBACK_SEC,
   boundariesForSale,
   clipRequestFor,
+  createSeenOrders,
   viewOutcome,
 } from '../identifyWiring'
 
@@ -382,5 +383,38 @@ describe('isRecentSale', () => {
   it('treats an unknown offset as none', () => {
     expect(isRecentSale(NOW - 2000, NOW, undefined)).toBe(true)
     expect(isRecentSale(NOW - 61_000, NOW, undefined)).toBe(false)
+  })
+})
+
+describe('createSeenOrders: a sale is identified once', () => {
+  it('remembers a sent order, and reports a new one as new', () => {
+    const s = createSeenOrders()
+    expect(s.has('a')).toBe(false)
+    s.markSent('a')
+    expect(s.has('a')).toBe(true)
+    expect(s.has('b')).toBe(false)
+  })
+  it('a show change forgets what was SENT this show, but never what was RESTORED from disk', () => {
+    const s = createSeenOrders()
+    s.markRestored('old')
+    s.markSent('new')
+    s.endShow()
+    expect(s.has('new')).toBe(false)
+    expect(s.has('old')).toBe(true) // a restored order re-seen later is not uploaded again
+  })
+  it('hitting the size cap forgets sent orders, never restored ones', () => {
+    const s = createSeenOrders(3)
+    s.markRestored('old')
+    for (const id of ['a', 'b', 'c', 'd']) s.markSent(id)
+    expect(s.has('old')).toBe(true)
+    expect(s.has('a')).toBe(false) // the sent set was cleared when it passed the cap
+    expect(s.has('d')).toBe(true) // the order that tipped it over is still remembered
+  })
+  it('an order that is both restored and sent survives a show change', () => {
+    const s = createSeenOrders()
+    s.markSent('x')
+    s.markRestored('x')
+    s.endShow()
+    expect(s.has('x')).toBe(true)
   })
 })

@@ -6,6 +6,7 @@ import {
   identifyPreflight,
   identifyStateFrom,
   identifyStatus,
+  migrateLegacySwitch,
   parseIdentifySettings,
   serializeIdentifySettings,
   updateIdentifySettings,
@@ -188,5 +189,68 @@ describe('identifyStateFrom: what the page believes, from what main told it', ()
   })
   it('keeps the default address when main sends a bad one', () => {
     expect(identifyStateFrom({ ...view, baseUrl: 7, defaultBaseUrl: null })).toMatchObject({ baseUrl: DEFAULT_IDENTIFY_URL, defaultBaseUrl: DEFAULT_IDENTIFY_URL })
+  })
+})
+
+// The old switch lived in the page's localStorage ('tt-ai-transcribe': '1' on, anything else off) and
+// defaulted OFF. An operator who turned it off on purpose must not have an update switch it back on.
+describe('migrateLegacySwitch: an explicit old opt-out survives the new default', () => {
+  const KEY = 'tt-ai-transcribe'
+  function fakeStorage(initial: Record<string, string>) {
+    const data = { ...initial }
+    return {
+      data,
+      getItem: (k: string) => (k in data ? (data[k] as string) : null),
+      removeItem: (k: string) => { delete data[k] },
+    }
+  }
+
+  it('an explicit "0" turns identification OFF in the new setting, once, and clears the old key', async () => {
+    const st = fakeStorage({ [KEY]: '0' })
+    const saved: boolean[] = []
+    await migrateLegacySwitch(st, async (enabled) => { saved.push(enabled); return true })
+    expect(saved).toEqual([false])
+    expect(KEY in st.data).toBe(false)
+  })
+  it('an absent preference is not a choice: nothing is saved, so the new default (on) applies', async () => {
+    const st = fakeStorage({})
+    const saved: boolean[] = []
+    await migrateLegacySwitch(st, async (enabled) => { saved.push(enabled); return true })
+    expect(saved).toEqual([])
+    expect(parseIdentifySettings(null).enabled).toBe(true)
+  })
+  it('an old "1" (it was on) saves nothing and is cleared', async () => {
+    const st = fakeStorage({ [KEY]: '1' })
+    const saved: boolean[] = []
+    await migrateLegacySwitch(st, async (enabled) => { saved.push(enabled); return true })
+    expect(saved).toEqual([])
+    expect(KEY in st.data).toBe(false)
+  })
+  it.each([['false'], ['off'], [''], ['no'], ['2']])('anything else that was stored (%j) is read as the old code read it: off', async (v) => {
+    const st = fakeStorage({ [KEY]: v })
+    const saved: boolean[] = []
+    await migrateLegacySwitch(st, async (enabled) => { saved.push(enabled); return true })
+    expect(saved).toEqual([false])
+  })
+  it('if the save fails the old key is KEPT, so the opt-out is retried next launch rather than lost', async () => {
+    const st = fakeStorage({ [KEY]: '0' })
+    await migrateLegacySwitch(st, async () => false)
+    expect(st.data[KEY]).toBe('0')
+    await migrateLegacySwitch(st, async () => { throw new Error('ipc down') })
+    expect(st.data[KEY]).toBe('0')
+  })
+  it('is one-shot: once migrated, a later launch does not override what the operator chose in the new switch', async () => {
+    const st = fakeStorage({ [KEY]: '0' })
+    let calls = 0
+    const save = async () => { calls++; return true }
+    await migrateLegacySwitch(st, save)
+    await migrateLegacySwitch(st, save)
+    expect(calls).toBe(1)
+  })
+  it('storage that throws changes nothing and does not throw', async () => {
+    const boom = { getItem: () => { throw new Error('denied') }, removeItem: () => { throw new Error('denied') } }
+    let calls = 0
+    await expect(migrateLegacySwitch(boom, async () => { calls++; return true })).resolves.toBeUndefined()
+    expect(calls).toBe(0)
   })
 })
