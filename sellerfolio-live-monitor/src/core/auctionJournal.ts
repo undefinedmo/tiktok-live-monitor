@@ -11,8 +11,9 @@
 
 import type { PinState, PinnedAuction } from './types'
 
-const STATUS_BIDDING = 1
-const STATUS_ENDED = 3
+/** pin/get auction status: the card is taking bids / the lot has closed. */
+export const STATUS_BIDDING = 1
+export const STATUS_ENDED = 3
 
 export interface AuctionStartRecord {
   type: 'auction_start'

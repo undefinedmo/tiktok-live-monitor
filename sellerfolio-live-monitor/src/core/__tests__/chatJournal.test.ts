@@ -3,7 +3,7 @@ import type { ChatMessage } from '../types'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { decodeChat } from '../chat'
-import { ChatJournal, journalChat, MAX_NAME_CHARS, MAX_TEXT_CHARS, MIN_PLAUSIBLE_TS_MS, SEEN_CAP } from '../chatJournal'
+import { ChatJournal, IM_LOT_FRESH_MS, PIN_LOT_FRESH_MS, journalChat, lotInProgress, MAX_NAME_CHARS, MAX_TEXT_CHARS, MIN_PLAUSIBLE_TS_MS, SEEN_CAP } from '../chatJournal'
 
 const T0 = 1781991025523 // a real chat timestamp, TikTok's clock, ms
 const NOW = 1781991026000 // this machine's clock when the frame arrived; deliberately NOT equal to T0
@@ -11,7 +11,7 @@ const msg = (o: Partial<ChatMessage> = {}): ChatMessage => ({ msgId: '7653593120
 const one = (m: ChatMessage, now = NOW) => new ChatJournal().ingest([m], now)
 
 describe('ChatJournal: what a chat line becomes', () => {
-  it('carries the time (seconds and ms, TikTok clock), author, id, handle and text and nothing else', () => {
+  it('carries the time (seconds and ms, TikTok clock), author, id, handle, text and the lot (null when none) and nothing else', () => {
     const [r] = one(msg({ avatarUrl: 'https://p19-common-sign.tiktokcdn-us.com/avatar.jpeg?x-expires=1' }))
     expect(r).toEqual({
       id: 'chat.7653593120676039438',
@@ -22,6 +22,7 @@ describe('ChatJournal: what a chat line becomes', () => {
         authorId: '6841363407170978822',
         handle: 'latricecolburn',
         text: 'Cute',
+        lot: null,
       },
     })
   })
@@ -34,7 +35,7 @@ describe('ChatJournal: what a chat line becomes', () => {
 
   it('omits author fields the frame did not carry rather than writing empty strings', () => {
     const [r] = one(msg({ userId: undefined, handle: undefined }))
-    expect(Object.keys(r!.data).sort()).toEqual(['atEpochSec', 'atMs', 'author', 'text'])
+    expect(Object.keys(r!.data).sort()).toEqual(['atEpochSec', 'atMs', 'author', 'lot', 'text'])
   })
 
   it('keeps every line, in order: questions, statements, emoji, links and blanks alike (no detector here)', () => {
@@ -45,6 +46,109 @@ describe('ChatJournal: what a chat line becomes', () => {
 
   it('returns nothing for no messages', () => {
     expect(new ChatJournal().ingest([], NOW)).toEqual([])
+  })
+})
+
+// THE LOT. A chat line is only worth keeping for what it can be joined to, and the lot being sold when a
+// buyer asks "is it real?" is that join. (auction_start, the other way to join, is captured for ~29% of lots.)
+describe('ChatJournal: the lot in progress', () => {
+  it('stamps every line of the frame with the lot it was given, as a string', () => {
+    const out = new ChatJournal().ingest([msg({ msgId: '1' }), msg({ msgId: '2', text: 'size?' })], NOW, '#42')
+    expect(out.map((r) => r.data['lot'])).toEqual(['#42', '#42'])
+  })
+
+  it('is null -- present, and null -- when no lot is known, so "no lot" is distinguishable from "written before lots were stamped"', () => {
+    const [none] = new ChatJournal().ingest([msg()], NOW)
+    expect('lot' in none!.data).toBe(true)
+    expect(none!.data['lot']).toBeNull()
+    expect(new ChatJournal().ingest([msg()], NOW, null)[0]!.data['lot']).toBeNull()
+  })
+
+  it('an empty or blank lot is no lot', () => {
+    expect(new ChatJournal().ingest([msg()], NOW, '')[0]!.data['lot']).toBeNull()
+    expect(new ChatJournal().ingest([msg()], NOW, '   ')[0]!.data['lot']).toBeNull()
+  })
+
+  it('does not change a line id: the same line seen under another lot is still one row', () => {
+    const j = new ChatJournal()
+    const a = j.ingest([msg()], NOW, '#1')[0]!.id
+    expect(j.ingest([msg()], NOW, '#2')).toEqual([]) // a replay is dropped, whatever the lot says now
+    expect(new ChatJournal().ingest([msg()], NOW, '#2')[0]!.id).toBe(a)
+    const bare = new ChatJournal().ingest([msg({ msgId: undefined })], NOW, '#1')[0]!.id
+    expect(new ChatJournal().ingest([msg({ msgId: undefined })], NOW, '#9')[0]!.id).toBe(bare)
+  })
+
+  it('journalChat passes the lot through to every record', () => {
+    const lots: unknown[] = []
+    journalChat(new ChatJournal(), [msg({ msgId: '1' }), msg({ msgId: '2' })], NOW, (_t, d) => lots.push((d as { lot?: unknown }).lot), '#7')
+    expect(lots).toEqual(['#7', '#7'])
+    const none: unknown[] = []
+    journalChat(new ChatJournal(), [msg()], NOW, (_t, d) => none.push((d as { lot?: unknown }).lot))
+    expect(none).toEqual([null])
+  })
+})
+
+// What the app knows as the lot in progress, from the two things it hears: the pin poll (the pinned card,
+// polled every second or so) and the per-bid feed (every bid on any lot, pinned or not).
+describe('lotInProgress', () => {
+  const NOW_MS = 1_800_000_000_000
+  const BIDDING = 1
+  const ENDED = 3
+  const pin = (o: { status?: number; lot?: string; age?: number } = {}) => ({
+    ts: NOW_MS - (o.age ?? 1000),
+    current: { status: o.status ?? BIDDING, variantDesc: 'lot' in o ? o.lot : '#12' },
+  })
+  const im = (lotNumber: string | undefined, age = 1000) => ({ lotNumber, ts: NOW_MS - age })
+
+  it('is the pinned lot while it is bidding', () => {
+    expect(lotInProgress(null, pin(), NOW_MS)).toBe('#12')
+  })
+
+  it('names the freshness windows exactly', () => {
+    expect(PIN_LOT_FRESH_MS).toBe(15_000)
+    expect(IM_LOT_FRESH_MS).toBe(60_000)
+  })
+
+  it('does not trust a pin sample older than the window, to the millisecond', () => {
+    expect(lotInProgress(null, pin({ age: PIN_LOT_FRESH_MS - 1 }), NOW_MS)).toBe('#12')
+    expect(lotInProgress(null, pin({ age: PIN_LOT_FRESH_MS }), NOW_MS)).toBeNull()
+  })
+
+  it('falls back to the lot being bid when nothing is pinned', () => {
+    expect(lotInProgress(im('#30'), null, NOW_MS)).toBe('#30')
+    expect(lotInProgress(im('#30'), { ts: NOW_MS - 500 }, NOW_MS)).toBe('#30') // a pin poll with no card on it
+  })
+
+  it('does not trust a bid older than the window, to the millisecond', () => {
+    expect(lotInProgress(im('#30', IM_LOT_FRESH_MS - 1), null, NOW_MS)).toBe('#30')
+    expect(lotInProgress(im('#30', IM_LOT_FRESH_MS), null, NOW_MS)).toBeNull()
+  })
+
+  it('prefers the pinned bidding lot over the bid feed', () => {
+    expect(lotInProgress(im('#30'), pin({ lot: '#12' }), NOW_MS)).toBe('#12')
+  })
+
+  it('a pinned lot that has ENDED is not in progress, and nor is the bid feed still naming it', () => {
+    expect(lotInProgress(null, pin({ status: ENDED }), NOW_MS)).toBeNull()
+    expect(lotInProgress(im('#12', 5000), pin({ status: ENDED, lot: '#12' }), NOW_MS)).toBeNull()
+  })
+
+  it('but a bid on a DIFFERENT lot after the pinned one ended is the lot in progress', () => {
+    expect(lotInProgress(im('#13', 2000), pin({ status: ENDED, lot: '#12' }), NOW_MS)).toBe('#13')
+  })
+
+  it('a pinned card with no lot number falls back to the bid feed', () => {
+    expect(lotInProgress(im('#30'), pin({ lot: undefined }), NOW_MS)).toBe('#30')
+  })
+
+  it('is null with nothing known, and for a blank lot number', () => {
+    expect(lotInProgress(null, null, NOW_MS)).toBeNull()
+    expect(lotInProgress(im(undefined), null, NOW_MS)).toBeNull()
+    expect(lotInProgress(im('  '), pin({ lot: '' }), NOW_MS)).toBeNull()
+  })
+
+  it('another pin status (not bidding, not ended) is not a lot in progress', () => {
+    expect(lotInProgress(null, pin({ status: 2 }), NOW_MS)).toBeNull()
   })
 })
 
@@ -243,7 +347,7 @@ describe('journalChat: a real frame to journal records', () => {
     expect(n).toBe(1)
     expect(calls).toEqual([[
       'chat',
-      { atEpochSec: 1781991025, atMs: 1781991025523, author: 'Latrice Colburn', authorId: '6841363407170978822', handle: 'latricecolburn', text: 'Cute' },
+      { atEpochSec: 1781991025, atMs: 1781991025523, author: 'Latrice Colburn', authorId: '6841363407170978822', handle: 'latricecolburn', text: 'Cute', lot: null },
       'chat.7653593120676039438',
     ]])
   })

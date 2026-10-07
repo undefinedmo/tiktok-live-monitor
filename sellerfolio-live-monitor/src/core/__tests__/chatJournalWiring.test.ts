@@ -18,8 +18,17 @@ describe('main.ts journals every decoded chat frame', () => {
     expect(handlerAt).toBeGreaterThan(-1)
   })
 
-  it('calls journalChat with the decoded items, the local arrival time and record', () => {
-    expect(handler).toContain('journalChat(chatJournal, items, now, record)')
+  it('calls journalChat with the decoded items, the local arrival time, record and the lot in progress', () => {
+    expect(handler).toContain('journalChat(chatJournal, items, now, record, lotInProgress(imCurrent, lastPin, now))')
+  })
+
+  // The lot is read AFTER the auction path has taken this frame's bids into imCurrent, and inside the fence
+  // that keeps a failure here from reaching the labels.
+  it('reads the lot after the frame has updated the current lot, and inside the try', () => {
+    expect(handler.indexOf("ingestAuctionBytes(raw, now, 'im')")).toBeLessThan(handler.indexOf('lotInProgress(imCurrent, lastPin, now)'))
+    const fenced = handler.slice(handler.indexOf('try { journalChat('))
+    expect(fenced.indexOf('lotInProgress(imCurrent, lastPin, now)')).toBeGreaterThan(0)
+    expect(fenced.indexOf('lotInProgress(imCurrent, lastPin, now)')).toBeLessThan(fenced.indexOf('} catch {'))
   })
 
   it('does so for every frame, after the auction path that prints labels, and fenced so it cannot break it', () => {

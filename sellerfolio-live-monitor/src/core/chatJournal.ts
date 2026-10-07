@@ -15,8 +15,16 @@
 //   When TikTok sent no usable timestamp, no time is written at all. This machine's clock is
 //   never put into a TikTok-clock field. (The one place it appears is the fallback id, marked `L`.)
 //
+// THE LOT. Every line carries the lot that was in progress when it was said (`lot`, as the auction
+// journal names it, e.g. "#42"; null when none is known). That is what makes the corpus worth keeping:
+// "is it real?" means something only for the lot it was asked about. Without it a line can be joined to a
+// lot only through `auction_start`, which is captured for about 29% of lots. The lot is whatever the app
+// knows at the moment the frame is journaled (`lotInProgress`); a frame replayed after a restart is
+// stamped with the lot then in progress, which is a limit of the source, not something this can know.
+//
 // Portable: no electron/DOM.
 
+import { STATUS_BIDDING, STATUS_ENDED } from './auctionJournal'
 import type { ChatMessage } from './types'
 
 /** Longest chat text kept, in characters. TikTok's own limit is far below this (~150); the cap
@@ -34,8 +42,37 @@ export const MIN_PLAUSIBLE_TS_MS = Date.UTC(2024, 0, 1)
 export interface ChatJournalRecord {
   /** The stable id the uploader upserts on. */
   id: string
-  /** The journal fields, written under type `chat`. */
-  data: Record<string, string | number | boolean>
+  /** The journal fields, written under type `chat`. `lot` is a string, or null when no lot is known. */
+  data: Record<string, string | number | boolean | null>
+}
+
+/** A pin/get sample is trusted as "the pinned card right now" this long (the poll runs about once a second). */
+export const PIN_LOT_FRESH_MS = 15_000
+/** A bid on a lot names the lot in progress for this long; the bid feed has no "closed" signal of its own. */
+export const IM_LOT_FRESH_MS = 60_000
+
+/**
+ * The lot in progress, from what the app hears, or null.
+ *  1. the pinned card, while it is taking bids (a fresh pin sample, status bidding, with a lot number);
+ *  2. else the lot of the latest bid, if it is recent -- unless the pinned card says that very lot has
+ *     ENDED (the bid feed never says "closed", so it would otherwise name a finished lot for a minute);
+ *  3. else null.
+ */
+export function lotInProgress(
+  im: { lotNumber?: string; ts: number } | null,
+  pin: { ts: number; current?: { status?: number; variantDesc?: string } } | null,
+  nowMs: number,
+): string | null {
+  const named = (v: string | undefined): string | null => (v && v.trim() ? v.trim() : null)
+  const c = pin && nowMs - pin.ts < PIN_LOT_FRESH_MS ? pin.current : undefined
+  if (c?.status === STATUS_BIDDING) {
+    const lot = named(c.variantDesc)
+    if (lot) return lot
+  }
+  const bid = im && nowMs - im.ts < IM_LOT_FRESH_MS ? named(im.lotNumber) : null
+  if (!bid) return null
+  if (c?.status === STATUS_ENDED && named(c.variantDesc) === bid) return null
+  return bid
 }
 
 /** cyrb53, base 36: a fast deterministic 53-bit string hash. Not cryptographic; it only has to
@@ -69,10 +106,12 @@ export class ChatJournal {
   /**
    * The records to journal for one decoded frame, in order. Messages already journaled are
    * dropped. `nowMs` is THIS machine's clock and is used for nothing but the id of a message
-   * that carries no timestamp at all.
+   * that carries no timestamp at all. `lot` is the lot in progress (see `lotInProgress`), stamped on
+   * every line of the frame; it is never part of a line's id.
    */
-  ingest(messages: ChatMessage[], nowMs: number): ChatJournalRecord[] {
+  ingest(messages: ChatMessage[], nowMs: number, lot: string | null = null): ChatJournalRecord[] {
     const out: ChatJournalRecord[] = []
+    const lotName = lot && lot.trim() ? lot.trim() : null
     const inFrame = new Map<string, number>()
     for (const m of messages) {
       const hasTime = m.ts >= MIN_PLAUSIBLE_TS_MS
@@ -92,6 +131,7 @@ export class ChatJournal {
       if (m.userId) data['authorId'] = m.userId
       if (handle) data['handle'] = handle.value
       data['text'] = text.value
+      data['lot'] = lotName
       if (text.cut || author.cut || handle?.cut) data['truncated'] = true
       out.push({ id, data })
     }
@@ -125,8 +165,9 @@ export function journalChat(
   items: ChatMessage[],
   nowMs: number,
   record: (type: 'chat', data: ChatJournalRecord['data'], id: string) => void,
+  lot: string | null = null,
 ): number {
-  const recs = journal.ingest(items, nowMs)
+  const recs = journal.ingest(items, nowMs, lot)
   for (const r of recs) record('chat', r.data, r.id)
   return recs.length
 }
