@@ -57,10 +57,16 @@ export type ExtractedClip = {
  *
  * `push` is async because reading the first chunk is; it never rejects, and chunks are inserted in
  * push order. Until the first chunk has been read there is no init, so `extract` returns null.
+ *
+ * A first chunk that cannot yield an init (its read throws, or it STARTS at a Cluster so the init
+ * would be empty) is logged and leaves the recording broken: no later chunk is promoted to init --
+ * a Cluster-only chunk would make an empty header and every clip silently undecodable -- and
+ * `extract` returns null until `reset` (a new recording, with a new header).
  */
 export function makeClipStore(opts: { capSec: number; now: () => number }) {
   let chunks: StoredChunk[] = []
   let init: Blob | null = null
+  let broken = false // the recording's header was lost; see above
   let seq = 0
   let generation = 0 // bumped by reset(): a push still reading its blob must not land in the next show
   let tail: Promise<void> = Promise.resolve()
@@ -74,9 +80,22 @@ export function makeClipStore(opts: { capSec: number; now: () => number }) {
         if (gen !== generation) return
         let media: Blob | null = blob
         if (init === null) {
-          const at = findClusterStart(new Uint8Array(await blob.arrayBuffer()))
+          if (broken) return // nothing after a lost header can decode
+          const fail = (why: string) => {
+            if (gen !== generation) return
+            broken = true
+            console.error(`clipStore: ${why}; no clip can be served until the recorder restarts`)
+          }
+          let at: number
+          try {
+            at = findClusterStart(new Uint8Array(await blob.arrayBuffer()))
+          } catch (e) {
+            fail(`could not read the first chunk (${(e as Error).message})`)
+            return
+          }
           if (gen !== generation) return
-          if (at >= 0) { init = blob.slice(0, at); media = blob.slice(at) }
+          if (at === 0) { fail('the first chunk starts at a Cluster, so there is no init segment'); return }
+          if (at > 0) { init = blob.slice(0, at); media = blob.slice(at) }
           else { init = blob; media = null }
         }
         if (media) {
@@ -108,6 +127,7 @@ export function makeClipStore(opts: { capSec: number; now: () => number }) {
       generation++
       chunks = []
       init = null
+      broken = false
       tail = Promise.resolve()
     },
   }

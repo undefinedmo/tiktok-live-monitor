@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { makeClipStore, findClusterStart } from '../clipRecorder'
 
 // The EBML id of a WebM Cluster: where the init segment (EBML header + Segment + Tracks) ends.
@@ -20,6 +20,19 @@ async function recordingOf(n: number, opts: { capSec?: number; dur?: number; t0?
   for (let i = 0; i < n; i++) { t += dur; await store.push(blobOf([i]), dur) } // chunk i = [t0+dur*i, t0+dur*(i+1))
   return store
 }
+
+// A blob whose bytes are not readable until the test says so: holds a push "mid-arrayBuffer()".
+function slowBlob(...parts: number[][]) {
+  const blob = blobOf(...parts)
+  const all = parts.flat()
+  let release!: () => void
+  const gate = new Promise<void>((r) => { release = r })
+  Object.defineProperty(blob, 'arrayBuffer', {
+    value: async () => { await gate; return new Uint8Array(all).buffer },
+  })
+  return { blob, release }
+}
+const tick = () => new Promise<void>((r) => setTimeout(r, 0))
 
 describe('findClusterStart', () => {
   it('finds the first Cluster id, and says -1 when there is none', () => {
@@ -160,6 +173,106 @@ describe('makeClipStore', () => {
       await store.push(blobOf([5]), 1)
       const got = store.extract({ startEpochSec: 0, endEpochSec: 5000 })
       expect(await bytes(got!.blob)).toEqual([0xdd, 0xdd, 5])
+    })
+  })
+
+  // The queue. push is async, so ORDER and the show boundary are both things the code has to hold.
+  describe('pushes in flight', () => {
+    it('land in call order when none is awaited', async () => {
+      let t = 1000
+      const store = makeClipStore({ capSec: 300, now: () => t })
+      const all = [store.push(blobOf(HEADER), 1)]
+      for (let i = 0; i < 4; i++) { t += 1; all.push(store.push(blobOf([i]), 1)) }
+      await Promise.all(all)
+      const got = store.extract({ startEpochSec: 0, endEpochSec: 5000 })
+      expect(await bytes(got!.blob)).toEqual([...HEADER, 0, 1, 2, 3])
+    })
+
+    // The show ends mid-queue: a chunk still being read must not turn up in the next show's buffer.
+    it('a reset while the first chunk is being read keeps that chunk out of the next show', async () => {
+      let t = 1000
+      const store = makeClipStore({ capSec: 300, now: () => t })
+      const stale = slowBlob([0xaa, 0xaa], CLUSTER, [9])
+      const stalePush = store.push(stale.blob, 1)
+      await tick() // the old show's first chunk is now mid-arrayBuffer()
+      store.reset()
+
+      await store.push(blobOf(HEADER), 1)
+      t += 1
+      await store.push(blobOf([1]), 1)
+      stale.release() // the old read finishes only now
+      await stalePush
+
+      const got = store.extract({ startEpochSec: 0, endEpochSec: 5000 })
+      expect(await bytes(got!.blob)).toEqual([...HEADER, 1]) // not the stale header, not the stale cluster
+    })
+
+    it('a reset drops chunks still queued behind a slow read', async () => {
+      let t = 1000
+      const store = makeClipStore({ capSec: 300, now: () => t })
+      const slow = slowBlob(HEADER)
+      const first = store.push(slow.blob, 1)
+      t += 1
+      const queued = store.push(blobOf([7]), 1) // waits behind the slow read
+      store.reset()
+
+      await store.push(blobOf([0xdd]), 1)
+      t += 1
+      await store.push(blobOf([8]), 1)
+      slow.release()
+      await Promise.all([first, queued])
+
+      const got = store.extract({ startEpochSec: 0, endEpochSec: 5000 })
+      expect(await bytes(got!.blob)).toEqual([0xdd, 8])
+    })
+  })
+
+  // Without a header nothing decodes, and a Cluster-only chunk promoted to "init" would be an EMPTY
+  // header: every clip for the rest of the show silently undecodable. Fail loudly and serve nothing.
+  describe('a first chunk that cannot give an init segment', () => {
+    const quiet = () => vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    it('is not replaced by the next chunk when its read throws', async () => {
+      const err = quiet()
+      let t = 1000
+      const store = makeClipStore({ capSec: 300, now: () => t })
+      const broken = blobOf(HEADER)
+      Object.defineProperty(broken, 'arrayBuffer', { value: () => Promise.reject(new Error('read failed')) })
+      await store.push(broken, 1)
+      t += 1
+      await store.push(blobOf([1]), 1) // plain media: promoting it would make a headerless recording
+      t += 1
+      await store.push(blobOf(CLUSTER, [2]), 1) // pure Cluster: promoting it would make an EMPTY init
+      for (let i = 3; i < 6; i++) { t += 1; await store.push(blobOf([i]), 1) } // plain chunks that would be served
+      expect(store.extract({ startEpochSec: 0, endEpochSec: 5000 })).toBeNull()
+      expect(err).toHaveBeenCalled()
+      err.mockRestore()
+    })
+
+    it('is not accepted when it starts at a Cluster (an empty init)', async () => {
+      const err = quiet()
+      let t = 1000
+      const store = makeClipStore({ capSec: 300, now: () => t })
+      await store.push(blobOf(CLUSTER, [0]), 1)
+      t += 1
+      for (let i = 1; i < 4; i++) { t += 1; await store.push(blobOf([i]), 1) } // plain chunks that would be served
+      expect(store.extract({ startEpochSec: 0, endEpochSec: 5000 })).toBeNull()
+      expect(err).toHaveBeenCalledTimes(1) // said once, not once per chunk
+      err.mockRestore()
+    })
+
+    it('recovers on reset, when a new recording supplies a real header', async () => {
+      const err = quiet()
+      let t = 1000
+      const store = makeClipStore({ capSec: 300, now: () => t })
+      await store.push(blobOf(CLUSTER, [0]), 1)
+      store.reset()
+      await store.push(blobOf(HEADER), 1)
+      t += 1
+      await store.push(blobOf([1]), 1)
+      const got = store.extract({ startEpochSec: 0, endEpochSec: 5000 })
+      expect(await bytes(got!.blob)).toEqual([...HEADER, 1])
+      err.mockRestore()
     })
   })
 })
