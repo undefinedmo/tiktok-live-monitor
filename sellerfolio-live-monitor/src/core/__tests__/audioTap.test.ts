@@ -74,6 +74,15 @@ describe('openAudioTap', () => {
     await expect(openAudioTap({ element: element(), context: g.ctx })).resolves.toBeNull()
   })
 
+  // A sample tap has to read from the same node and end at the same non-speaker sink.
+  it('exposes the source node and a sink that is not the speakers', async () => {
+    const g = fakeGraph()
+    const tap = await openAudioTap({ element: element(), context: g.ctx })
+    expect(tap?.source).toBe(g.source)
+    expect(tap?.sink).toBe(g.dest)
+    expect(tap?.sink).not.toBe(g.speakers)
+  })
+
   it('re-mutes the element when the tap is stopped', async () => {
     const g = fakeGraph()
     const el = element()

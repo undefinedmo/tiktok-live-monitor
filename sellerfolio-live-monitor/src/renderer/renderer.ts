@@ -5,7 +5,8 @@ import { labelNeedsHtml } from '../electron/zplLabel' // preview-only: which pri
 import { PrintDedup } from '../core/printDedup'
 import { SaleSeed } from '../core/saleSeed'
 import { labelCode } from '../core/labelCode'
-import { makeClipStore } from '../core/clipRecorder'
+import { CLIP_SAMPLE_RATE, makePcmClipStore } from '../core/pcmClipStore'
+import { PCM_WORKLET_NAME, openPcmTap, type TapNode } from '../core/pcmTap'
 import { openAudioTap, type AudioTap, type TapContext } from '../core/audioTap'
 import { AuctionJournal } from '../core/auctionJournal'
 import { makeIdentifyQueue } from '../core/identifyQueue'
@@ -580,16 +581,17 @@ function loadStream(url: string) {
 const AI_UI = false
 
 // ── auction audio → AI transcript (mirrors sellerfolio-live enrichment) ──────
-let astream: MediaStream | null = null
-let rec: MediaRecorder | null = null
-// The capture graph: made once, kept until identification is turned off. See core/audioTap
-// for why the audio cannot simply be read off the player.
+// Is the graph running? There is no recorder object to ask any more, so this is the one answer.
+let capturing = false
+// The capture graph: made once, kept until identification is turned off. See core/audioTap for why
+// the audio cannot simply be read off the player, and core/pcmClipStore for why it is kept as samples.
 let audioTap: AudioTap | null = null
+let pcmTap: { stop: () => void } | null = null
 let audioCtx: AudioContext | null = null
-// The last 5 minutes of show audio (sized from the measured p99 inter-sale gap of 219 s), one
-// chunk per second. A sale's clip is cut from this on demand; nothing is recorded per sale.
+// The last 5 minutes of show audio (sized from the measured p99 inter-sale gap of 219 s), as raw
+// samples. A sale's clip is cut from this to the sample on demand; nothing is recorded per sale.
 // Epoch seconds from this machine's clock -- the same clock the sale's own timestamp is read against.
-const clipStore = makeClipStore({ capSec: 300, now: () => Date.now() / 1000 })
+const clipStore = makePcmClipStore({ capSec: 300, now: () => Date.now() / 1000 })
 // recapEnabled = core/identifyGate: a capture token is saved AND the Settings switch is on. The switch
 // is stored by the main process (identify.json) and is ON by default, so saving a token is what
 // turns identification on; it used to need a Gemini key on this machine plus a switch that defaulted
@@ -651,55 +653,48 @@ function idUnresolved(r: Recap): boolean {
 }
 const recaps: Recap[] = []
 
-function startRecorder(): void {
-  if (!astream) return
-  const r = (() => { try { return new MediaRecorder(astream, { mimeType: 'audio/webm' }) } catch { return new MediaRecorder(astream) } })()
-  // One continuous recording. The timeslice makes ondataavailable fire every second, and each
-  // second lands in the store. Never stop and restart it to cut a clip: the store does that.
-  r.ondataavailable = (e) => { if (e.data.size) void clipStore.push(e.data, 1) } // never rejects
-  rec = r
-  r.start(1000)
-}
-/** Drop the recorder without letting its final flush reach the store. */
-function haltRecorder(): void {
-  const r = rec
-  rec = null
-  if (!r) return
-  r.ondataavailable = null
-  try { if (r.state !== 'inactive') r.stop() } catch { /* already stopped */ }
-}
 async function startAudioCapture(): Promise<void> {
-  // Off means off: no recorder exists, so there is no clip to send.
-  if (astream || !recapEnabled) return
+  // Off means off: nothing is read from the graph, so there is no clip to send.
+  if (capturing || !recapEnabled) return
   const video = document.getElementById('live') as HTMLVideoElement | null
   if (!video) return
   const Ctor = window.AudioContext
   if (!Ctor) return
-  audioCtx ??= new Ctor()
-  const tap = await openAudioTap({ element: video, context: audioCtx as unknown as TapContext })
+  // 16 kHz, so the graph resamples once, here, and samples arrive at the rate clips are stored at.
+  audioCtx ??= new Ctor({ sampleRate: CLIP_SAMPLE_RATE })
+  const ctx = audioCtx
+  const tap = await openAudioTap({ element: video, context: ctx as unknown as TapContext })
   if (!tap) return
-  // Awaiting the context let another call, or the Settings switch, get there first.
-  if (astream || !recapEnabled) { tap.stop(); return }
+  const pcm = await openPcmTap({
+    context: ctx,
+    source: tap.source,
+    sink: tap.sink,
+    makeNode: () => new AudioWorkletNode(ctx, PCM_WORKLET_NAME) as unknown as TapNode,
+    onSamples: (samples) => clipStore.push(samples),
+  })
+  if (!pcm) { tap.stop(); return }
+  // Awaiting the graph let another call, or the Settings switch, get there first.
+  if (capturing || !recapEnabled) { pcm.stop(); tap.stop(); return }
   audioTap = tap
-  astream = tap.stream as unknown as MediaStream
-  startRecorder()
+  pcmTap = pcm
+  capturing = true
 }
 function stopAudioCapture(): void {
-  astream = null
+  capturing = false
   const tap = audioTap
+  const pcm = pcmTap
   audioTap = null
-  haltRecorder()
+  pcmTap = null
+  pcm?.stop()
   tap?.stop() // re-mutes the player and unroutes the tap, so the station is as the markup left it
-  clipStore.reset() // a later recorder writes a fresh container header; old chunks must not be spliced to it
-}
-/** A different show: forget the last one's audio, and restart the recorder so the new buffer begins
- *  at a container header rather than mid-stream. */
-function resetClipBuffer(): void {
-  haltRecorder()
   clipStore.reset()
-  startRecorder()
 }
-/** The most recent `sec` seconds of buffered audio (whole chunks, so a little more), or null.
+/** A different show: forget the last one's audio. The graph keeps running -- samples carry no
+ *  container, so there is no header to re-establish and nothing to restart. */
+function resetClipBuffer(): void {
+  clipStore.reset()
+}
+/** The most recent `sec` seconds of buffered audio, or null.
  *  NOT the identification window: that is planned per sale by core/clipBuffer + clipRecorder.
  *  This is a "right now" grab kept ONLY for transcribeProduct (the local-Gemini Products-table click).
  *  Do not use it for sales and do not grow it: a second window path is how production drifted before. */
@@ -823,7 +818,7 @@ function idEntry(r: Recap, current: boolean, redraw: () => void): HTMLElement {
 function renderCaptureState() {
   const v = document.getElementById('live') as HTMLVideoElement | null
   const videoLive = !!v && !v.paused && !v.ended && v.readyState >= 2
-  const audioLive = !!astream && rec?.state === 'recording'
+  const audioLive = capturing && clipStore.hasAudio
   const audio = document.getElementById('sigAudio')
   const video = document.getElementById('sigVideo')
   if (audio) {

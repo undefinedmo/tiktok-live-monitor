@@ -25,7 +25,14 @@ export type TapContext = {
   createMediaElementSource: (el: TapElement) => TapSourceNode
   createMediaStreamDestination: () => TapDestinationNode
 }
-export type AudioTap = { stream: TapStream; stop: () => void }
+export type AudioTap = {
+  stream: TapStream
+  /** The node carrying the show audio, for a sample tap to read from. */
+  source: TapSourceNode
+  /** A node that pulls the graph without reaching the speakers; a processor needs one downstream. */
+  sink: TapDestinationNode
+  stop: () => void
+}
 
 // `createMediaElementSource` throws if it is called twice for one element, and the diversion it sets
 // up lasts as long as the context. So the node is made once and kept.
@@ -71,6 +78,8 @@ export async function openAudioTap(opts: {
   const { source, dest } = held
   return {
     stream: dest.stream,
+    source,
+    sink: dest,
     stop: () => {
       // Quiet again, and the element left as the markup had it.
       element.muted = true

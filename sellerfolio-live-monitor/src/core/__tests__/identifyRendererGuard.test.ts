@@ -455,13 +455,31 @@ describe('glue: retry from a kept clip, one row or all failed', () => {
     expect(mainCode.split('createClipKeeper(').length - 1).toBe(1)
   })
 
-  // Measured on the live station 2026-10-09: `video.captureStream()` on the player -- which carries
-  // `muted`, as autoplay requires -- handed back an audio track reporting live and enabled that then
-  // delivered NO chunks, so the ring buffer never got a container header and every lot settled
-  // `no_audio` with a green AUDIO light over it. The audio must come through core/audioTap, which is
-  // tested, and never off the element again.
+  // Two failures measured on the live station 2026-10-09, both silent, both whole-show:
+  //  1. `video.captureStream()` on the player -- which carries `muted`, as autoplay requires --
+  //     returned an audio track reporting live and enabled that then delivered NO chunks at all.
+  //  2. Once audio flowed, MediaRecorder's own output could not be re-spliced: Chromium writes
+  //     audio-only Opus as ONE Cluster, so of nine consecutive 1 s chunks none began at a Cluster.
+  //     `init + chunks[k..m]` was valid only for k = 0, so the only clips that decoded were the ones
+  //     whose window reached the recorder's start -- which is why lot after lot came back as the
+  //     same item: they all carried the same opening audio.
+  // Hence: the audio comes through core/audioTap, the samples through core/pcmTap, and neither
+  // MediaRecorder nor captureStream may reappear here.
   it('taps the show audio through the tested graph, not off the muted player', () => {
-    expect(code).toContain('openAudioTap({ element: video, context: audioCtx as unknown as TapContext })')
+    expect(code).toContain('openAudioTap({ element: video, context: ctx as unknown as TapContext })')
     expect(code).not.toContain('captureStream')
+  })
+
+  it('keeps the audio as samples, with no container to splice', () => {
+    expect(code).toContain('openPcmTap({')
+    expect(code).toContain('onSamples: (samples) => clipStore.push(samples)')
+    expect(code).toContain('makePcmClipStore({ capSec: 300, now: () => Date.now() / 1000 })')
+    expect(code).not.toContain('MediaRecorder')
+  })
+
+  // The light used to be green whenever a recorder said 'recording', which a recorder on a dead
+  // track says quite happily -- a reassuring light over no audio whatsoever.
+  it('lights AUDIO only when samples have actually arrived', () => {
+    expect(code).toContain('const audioLive = capturing && clipStore.hasAudio')
   })
 })
