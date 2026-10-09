@@ -234,7 +234,7 @@ describe('glue: turning identification off really stops it (second sweep)', () =
   const body = () => fnBody(rendererCode, 'applyIdentifyState')
   it('on starts the recorder; going from on to off stops it and abandons what is queued', () => {
     const b = body()
-    expect(b).toContain('if (recapEnabled) startAudioCapture()')
+    expect(b).toContain('if (recapEnabled) void startAudioCapture()') // async since the tap awaits the audio context
     expect(b).toContain("else if (was) { stopAudioCapture(); endIdentifyShow('identification was turned off'); keptClips.clear() }")
     expect(b).toContain('const was = recapEnabled')
   })
@@ -453,5 +453,15 @@ describe('glue: retry from a kept clip, one row or all failed', () => {
   it('a failed clip is kept in the user-data folder, through the one keeper', () => {
     expect(mainCode).toContain("createClipKeeper(join(app.getPath('userData'), 'identify-clips'), { now: () => Date.now() })")
     expect(mainCode.split('createClipKeeper(').length - 1).toBe(1)
+  })
+
+  // Measured on the live station 2026-10-09: `video.captureStream()` on the player -- which carries
+  // `muted`, as autoplay requires -- handed back an audio track reporting live and enabled that then
+  // delivered NO chunks, so the ring buffer never got a container header and every lot settled
+  // `no_audio` with a green AUDIO light over it. The audio must come through core/audioTap, which is
+  // tested, and never off the element again.
+  it('taps the show audio through the tested graph, not off the muted player', () => {
+    expect(code).toContain('openAudioTap({ element: video, context: audioCtx as unknown as TapContext })')
+    expect(code).not.toContain('captureStream')
   })
 })

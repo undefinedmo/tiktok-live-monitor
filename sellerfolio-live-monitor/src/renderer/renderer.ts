@@ -6,6 +6,7 @@ import { PrintDedup } from '../core/printDedup'
 import { SaleSeed } from '../core/saleSeed'
 import { labelCode } from '../core/labelCode'
 import { makeClipStore } from '../core/clipRecorder'
+import { openAudioTap, type AudioTap, type TapContext } from '../core/audioTap'
 import { AuctionJournal } from '../core/auctionJournal'
 import { makeIdentifyQueue } from '../core/identifyQueue'
 import { BREAKER_COOLDOWN_MS, BREAKER_THRESHOLD, MAX_IDENTIFY_ATTEMPTS, RETRY_BACKOFF_MS, fromWirePayload, makeBreaker, makeIdentifyRun, serverToLocalSec, toWirePayload, type IdentifyPayload, type WireClip } from '../core/identifySend'
@@ -565,7 +566,7 @@ function loadStream(url: string) {
   )
   flvPlayer.attachMediaElement(video)
   flvPlayer.on(flvjs.Events.ERROR, () => { window.setTimeout(() => loadStream(lastStreamUrl), 2500) })
-  video.addEventListener('playing', () => startAudioCapture(), { once: true })
+  video.addEventListener('playing', () => void startAudioCapture(), { once: true })
   flvPlayer.load()
   void video.play().catch(() => {})
   // flv.js (unlike the mpegts.js fork) does NOT chase the live edge, so latency accumulates
@@ -581,6 +582,10 @@ const AI_UI = false
 // ── auction audio → AI transcript (mirrors sellerfolio-live enrichment) ──────
 let astream: MediaStream | null = null
 let rec: MediaRecorder | null = null
+// The capture graph: made once, kept until identification is turned off. See core/audioTap
+// for why the audio cannot simply be read off the player.
+let audioTap: AudioTap | null = null
+let audioCtx: AudioContext | null = null
 // The last 5 minutes of show audio (sized from the measured p99 inter-sale gap of 219 s), one
 // chunk per second. A sale's clip is cut from this on demand; nothing is recorded per sale.
 // Epoch seconds from this machine's clock -- the same clock the sale's own timestamp is read against.
@@ -663,20 +668,28 @@ function haltRecorder(): void {
   r.ondataavailable = null
   try { if (r.state !== 'inactive') r.stop() } catch { /* already stopped */ }
 }
-function startAudioCapture(): void {
+async function startAudioCapture(): Promise<void> {
   // Off means off: no recorder exists, so there is no clip to send.
   if (astream || !recapEnabled) return
-  const video = document.getElementById('live') as (HTMLVideoElement & { captureStream?: () => MediaStream }) | null
-  let stream: MediaStream | undefined
-  try { stream = video?.captureStream?.() } catch { /* ignore */ }
-  const tracks = stream?.getAudioTracks() ?? []
-  if (!tracks.length) return
-  astream = new MediaStream(tracks)
+  const video = document.getElementById('live') as HTMLVideoElement | null
+  if (!video) return
+  const Ctor = window.AudioContext
+  if (!Ctor) return
+  audioCtx ??= new Ctor()
+  const tap = await openAudioTap({ element: video, context: audioCtx as unknown as TapContext })
+  if (!tap) return
+  // Awaiting the context let another call, or the Settings switch, get there first.
+  if (astream || !recapEnabled) { tap.stop(); return }
+  audioTap = tap
+  astream = tap.stream as unknown as MediaStream
   startRecorder()
 }
 function stopAudioCapture(): void {
   astream = null
+  const tap = audioTap
+  audioTap = null
   haltRecorder()
+  tap?.stop() // re-mutes the player and unroutes the tap, so the station is as the markup left it
   clipStore.reset() // a later recorder writes a fresh container header; old chunks must not be spliced to it
 }
 /** A different show: forget the last one's audio, and restart the recorder so the new buffer begins
@@ -1168,7 +1181,7 @@ function applyIdentifyState(): void {
   const was = recapEnabled
   const gate = identifyGate({ hasToken: identifyReady, enabled: identifyEnabled, held: identifyHeld })
   recapEnabled = gate === 'on'
-  if (recapEnabled) startAudioCapture() // no-op until the video is playing; its own listener covers that
+  if (recapEnabled) void startAudioCapture() // no-op until the video is playing; its own listener covers that
   else if (was) { stopAudioCapture(); endIdentifyShow('identification was turned off'); keptClips.clear() }
   const sw = document.getElementById('aiTranscribe') as HTMLInputElement | null
   const st = document.getElementById('aiState')
