@@ -704,49 +704,98 @@ function recentClip(sec: number): Blob | null {
 }
 
 /** The five fields as a label/value grid — same order and labels as the web app's identity card. */
-function idFieldGrid(r: Recap): HTMLElement {
+function idFieldGrid(r: Recap, edit: boolean): HTMLElement {
   const dl = el('dl', 'id-fields')
   for (const [key, label, mono] of ID_FIELDS) {
     dl.appendChild(el('dt', undefined, label))
     const dd = el('dd', mono ? 'mono' : undefined)
-    const v = idValue(r.fields?.[key])
-    const span = el('span', v ? 'v' : 'v id-none', v ?? (r.status === 'transcribing' ? 'listening…' : 'not said'))
-    dd.appendChild(span)
+    if (edit) {
+      dd.appendChild(idFieldBox(r, key, 'card'))
+    } else {
+      const v = idValue(r.fields?.[key])
+      dd.appendChild(el('span', v ? 'v' : 'v id-none', v ?? (r.status === 'transcribing' ? 'listening…' : 'not said')))
+    }
     dl.appendChild(dd)
   }
   return dl
 }
 
-/** Inline correction of the five fields. An operator edit is never overwritten by a later run. */
-function idEditor(r: Recap, redraw: () => void): HTMLElement {
-  const box = el('div', 'id-edit')
-  const row = el('div', 'row')
-  const inputs: Partial<Record<keyof LedgerTranscript, HTMLInputElement>> = {}
-  for (const [key, label] of ID_FIELDS) {
-    const lab = el('label', undefined, label)
-    const inp = document.createElement('input')
-    inp.value = idValue(r.fields?.[key]) ?? ''
-    inp.placeholder = 'not said'
-    inputs[key] = inp
-    row.appendChild(lab); row.appendChild(inp)
-  }
-  const acts = el('div', 'acts')
-  const cancel = el('button', 'qbtn sm', 'Cancel')
-  const save = el('button', 'qbtn sm print', 'Save identity')
-  cancel.addEventListener('click', () => { editing.delete(r); redraw() })
-  save.addEventListener('click', () => {
-    const next: LedgerTranscript = { ...(r.fields ?? {}) }
-    for (const [key] of ID_FIELDS) next[key] = inputs[key]!.value.trim()
-    r.fields = next
-    r.edited = true
-    r.status = 'done'
-    persistEntry(r)
-    editing.delete(r)
-    redraw()
+/** What has been typed but not yet saved. A live show re-renders every few seconds, and without
+ *  this a half-typed correction would be wiped by the next sale that landed. */
+const drafts = new Map<Recap, Partial<Record<keyof LedgerTranscript, string>>>()
+/** Which box held the caret, so a re-render can hand it back mid-word. */
+let caret: { r: Recap; key: keyof LedgerTranscript; view: EditView; at: number } | null = null
+/** The box this render decided should hold the caret, focused once the render has finished. */
+let focusBox: HTMLInputElement | null = null
+type EditView = 'card' | 'table'
+
+/** The value cell while a lot is being corrected: a box, exactly where the value was. */
+function idFieldBox(r: Recap, key: keyof LedgerTranscript, view: EditView): HTMLInputElement {
+  const inp = document.createElement('input')
+  inp.className = 'id-inline'
+  inp.placeholder = 'not said'
+  inp.dataset.idField = key
+  inp.value = drafts.get(r)?.[key] ?? idValue(r.fields?.[key]) ?? ''
+  const remember = () => { caret = { r, key, view, at: inp.selectionStart ?? inp.value.length } }
+  inp.addEventListener('focus', remember)
+  inp.addEventListener('input', () => {
+    const d = drafts.get(r) ?? {}
+    d[key] = inp.value
+    drafts.set(r, d)
+    remember()
   })
-  acts.appendChild(cancel); acts.appendChild(save)
-  box.appendChild(row); box.appendChild(acts)
-  return box
+  // Same lot, same field, same view: this is the box the caret was in before the re-render.
+  if (caret && caret.r === r && caret.key === key && caret.view === view) focusBox = inp
+  return inp
+}
+
+/** Give the caret back after a render, or typing through a live show would be interrupted. */
+function applyEditFocus(): void {
+  const box = focusBox
+  focusBox = null
+  if (!box) return
+  const at = caret?.at ?? box.value.length
+  box.focus()
+  try { box.setSelectionRange(at, at) } catch { /* not a text box */ }
+}
+
+/** Read the boxes back out of the row they were typed into, and keep the correction. */
+function saveEditedFields(r: Recap, within: HTMLElement, redraw: () => void): void {
+  const boxes = within.querySelectorAll<HTMLInputElement>('input[data-id-field]')
+  if (!boxes.length) return
+  const next: LedgerTranscript = { ...(r.fields ?? {}) }
+  for (const box of boxes) next[box.dataset.idField as keyof LedgerTranscript] = box.value.trim()
+  r.fields = next
+  r.edited = true
+  r.status = 'done'
+  persistEntry(r)
+  closeEditor(r)
+  redraw()
+}
+
+/** Stop correcting, keeping nothing that was typed. */
+function closeEditor(r: Recap): void {
+  editing.delete(r)
+  drafts.delete(r)
+  caret = null
+}
+
+/** Enter keeps the correction, Escape abandons it -- what a box in a row is expected to do. */
+function editKeys(r: Recap, within: HTMLElement, redraw: () => void): void {
+  within.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); saveEditedFields(r, within, redraw) }
+    if (e.key === 'Escape') { e.preventDefault(); closeEditor(r); redraw() }
+  })
+}
+
+/** Save and Cancel, shown in place of Override and Retry while a lot is being corrected. */
+function editActs(r: Recap, within: HTMLElement, redraw: () => void): HTMLElement[] {
+  const cancel = el('button', 'qbtn sm', 'Cancel')
+  const save = el('button', 'qbtn sm print', 'Save')
+  cancel.addEventListener('click', () => { closeEditor(r); redraw() })
+  save.addEventListener('click', () => saveEditedFields(r, within, redraw))
+  editKeys(r, within, redraw)
+  return [cancel, save]
 }
 
 /** Retry arms on the first click and runs on the second — the same guard the web app puts on
@@ -781,34 +830,41 @@ const editing = new Set<Recap>()
  * lot still being identified is left alone: its fields are not final yet, and the card view does not
  * render an editor in that state at all.
  */
-function openEditor(r: Recap, redraw: () => void): void {
+function openEditor(r: Recap, redraw: () => void, view: EditView): void {
   if (r.status === 'transcribing' || editing.has(r)) return
   editing.add(r)
+  // The caret starts in the first field of the view that was double-clicked, not the other one.
+  caret = { r, key: ID_FIELDS[0]![0], view, at: 0 }
   redraw()
 }
 
 /** A double-click on Override, Retry, or inside the open editor is not a request to open it. */
 function dblclickOpens(target: EventTarget | null): boolean {
   const node = target instanceof Element ? target : null
-  return !node || !node.closest('button, input, .id-edit')
+  return !node || !node.closest('button, input')
 }
 
 function idEntry(r: Recap, current: boolean, redraw: () => void): HTMLElement {
   const weak = idIsWeak(r)
+  const edit = editing.has(r)
   const row = el('div', 'recap-entry' + (current ? ' current' : '') + (weak ? ' review' : ''))
   row.title = 'Double-click to override what was identified'
-  row.addEventListener('dblclick', (e) => { if (dblclickOpens(e.target)) openEditor(r, redraw) })
+  row.addEventListener('dblclick', (e) => { if (dblclickOpens(e.target)) openEditor(r, redraw, 'card') })
   const head = el('div', 'recap-head')
   head.appendChild(el('span', undefined, [r.lot, r.head].filter(Boolean).join(' · ')))
   if (r.price) head.appendChild(el('span', 'price', r.price))
   row.appendChild(head)
 
-  if (idUnresolved(r)) {
+  // While correcting, the five boxes are shown whatever the lot's state: a lot that FAILED to
+  // identify is exactly the one most in need of being filled in by hand.
+  if (edit) {
+    row.appendChild(idFieldGrid(r, true))
+  } else if (idUnresolved(r)) {
     row.appendChild(el('div', 'recap-text error', '⚠ ' + r.text))
   } else if (r.live && !r.fields) {
     if (r.status !== 'transcribing') row.appendChild(el('div', 'recap-text', r.text))
   } else {
-    row.appendChild(idFieldGrid(r))
+    row.appendChild(idFieldGrid(r, edit))
   }
 
   if (r.status === 'transcribing') {
@@ -818,20 +874,24 @@ function idEntry(r: Recap, current: boolean, redraw: () => void): HTMLElement {
     row.appendChild(el('div', 'id-why', r.live ? 'identifying this lot…' : 'listening to this lot…'))
   } else {
     const acts = el('div', 'id-acts')
-    acts.appendChild(el('span', 'id-why',
-      r.edited ? 'you corrected this' : r.status === 'error' ? 'identification failed' : r.status === 'abandoned' || r.status === 'skipped' ? 'not identified' : weak ? 'some fields were not said' : 'identified'))
-    const override = el('button', 'qbtn sm', 'Override')
-    override.addEventListener('click', () => { editing.has(r) ? editing.delete(r) : editing.add(r); redraw() })
-    acts.appendChild(override)
-    acts.appendChild(idRetryButton(r, redraw))
+    if (edit) {
+      acts.appendChild(el('span', 'id-why', 'correcting this lot'))
+      for (const b of editActs(r, row, redraw)) acts.appendChild(b)
+    } else {
+      acts.appendChild(el('span', 'id-why',
+        r.edited ? 'you corrected this' : r.status === 'error' ? 'identification failed' : r.status === 'abandoned' || r.status === 'skipped' ? 'not identified' : weak ? 'some fields were not said' : 'identified'))
+      const override = el('button', 'qbtn sm', 'Override')
+      override.addEventListener('click', () => openEditor(r, redraw, 'card'))
+      acts.appendChild(override)
+      acts.appendChild(idRetryButton(r, redraw))
+    }
     row.appendChild(acts)
-    if (editing.has(r)) row.appendChild(idEditor(r, redraw))
   }
   return row
 }
 
 /** The capture lights report what is ACTUALLY running, not what the app can do.
- *  AUDIO is green only while a MediaRecorder is recording the stream's audio track — which needs
+ *  AUDIO is green only while samples are actually reaching the ring buffer — which needs
  *  a saved capture token and the Settings switch (on by default). VIDEO is green only
  *  while the player is genuinely playing. Anything less and an operator checking "is this
  *  capturing?" gets a reassuring light over nothing. */
@@ -887,7 +947,7 @@ function renderRecap() {
 }
 
 /** Both views read the same array, so an Override made in one is visible in the other. */
-function renderAll() { renderRecap(); renderIdentifications() }
+function renderAll() { renderRecap(); renderIdentifications(); applyEditFocus() }
 
 let idFilter: 'all' | 'review' | 'edited' = 'all'
 function renderIdentifications() {
@@ -907,7 +967,8 @@ function renderIdentifications() {
   for (const r of rows) {
     const tr = el('tr', idIsWeak(r) || idUnresolved(r) ? 'flagged' : undefined)
     tr.title = 'Double-click to override what was identified'
-    tr.addEventListener('dblclick', (e) => { if (dblclickOpens(e.target)) openEditor(r, renderAll) })
+    tr.addEventListener('dblclick', (e) => { if (dblclickOpens(e.target)) openEditor(r, renderAll, 'table') })
+    const edit = editing.has(r)
     const cell = (text: string | null, cls?: string) => {
       const td = el('td', cls)
       td.appendChild(el('span', text ? undefined : 'id-none', text ?? 'not said'))
@@ -918,32 +979,36 @@ function renderIdentifications() {
     // not — an older worker, or a 200 whose identity could not be read — say so with an em dash
     // rather than "not said", which would claim the brand was never spoken.
     const fieldText = (k: keyof LedgerTranscript) => (r.live && !r.fields ? '—' : idValue(r.fields?.[k]))
-    tr.appendChild(cell(fieldText('brand')))
-    tr.appendChild(cell(fieldText('item')))
-    tr.appendChild(cell(fieldText('color')))
-    tr.appendChild(cell(fieldText('size'), 'mono'))
-    tr.appendChild(cell(fieldText('retailPrice'), 'num mono'))
+    // While correcting, the field's own cell holds the box: the value is replaced where it sits,
+    // rather than copied into a second set of fields a row below it.
+    const fieldCell = (k: keyof LedgerTranscript, cls?: string) => {
+      if (!edit) return cell(fieldText(k), cls)
+      const td = el('td', cls)
+      td.appendChild(idFieldBox(r, k, 'table'))
+      return td
+    }
+    tr.appendChild(fieldCell('brand'))
+    tr.appendChild(fieldCell('item'))
+    tr.appendChild(fieldCell('color'))
+    tr.appendChild(fieldCell('size', 'mono'))
+    tr.appendChild(fieldCell('retailPrice', 'num mono'))
     tr.appendChild(cell(r.price || null, 'num mono'))
     tr.appendChild(cell(r.edited ? 'You corrected it'
       : r.status === 'error' ? (r.text || 'Failed') : r.status === 'abandoned' ? 'Not identified (show ended or app closed)' : r.status === 'skipped' ? 'Nothing to identify'
       : r.status === 'transcribing' ? 'Identifying…' : 'Identified live'))
     const acts = el('td')
     const wrap = el('div', 'rowacts')
-    const ov = el('button', 'qbtn sm', 'Override')
-    ov.addEventListener('click', () => { editing.has(r) ? editing.delete(r) : editing.add(r); renderAll() })
-    wrap.appendChild(ov)
-    wrap.appendChild(idRetryButton(r, renderAll))
+    if (edit) {
+      for (const b of editActs(r, tr, renderAll)) wrap.appendChild(b)
+    } else {
+      const ov = el('button', 'qbtn sm', 'Override')
+      ov.addEventListener('click', () => openEditor(r, renderAll, 'table'))
+      wrap.appendChild(ov)
+      wrap.appendChild(idRetryButton(r, renderAll))
+    }
     acts.appendChild(wrap)
     tr.appendChild(acts)
     body.appendChild(tr)
-    if (editing.has(r)) {
-      const erow = el('tr')
-      const td = el('td')
-      td.setAttribute('colspan', '9')
-      td.appendChild(idEditor(r, renderAll))
-      erow.appendChild(td)
-      body.appendChild(erow)
-    }
   }
 }
 // ── live identification: sale → clip → queue → worker → row ────────────────────────────────────
@@ -1991,7 +2056,7 @@ document.getElementById('navIdentify')?.addEventListener('click', () => showScre
 document.getElementById('navSettings2')?.addEventListener('click', () => showScreen('settings'))
 // The review count in the Identification head is the route to the flagged lots.
 document.getElementById('idReviewChip')?.addEventListener('click', () => { idFilter = 'review'; syncIdFilterButtons(); showScreen('identify') })
-document.getElementById('idSearch')?.addEventListener('input', () => renderIdentifications())
+document.getElementById('idSearch')?.addEventListener('input', () => renderAll()) // renderAll, so a correction being typed keeps its caret
 function syncIdFilterButtons() {
   for (const b of document.querySelectorAll<HTMLElement>('[data-idfilter]')) {
     b.classList.toggle('on', b.dataset.idfilter === idFilter)

@@ -95,7 +95,7 @@ describe('renderer persists identifications', () => {
     expect(fnBody(rendererCode, 'settleEntry')).toContain('persistEntry(entry)')
   })
   it('writes the row again when an operator corrects it', () => {
-    expect(fnBody(rendererCode, 'idEditor')).toContain('persistEntry(r)')
+    expect(fnBody(rendererCode, 'saveEditedFields')).toContain('persistEntry(r)')
   })
   it('persistEntry goes through the tested row builder and can never throw into the show', () => {
     const body = fnBody(rendererCode, 'persistEntry')
@@ -190,7 +190,7 @@ describe('glue: order, wiring and the markup it names', () => {
 
   it('a row is saved AFTER its status and text are set, never before (or it would persist the old state)', () => {
     after(fnBody(rendererCode, 'settleEntry'), 'entry.text =', 'persistEntry(entry)')
-    after(fnBody(rendererCode, 'idEditor'), "r.status = 'done'", 'persistEntry(r)')
+    after(fnBody(rendererCode, 'saveEditedFields'), "r.status = 'done'", 'persistEntry(r)')
     after(fnBody(rendererCode, 'identifySale'), "entry.status = 'transcribing'", 'persistEntry(entry)')
   })
   it('the switch saves the box as ticked, not its opposite', () => {
@@ -503,14 +503,39 @@ describe('glue: retry from a kept clip, one row or all failed', () => {
   it('opens the correction editor on a double-click, in both views', () => {
     expect(code).toContain("row.addEventListener('dblclick'")
     expect(code).toContain("tr.addEventListener('dblclick'")
-    expect(code).toContain('openEditor(r, redraw)')
-    expect(code).toContain('openEditor(r, renderAll)')
+    expect(code).toContain("openEditor(r, redraw, 'card')")
+    expect(code).toContain("openEditor(r, renderAll, 'table')")
   })
 
   // A double-click that CLOSED an open editor would throw away whatever had been typed into it, and
-  // one landing on Override, Retry or an input of the editor itself is not a request to open it.
+  // one landing on Override, Retry or a box being typed into is not a request to open it.
+  // Corrections happen where the value is: the cell's text is replaced by a box. The old editor was
+  // a second copy of the five fields in a panel UNDER the row, which meant reading one set of values
+  // and typing into another, a row away from the lot it belonged to.
+  it('corrects in place: the value cell becomes the box', () => {
+    expect(code).toContain("idFieldBox(r, key, 'card')")
+    expect(code).toContain('idFieldGrid(r, edit)')
+    expect(code).toContain("inp.dataset.idField = key")
+  })
+
+  it('has no editor panel under the row at all', () => {
+    expect(rendererCode).not.toContain('function idEditor')
+    expect(code).not.toContain("setAttribute('colspan', '9')")
+  })
+
+  // Whichever view it was typed into is the one read back, so a correction cannot be half-saved
+  // from the other.
+  it('reads the boxes back from the row they were typed into', () => {
+    expect(code).toContain("within.querySelectorAll<HTMLInputElement>('input[data-id-field]')")
+  })
+
+  it('saves on Enter and gives up on Escape', () => {
+    expect(code).toContain("if (e.key === 'Enter')")
+    expect(code).toContain("if (e.key === 'Escape')")
+  })
+
   it('never closes an open editor, and ignores a double-click on a control', () => {
     expect(code).toContain("if (r.status === 'transcribing' || editing.has(r)) return")
-    expect(code).toContain("closest('button, input, .id-edit')")
+    expect(code).toContain("closest('button, input')")
   })
 })
