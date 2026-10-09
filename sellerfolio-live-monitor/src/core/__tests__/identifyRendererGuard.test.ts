@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest'
 // injected `clip: { ...wire, startEpochSec: prevBoundary ?? sale - 60 }` into the renderer, sending the
 // previous lot's window as the clip's own start, and every test and tsc stayed green.
 const renderer = readFileSync(fileURLToPath(new URL('../../renderer/renderer.ts', import.meta.url)), 'utf8')
+const sendCode = readFileSync(fileURLToPath(new URL('../identifySend.ts', import.meta.url)), 'utf8')
 // The one legitimate use: the local Gemini product capture, unrelated to identification.
 const code = renderer
   .split('\n')
@@ -481,5 +482,19 @@ describe('glue: retry from a kept clip, one row or all failed', () => {
   // track says quite happily -- a reassuring light over no audio whatsoever.
   it('lights AUDIO only when samples have actually arrived', () => {
     expect(code).toContain('const audioLive = capturing && clipStore.hasAudio')
+  })
+
+  // A lot that escalates holds its slot for MAX_IDENTIFY_ATTEMPTS * IDENTIFY_TIMEOUT_MS = 135 s.
+  // Measured 2026-10-09, a show sold a lot every ~24 s, so two slots are stalled by two slow lots
+  // for longer than four later lots take to arrive. Six covers the worst case against that pace.
+  it('runs enough identifications at once to outlast a slow one', () => {
+    expect(code).toContain('const IDENTIFY_CONCURRENCY = 6')
+    const slot = (3 * 45_000) / 1000 // attempts x timeout, both asserted below
+    expect(Math.ceil(slot / 24)).toBeLessThanOrEqual(6)
+  })
+
+  it('still bounds the attempts and timeout the slot estimate is built on', () => {
+    expect(sendCode).toContain('export const IDENTIFY_TIMEOUT_MS = 45_000')
+    expect(sendCode).toContain('export const MAX_IDENTIFY_ATTEMPTS = 3')
   })
 })

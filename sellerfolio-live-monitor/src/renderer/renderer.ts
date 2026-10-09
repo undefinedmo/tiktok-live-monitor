@@ -941,8 +941,19 @@ const MAX_BOUNDARY_EVENTS = 600
 const CHUNK_SETTLE_MS = 1500
 /** Never wait longer than this for a sale's tail audio, whatever the clocks say. */
 const MAX_TAIL_WAIT_MS = 15_000
-/** Concurrent POSTs. Two, so one slow identification (up to the timeout) does not hold every later sale. */
-const IDENTIFY_CONCURRENCY = 2
+/**
+ * Concurrent POSTs. A lot that escalates holds its slot for MAX_IDENTIFY_ATTEMPTS x
+ * IDENTIFY_TIMEOUT_MS = 135 s, and a show measured 2026-10-09 sold a lot every ~24 s: at two slots,
+ * two slow lots stall the queue for longer than four later lots take to arrive, and every one of
+ * them ages while it waits. Six covers that worst case against that pace.
+ *
+ * Six is safe on the worker, not a guess: 12 cores at load 0.05, and since clips became WAV
+ * (core/pcmClipStore) ffmpeg only reformats them rather than decoding Opus. The real ceiling is the
+ * model's own rate limit, not the box -- and note BREAKER_THRESHOLD is 2, so if raising this starts
+ * drawing 429s, the breaker trips on two consecutive failures and pauses everything for 30 s. That
+ * is the number to look at next if identification goes quiet in bursts.
+ */
+const IDENTIFY_CONCURRENCY = 6
 let showGeneration = 0
 let boundaryEvents: JournalEvent[] = [] // this show's auction starts/ends and sales, on THIS machine's clock
 let boundaryJournal = new AuctionJournal()
