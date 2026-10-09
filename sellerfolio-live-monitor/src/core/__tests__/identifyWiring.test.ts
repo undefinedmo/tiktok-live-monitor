@@ -566,17 +566,27 @@ describe('splitSalesByAge: nothing is dropped without a row', () => {
     expect(tooOld.map((x) => x.orderId)).toEqual(['old1', 'old2'])
   })
 
-  it('every sale lands in exactly one of the two (none is dropped), except a failed payment', () => {
+  it('every sale lands in exactly one of the two: none is dropped, whatever its payment', () => {
     const batch = [sale('a', 1000), sale('b', 70_000), sale('c', 30_000), sale('d', 3_600_000)]
     const { toIdentify, tooOld } = splitSalesByAge(batch, NOW, 0)
     expect(toIdentify.length + tooOld.length).toBe(batch.length)
     expect(new Set([...toIdentify, ...tooOld]).size).toBe(batch.length)
   })
 
-  it('a sale whose payment failed is a lot nobody bought: neither identified nor recorded, however old', () => {
+  // Payment status is NOT a reason to skip identification. TikTok reports payment late, so a lot
+  // reads `failed` the instant it sells and often settles moments later — and because the sweep
+  // re-returns it as history rather than as fresh, a lot skipped on first sighting was never
+  // identified at all. Measured on a live show: an unbroken run of 18 sales all reading `failed`,
+  // every one of them skipped. Identify the lot; what the payment did afterwards is a separate fact.
+  it('identifies a lot whatever its payment says, because payment settles after the hammer', () => {
     const { toIdentify, tooOld } = splitSalesByAge([sale('f1', 1000, 'failed'), sale('f2', 900_000, 'failed')], NOW, 0)
-    expect(toIdentify).toEqual([])
-    expect(tooOld).toEqual([])
+    expect(toIdentify.map((x) => x.orderId)).toEqual(['f1'])   // recent: identify it
+    expect(tooOld.map((x) => x.orderId)).toEqual(['f2'])       // late: still gets a row
+  })
+
+  it('treats pending the same as paid — it is the normal state at the hammer', () => {
+    const { toIdentify } = splitSalesByAge([sale('p1', 1000, 'pending')], NOW, 0)
+    expect(toIdentify.map((x) => x.orderId)).toEqual(['p1'])
   })
 
   it('judges age by the corrected clock, exactly as isRecentSale does (same limit, strict)', () => {

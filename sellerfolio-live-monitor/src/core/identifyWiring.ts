@@ -241,8 +241,14 @@ export function isRecentSale(createdAtMs: number, nowMs: number, serverOffsetMs:
  * Sort a batch of fresh sales into those to identify now and those that reached the app too late. Late-
  * landing order rows are a documented sync behaviour, and the audio buffer holds 300 s, so a late sale is
  * often still identifiable: it is NOT dropped. The caller records a row for each `tooOld` sale (reason
- * `too_old`, with a Retry) and does not send it on its own. A sale whose payment failed is neither:
- * nobody bought that lot, and it never was identified.
+ * `too_old`, with a Retry) and does not send it on its own.
+ *
+ * Payment status is deliberately NOT consulted. TikTok reports payment late, so a lot reads
+ * `failed` the instant it sells and frequently settles moments later — and the sweep re-returns it
+ * as history rather than as fresh, so a lot skipped on first sighting was never identified at all.
+ * Measured on a live show: an unbroken run of 18 sales all reading `failed`, every one skipped and
+ * no row to show for it. Identify the lot; what the payment did afterwards is a separate fact kept
+ * on the order.
  */
 export function splitSalesByAge<S extends { createdAt: number; paymentStatus?: string }>(
   sales: readonly S[],
@@ -252,7 +258,6 @@ export function splitSalesByAge<S extends { createdAt: number; paymentStatus?: s
   const toIdentify: S[] = []
   const tooOld: S[] = []
   for (const s of sales) {
-    if (s.paymentStatus === 'failed') continue
     if (isRecentSale(s.createdAt, nowMs, serverOffsetMs)) toIdentify.push(s)
     else tooOld.push(s)
   }
