@@ -497,4 +497,20 @@ describe('glue: retry from a kept clip, one row or all failed', () => {
     expect(sendCode).toContain('export const IDENTIFY_TIMEOUT_MS = 45_000')
     expect(sendCode).toContain('export const MAX_IDENTIFY_ATTEMPTS = 3')
   })
+
+  // Correcting a lot should not require finding a small button: a double-click on the row opens the
+  // editor, in BOTH views, which read the same array so a correction shows up in either.
+  it('opens the correction editor on a double-click, in both views', () => {
+    expect(code).toContain("row.addEventListener('dblclick'")
+    expect(code).toContain("tr.addEventListener('dblclick'")
+    expect(code).toContain('openEditor(r, redraw)')
+    expect(code).toContain('openEditor(r, renderAll)')
+  })
+
+  // A double-click that CLOSED an open editor would throw away whatever had been typed into it, and
+  // one landing on Override, Retry or an input of the editor itself is not a request to open it.
+  it('never closes an open editor, and ignores a double-click on a control', () => {
+    expect(code).toContain("if (r.status === 'transcribing' || editing.has(r)) return")
+    expect(code).toContain("closest('button, input, .id-edit')")
+  })
 })

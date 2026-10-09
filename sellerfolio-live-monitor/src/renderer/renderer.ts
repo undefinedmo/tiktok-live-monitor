@@ -775,9 +775,29 @@ function idRetryButton(r: Recap, redraw: () => void): HTMLElement {
 /** Which entries are mid-edit. Keyed by object so a re-render cannot lose the open editor. */
 const editing = new Set<Recap>()
 
+/**
+ * Open the correction editor for a lot. Double-click OPENS; only the Override button toggles. A
+ * double-click that closed an open editor would throw away whatever had been typed into it, and a
+ * lot still being identified is left alone: its fields are not final yet, and the card view does not
+ * render an editor in that state at all.
+ */
+function openEditor(r: Recap, redraw: () => void): void {
+  if (r.status === 'transcribing' || editing.has(r)) return
+  editing.add(r)
+  redraw()
+}
+
+/** A double-click on Override, Retry, or inside the open editor is not a request to open it. */
+function dblclickOpens(target: EventTarget | null): boolean {
+  const node = target instanceof Element ? target : null
+  return !node || !node.closest('button, input, .id-edit')
+}
+
 function idEntry(r: Recap, current: boolean, redraw: () => void): HTMLElement {
   const weak = idIsWeak(r)
   const row = el('div', 'recap-entry' + (current ? ' current' : '') + (weak ? ' review' : ''))
+  row.title = 'Double-click to override what was identified'
+  row.addEventListener('dblclick', (e) => { if (dblclickOpens(e.target)) openEditor(r, redraw) })
   const head = el('div', 'recap-head')
   head.appendChild(el('span', undefined, [r.lot, r.head].filter(Boolean).join(' · ')))
   if (r.price) head.appendChild(el('span', 'price', r.price))
@@ -886,6 +906,8 @@ function renderIdentifications() {
   if (empty) empty.style.display = rows.length ? 'none' : ''
   for (const r of rows) {
     const tr = el('tr', idIsWeak(r) || idUnresolved(r) ? 'flagged' : undefined)
+    tr.title = 'Double-click to override what was identified'
+    tr.addEventListener('dblclick', (e) => { if (dblclickOpens(e.target)) openEditor(r, renderAll) })
     const cell = (text: string | null, cls?: string) => {
       const td = el('td', cls)
       td.appendChild(el('span', text ? undefined : 'id-none', text ?? 'not said'))
