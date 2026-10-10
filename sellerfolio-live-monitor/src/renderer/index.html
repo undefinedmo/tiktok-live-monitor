@@ -281,7 +281,19 @@
       #idTable tbody td{padding:9px 14px;border-bottom:1px solid var(--line);font-size:12.5px;vertical-align:middle;}
       #idTable tbody tr:last-child td{border-bottom:0;}
       #idTable tbody tr.flagged td{background:var(--flag-bg);}
+      /* The tick stays visible over a flagged row's wash, so a selected run reads as one block. */
+      #idTable tbody tr.picked td{background:var(--accent-tint);}
+      #idTable th.pick,#idTable td.pick{width:34px;padding-right:0;}
+      #idTable td.pick input,#idTable th.pick input{cursor:pointer;accent-color:var(--accent);margin:0;}
       .rowacts{display:flex;gap:6px;justify-content:flex-end;}
+      /* The batch bar. Fields first and widest: that is what the operator came here to type. */
+      .idbatch{flex:none;display:flex;align-items:flex-end;gap:10px;padding:10px 12px;border:1px solid var(--accent);border-radius:10px;background:var(--accent-tint);}
+      .idbatch #idBatchCount{align-self:center;font-size:11px;color:var(--accent-2);white-space:nowrap;}
+      .idbatch #idBatchFields{display:flex;gap:8px;flex:1;min-width:0;}
+      .idbatch-f{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0;}
+      .idbatch-f span{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);}
+      .idbatch .qbtn{align-self:flex-end;}
+      @media (max-width:980px){ .idbatch{flex-wrap:wrap;} .idbatch #idBatchFields{flex-wrap:wrap;flex-basis:100%;} }
 
       /* ── settings screen ────────────────────────────────────────────────────── */
       #settingsScreen{flex:1;display:none;flex-direction:column;min-width:0;padding:24px 28px;gap:14px;overflow:hidden;}
@@ -524,9 +536,20 @@
           <span style="flex:1;"></span>
           <span id="idShowName" class="mono muted" style="font-size:11px;"></span>
         </div>
+        <!-- Appears once lots are ticked. A blank box is left alone, so the usual correction —
+             same brand and item across a run, each lot its own size — is four keystrokes and a
+             click rather than one editor per lot. -->
+        <div id="idBatch" class="idbatch" style="display:none;">
+          <span id="idBatchCount" class="mono"></span>
+          <div id="idBatchFields"></div>
+          <button id="idBatchCopy" class="qbtn sm" title="Fill these boxes from the first ticked lot, apart from Size — that one differs lot to lot">Copy the first lot</button>
+          <button id="idBatchApply" class="qbtn sm print">Apply</button>
+          <button id="idBatchClear" class="qbtn sm" title="Untick everything and empty the boxes">Clear</button>
+        </div>
         <div class="panel sf-scroll" style="flex:1;min-height:0;overflow-y:auto;">
           <table id="idTable">
             <thead><tr>
+              <th class="pick"><input type="checkbox" id="idPickAll" aria-label="Select every lot listed" title="Select every lot listed" /></th>
               <th>Lot</th><th>Brand</th><th>Item</th><th>Color</th><th>Size</th>
               <th class="num">MSRP</th><th class="num">Sold</th><th>How it was found</th><th></th>
             </tr></thead>

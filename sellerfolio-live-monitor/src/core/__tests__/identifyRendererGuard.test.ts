@@ -95,7 +95,8 @@ describe('renderer persists identifications', () => {
     expect(fnBody(rendererCode, 'settleEntry')).toContain('persistEntry(entry)')
   })
   it('writes the row again when an operator corrects it', () => {
-    expect(fnBody(rendererCode, 'saveEditedFields')).toContain('persistEntry(r)')
+    expect(fnBody(rendererCode, 'commitField')).toContain('persistEntry(r)')
+    expect(fnBody(rendererCode, 'saveEditedFields')).toContain('commitField(r,')
   })
   it('persistEntry goes through the tested row builder and can never throw into the show', () => {
     const body = fnBody(rendererCode, 'persistEntry')
@@ -190,7 +191,7 @@ describe('glue: order, wiring and the markup it names', () => {
 
   it('a row is saved AFTER its status and text are set, never before (or it would persist the old state)', () => {
     after(fnBody(rendererCode, 'settleEntry'), 'entry.text =', 'persistEntry(entry)')
-    after(fnBody(rendererCode, 'saveEditedFields'), "r.status = 'done'", 'persistEntry(r)')
+    after(fnBody(rendererCode, 'commitField'), "r.status = 'done'", 'persistEntry(r)')
     after(fnBody(rendererCode, 'identifySale'), "entry.status = 'transcribing'", 'persistEntry(entry)')
   })
   it('the switch saves the box as ticked, not its opposite', () => {
@@ -534,8 +535,89 @@ describe('glue: retry from a kept clip, one row or all failed', () => {
     expect(code).toContain("if (e.key === 'Escape')")
   })
 
+  // Leaving a box is the save. An operator correcting a lot mid-show looks back at the stream, or
+  // clicks the next lot, long before they would think to press a button -- and whatever they typed
+  // was being thrown away. There is no longer a Save button to miss.
+  it('keeps a field when the caret leaves it', () => {
+    expect(code).toContain("inp.addEventListener('blur'")
+    expect(code).toContain('commitField(r, key, inp.value)')
+  })
+
+  it('offers Done rather than Save and Cancel, because the fields have already saved themselves', () => {
+    const acts = fnBody(rendererCode, 'editActs')
+    expect(acts).toContain("'Done'")
+    expect(acts).not.toContain("'Save'")
+    expect(acts).not.toContain("'Cancel'")
+  })
+
+  // Clicking into a box and straight back out, or tabbing through a lot to read it, must not mark
+  // the lot as corrected: `edited` is what stops a later identification run replacing a human's
+  // answer, so setting it by accident silently freezes a wrong row.
+  it('does not record a correction when the text has not changed', () => {
+    const body = fnBody(rendererCode, 'commitField')
+    expect(body).toContain("if (value === (idValue(r.fields?.[key]) ?? '')) return false")
+    expect(body.indexOf('r.edited = true')).toBeGreaterThan(body.indexOf('return false'))
+  })
+
+  // Escape can no longer be an undo for the whole lot -- the boxes left before it were kept on the
+  // way out. It drops the one box still holding the caret, and the flag is what stops the blur that
+  // follows from saving it anyway.
+  it('drops only the box in hand on Escape', () => {
+    expect(code).toContain('abandoning = true')
+    expect(fnBody(rendererCode, 'commitField')).toContain('if (abandoning) return false')
+  })
+
   it('never closes an open editor, and ignores a double-click on a control', () => {
     expect(code).toContain("if (r.status === 'transcribing' || editing.has(r)) return")
     expect(code).toContain("closest('button, input')")
+  })})
+
+// A host sells one bra in fourteen sizes, so an identification that got the brand wrong got it
+// wrong fourteen times. These pin the two things that make fixing them at once safe rather than
+// destructive: a blank box changes nothing, and nothing is written to a lot that is not on screen.
+describe('correcting a run of lots at once', () => {
+  const html = lf(readFileSync(fileURLToPath(new URL('../../renderer/index.html', import.meta.url)), 'utf8'))
+  /** `first` appears before `then` in `body`. Order matters here, not just presence. */
+  const after = (body: string, first: string, then: string) =>
+    body.includes(first) && body.indexOf(then) > body.indexOf(first)
+  it('leaves a blank field alone instead of blanking it on every ticked lot', () => {
+    expect(fnBody(rendererCode, 'applyBatch')).toContain(".filter(([, v]) => v !== '')")
   })
+
+  it('writes only to lots the table is actually showing', () => {
+    expect(fnBody(rendererCode, 'pickedRows')).toContain('listed.filter((r) => picked.has(r))')
+    expect(fnBody(rendererCode, 'applyBatch')).toContain('const rows = pickedRows()')
+    expect(fnBody(rendererCode, 'renderBatchBar')).toContain('pickedRows().length')
+  })
+
+  it('goes through the same commit a hand correction does, so each lot is marked and written', () => {
+    expect(fnBody(rendererCode, 'applyBatch')).toContain('commitField(r, k, v)')
+  })
+
+  // Size is the field that differs lot to lot, and the 10-04 audit found it is the field to grade
+  // on. Copying the first lot's size across a run would read as helpful and destroy the rest.
+  it('never copies a size across a run', () => {
+    expect(rendererCode).toContain("const BATCH_COPY_SKIP: Array<keyof LedgerTranscript> = ['size']")
+    expect(fnBody(rendererCode, 'copyBatchFromFirst')).toContain('BATCH_COPY_SKIP.includes(k)')
+  })
+
+  // The bar's boxes outlive a render; the table's do not. Rebuilding them every time a lot sold
+  // would wipe a half-typed brand mid-show, which is the bug the drafts map exists to prevent.
+  it('builds the bar once rather than on every render', () => {
+    expect(fnBody(rendererCode, 'buildBatchFields')).toContain('if (!host || batchBuilt) return')
+  })
+
+  it('forgets the selection when the list underneath it changes', () => {
+    expect(code).toContain("addEventListener('input', () => { clearBatch(); renderAll() })")
+    // The filter buttons' own handler, which switches the list out from under the ticks.
+    const click = code.slice(code.indexOf("b.addEventListener('click', () => {", code.indexOf("querySelectorAll<HTMLElement>('[data-idfilter]')")))
+    expect(click.slice(0, 300)).toContain('clearBatch()')
+  })
+  it('names the markup the bar is rendered into', () => {
+    for (const id of ['idBatch', 'idBatchFields', 'idBatchCount', 'idBatchApply', 'idBatchCopy', 'idBatchClear', 'idPickAll']) {
+      expect(rendererCode, id).toContain(id)
+      expect(html, id).toContain(`id="${id}"`)
+    }
+  })
+
 })

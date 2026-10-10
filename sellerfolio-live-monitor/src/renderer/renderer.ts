@@ -727,6 +727,12 @@ const drafts = new Map<Recap, Partial<Record<keyof LedgerTranscript, string>>>()
 let caret: { r: Recap; key: keyof LedgerTranscript; view: EditView; at: number } | null = null
 /** The box this render decided should hold the caret, focused once the render has finished. */
 let focusBox: HTMLInputElement | null = null
+/**
+ * Set while an editor is being abandoned, so the blur that follows does not keep the field the
+ * operator just pressed Escape in. Chromium does not fire blur for a focused box that is removed
+ * from the page, but that is a browser detail and nothing here should depend on it.
+ */
+let abandoning = false
 type EditView = 'card' | 'table'
 
 /** The value cell while a lot is being corrected: a box, exactly where the value was. */
@@ -744,9 +750,33 @@ function idFieldBox(r: Recap, key: keyof LedgerTranscript, view: EditView): HTML
     drafts.set(r, d)
     remember()
   })
+  // Leaving a box IS the save. There is no button to remember, and a correction typed in the
+  // middle of a show cannot be lost to a glance back at the stream. Saving does not re-render:
+  // the other boxes are still being typed into, and the row may be in a filter it is about to
+  // fall out of.
+  inp.addEventListener('blur', () => { commitField(r, key, inp.value) })
   // Same lot, same field, same view: this is the box the caret was in before the re-render.
   if (caret && caret.r === r && caret.key === key && caret.view === view) focusBox = inp
   return inp
+}
+
+/**
+ * Keep one field's value on the lot and on disk. Text that has not changed is not a correction:
+ * tabbing through a lot, or clicking into a box and straight back out, must not mark it as
+ * overridden — `edited` is what stops a later identification run from replacing a human's answer.
+ * Returns whether anything was actually written.
+ */
+function commitField(r: Recap, key: keyof LedgerTranscript, raw: string): boolean {
+  if (abandoning) return false
+  const value = raw.trim()
+  const draft = drafts.get(r)
+  if (draft) delete draft[key]
+  if (value === (idValue(r.fields?.[key]) ?? '')) return false
+  r.fields = { ...(r.fields ?? {}), [key]: value }
+  r.edited = true
+  r.status = 'done'
+  persistEntry(r)
+  return true
 }
 
 /** Give the caret back after a render, or typing through a live show would be interrupted. */
@@ -759,16 +789,15 @@ function applyEditFocus(): void {
   try { box.setSelectionRange(at, at) } catch { /* not a text box */ }
 }
 
-/** Read the boxes back out of the row they were typed into, and keep the correction. */
+/**
+ * Close the editor, keeping whatever is in its boxes. Every box left on the way out has already
+ * been kept by its own blur; this is for the box still holding the caret when Enter or Done is
+ * pressed, which never lost focus and so never saved itself.
+ */
 function saveEditedFields(r: Recap, within: HTMLElement, redraw: () => void): void {
   const boxes = within.querySelectorAll<HTMLInputElement>('input[data-id-field]')
   if (!boxes.length) return
-  const next: LedgerTranscript = { ...(r.fields ?? {}) }
-  for (const box of boxes) next[box.dataset.idField as keyof LedgerTranscript] = box.value.trim()
-  r.fields = next
-  r.edited = true
-  r.status = 'done'
-  persistEntry(r)
+  for (const box of boxes) commitField(r, box.dataset.idField as keyof LedgerTranscript, box.value)
   closeEditor(r)
   redraw()
 }
@@ -780,22 +809,30 @@ function closeEditor(r: Recap): void {
   caret = null
 }
 
-/** Enter keeps the correction, Escape abandons it -- what a box in a row is expected to do. */
+/**
+ * Enter closes the editor; Escape closes it and drops the box that still has the caret. Escape is
+ * no longer an undo for the whole lot — the boxes left before it were kept as they were left, which
+ * is the point of saving on the way out.
+ */
 function editKeys(r: Recap, within: HTMLElement, redraw: () => void): void {
   within.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); saveEditedFields(r, within, redraw) }
-    if (e.key === 'Escape') { e.preventDefault(); closeEditor(r); redraw() }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      abandoning = true
+      try { closeEditor(r); redraw() } finally { abandoning = false }
+    }
   })
 }
 
-/** Save and Cancel, shown in place of Override and Retry while a lot is being corrected. */
+/** Done, shown in place of Override and Retry while a lot is being corrected. There is no Save:
+ *  the fields keep themselves as the caret leaves them, so a Save button would be an invitation to
+ *  think the work was lost without it. Done only closes the editor. */
 function editActs(r: Recap, within: HTMLElement, redraw: () => void): HTMLElement[] {
-  const cancel = el('button', 'qbtn sm', 'Cancel')
-  const save = el('button', 'qbtn sm print', 'Save')
-  cancel.addEventListener('click', () => { closeEditor(r); redraw() })
-  save.addEventListener('click', () => saveEditedFields(r, within, redraw))
+  const done = el('button', 'qbtn sm print', 'Done')
+  done.addEventListener('click', () => saveEditedFields(r, within, redraw))
   editKeys(r, within, redraw)
-  return [cancel, save]
+  return [done]
 }
 
 /** Retry arms on the first click and runs on the second — the same guard the web app puts on
@@ -875,7 +912,7 @@ function idEntry(r: Recap, current: boolean, redraw: () => void): HTMLElement {
   } else {
     const acts = el('div', 'id-acts')
     if (edit) {
-      acts.appendChild(el('span', 'id-why', 'correcting this lot'))
+      acts.appendChild(el('span', 'id-why', 'saves as you leave each box'))
       for (const b of editActs(r, row, redraw)) acts.appendChild(b)
     } else {
       acts.appendChild(el('span', 'id-why',
@@ -949,6 +986,124 @@ function renderRecap() {
 /** Both views read the same array, so an Override made in one is visible in the other. */
 function renderAll() { renderRecap(); renderIdentifications(); applyEditFocus() }
 
+// ── correcting a run of lots at once ───────────────────────────────────────────────────────────
+// A host sells the same bra in fourteen sizes. When the identification got the brand or the item
+// wrong it got it wrong for all fourteen, and fixing them one at a time during a show is not
+// something anyone will keep up with. So: tick the lots (shift-click for a run), type the fields
+// that are shared once, Apply. A blank box is left alone, which is what makes it safe.
+
+/** The lots ticked on the Identifications screen. Keyed by object, so a re-render keeps the ticks. */
+const picked = new Set<Recap>()
+/** What the batch bar holds. Kept out of the DOM so a re-render mid-show cannot wipe it. */
+const batch: Partial<Record<keyof LedgerTranscript, string>> = {}
+/** The rows the table is currently showing, in the order it shows them. Nothing is ever written to
+ *  a lot that is not in here: a filtered-out row must not be changed by a button you cannot see it under. */
+let listed: Recap[] = []
+/** Where the last tick landed, so shift-click can fill in the run between. */
+let lastPicked: number | null = null
+/** Size is never copied across a run. It is the one field that differs lot to lot, and the one the
+ *  10-04 audit says to grade on — copying it from the first lot would quietly wreck the rest. */
+const BATCH_COPY_SKIP: Array<keyof LedgerTranscript> = ['size']
+
+function pickedRows(): Recap[] {
+  return listed.filter((r) => picked.has(r))
+}
+
+/** Forget the ticks and empty the bar. Called when the list underneath changes out from under it. */
+function clearBatch(): void {
+  picked.clear()
+  lastPicked = null
+  for (const [k] of ID_FIELDS) delete batch[k]
+  for (const b of document.querySelectorAll<HTMLInputElement>('input[data-batch-field]')) b.value = ''
+}
+
+/** Write the bar's filled-in fields onto every ticked lot, through the same commit the single-lot
+ *  editor uses — so each one is marked as corrected and written to disk exactly as a hand edit is. */
+function applyBatch(): void {
+  const rows = pickedRows()
+  const sets = ID_FIELDS.map(([k]) => [k, (batch[k] ?? '').trim()] as const).filter(([, v]) => v !== '')
+  if (!rows.length || !sets.length) return
+  for (const r of rows) for (const [k, v] of sets) commitField(r, k, v)
+  clearBatch()
+  renderAll()
+}
+
+/** Fill the bar from the topmost ticked lot, for the usual case: one lot already reads correctly
+ *  and the rest of the run should read the same. Size is left blank — see BATCH_COPY_SKIP. */
+function copyBatchFromFirst(): void {
+  const first = pickedRows()[0]
+  if (!first) return
+  for (const b of document.querySelectorAll<HTMLInputElement>('input[data-batch-field]')) {
+    const k = b.dataset.batchField as keyof LedgerTranscript
+    const v = BATCH_COPY_SKIP.includes(k) ? '' : idValue(first.fields?.[k]) ?? ''
+    b.value = v
+    batch[k] = v
+  }
+}
+
+/** The bar's five boxes, built once. Rebuilding them on every render would wipe what was being
+ *  typed into them every time a lot sold. */
+let batchBuilt = false
+function buildBatchFields(): void {
+  const host = document.getElementById('idBatchFields')
+  if (!host || batchBuilt) return
+  batchBuilt = true
+  for (const [key, label, mono] of ID_FIELDS) {
+    const wrap = el('label', 'idbatch-f')
+    wrap.appendChild(el('span', undefined, label))
+    const inp = document.createElement('input')
+    inp.className = 'id-inline' + (mono ? ' mono' : '')
+    inp.placeholder = 'leave as is'
+    inp.dataset.batchField = key
+    inp.addEventListener('input', () => { batch[key] = inp.value })
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); applyBatch() } })
+    wrap.appendChild(inp)
+    host.appendChild(wrap)
+  }
+}
+
+function renderBatchBar(): void {
+  buildBatchFields()
+  const n = pickedRows().length
+  const bar = document.getElementById('idBatch')
+  if (bar) bar.style.display = n ? '' : 'none'
+  const count = document.getElementById('idBatchCount')
+  if (count) count.textContent = n === 1 ? '1 lot' : `${n} lots`
+  const apply = document.getElementById('idBatchApply')
+  if (apply) apply.textContent = n === 1 ? 'Apply to this lot' : `Apply to these ${n}`
+  const all = document.getElementById('idPickAll') as HTMLInputElement | null
+  if (all) {
+    all.checked = n > 0 && n === listed.length
+    all.indeterminate = n > 0 && n < listed.length
+  }
+}
+
+/** The tick in a row's first cell. Shift-click sets every row between this one and the last tick
+ *  to match it, which is how a run of fourteen is selected without fourteen clicks. */
+function pickCell(r: Recap, index: number): HTMLElement {
+  const td = el('td', 'pick')
+  const box = document.createElement('input')
+  box.type = 'checkbox'
+  box.checked = picked.has(r)
+  box.setAttribute('aria-label', `Select lot ${r.lot || String(index + 1)}`)
+  box.addEventListener('click', (e) => {
+    const on = box.checked
+    const from = (e as MouseEvent).shiftKey ? lastPicked : null
+    const lo = from === null ? index : Math.min(from, index)
+    const hi = from === null ? index : Math.max(from, index)
+    for (let i = lo; i <= hi; i++) {
+      const row = listed[i]
+      if (!row) continue
+      if (on) picked.add(row)
+      else picked.delete(row)
+    }
+    lastPicked = index
+    renderAll()
+  })
+  td.appendChild(box)
+  return td
+}
+
 let idFilter: 'all' | 'review' | 'edited' = 'all'
 function renderIdentifications() {
   syncRetryAll()
@@ -964,8 +1119,9 @@ function renderIdentifications() {
   })
   body.replaceChildren()
   if (empty) empty.style.display = rows.length ? 'none' : ''
-  for (const r of rows) {
-    const tr = el('tr', idIsWeak(r) || idUnresolved(r) ? 'flagged' : undefined)
+  listed = rows
+  rows.forEach((r, index) => {
+    const tr = el('tr', (idIsWeak(r) || idUnresolved(r) ? 'flagged' : '') + (picked.has(r) ? ' picked' : ''))
     tr.title = 'Double-click to override what was identified'
     tr.addEventListener('dblclick', (e) => { if (dblclickOpens(e.target)) openEditor(r, renderAll, 'table') })
     const edit = editing.has(r)
@@ -974,6 +1130,7 @@ function renderIdentifications() {
       td.appendChild(el('span', text ? undefined : 'id-none', text ?? 'not said'))
       return td
     }
+    tr.appendChild(pickCell(r, index))
     tr.appendChild(cell(r.lot || '—', 'mono'))
     // The server now reports what it persisted, so a live row usually HAS its fields. When it does
     // not — an older worker, or a 200 whose identity could not be read — say so with an em dash
@@ -1009,7 +1166,8 @@ function renderIdentifications() {
     acts.appendChild(wrap)
     tr.appendChild(acts)
     body.appendChild(tr)
-  }
+  })
+  renderBatchBar()
 }
 // ── live identification: sale → clip → queue → worker → row ────────────────────────────────────
 // Every fresh sale is windowed from the audio buffer, queued, and posted to the identification
@@ -2056,7 +2214,18 @@ document.getElementById('navIdentify')?.addEventListener('click', () => showScre
 document.getElementById('navSettings2')?.addEventListener('click', () => showScreen('settings'))
 // The review count in the Identification head is the route to the flagged lots.
 document.getElementById('idReviewChip')?.addEventListener('click', () => { idFilter = 'review'; syncIdFilterButtons(); showScreen('identify') })
-document.getElementById('idSearch')?.addEventListener('input', () => renderAll()) // renderAll, so a correction being typed keeps its caret
+// A different list is a different selection: searching with lots still ticked would leave Apply
+// pointing at rows that are no longer on screen.
+document.getElementById('idSearch')?.addEventListener('input', () => { clearBatch(); renderAll() }) // renderAll, so a correction being typed keeps its caret
+document.getElementById('idPickAll')?.addEventListener('change', (e) => {
+  const on = (e.target as HTMLInputElement).checked
+  for (const r of listed) { if (on) picked.add(r); else picked.delete(r) }
+  lastPicked = null
+  renderAll()
+})
+document.getElementById('idBatchApply')?.addEventListener('click', () => applyBatch())
+document.getElementById('idBatchCopy')?.addEventListener('click', () => copyBatchFromFirst())
+document.getElementById('idBatchClear')?.addEventListener('click', () => { clearBatch(); renderAll() })
 function syncIdFilterButtons() {
   for (const b of document.querySelectorAll<HTMLElement>('[data-idfilter]')) {
     b.classList.toggle('on', b.dataset.idfilter === idFilter)
@@ -2066,6 +2235,7 @@ for (const b of document.querySelectorAll<HTMLElement>('[data-idfilter]')) {
   b.addEventListener('click', () => {
     idFilter = (b.dataset.idfilter as 'all' | 'review' | 'edited') ?? 'all'
     syncIdFilterButtons()
+    clearBatch()
     renderIdentifications()
   })
 }
