@@ -613,11 +613,83 @@ describe('correcting a run of lots at once', () => {
     const click = code.slice(code.indexOf("b.addEventListener('click', () => {", code.indexOf("querySelectorAll<HTMLElement>('[data-idfilter]')")))
     expect(click.slice(0, 300)).toContain('clearBatch()')
   })
-  it('names the markup the bar is rendered into', () => {
+  it('names the markup the bar is rendered into (batch)', () => {
     for (const id of ['idBatch', 'idBatchFields', 'idBatchCount', 'idBatchApply', 'idBatchCopy', 'idBatchClear', 'idPickAll']) {
       expect(rendererCode, id).toContain(id)
       expect(html, id).toContain(`id="${id}"`)
     }
   })
 
+})
+
+// A correction used to stop at this machine's own file, so SellerFolio kept the model's answer. The
+// rules live in core/correctionSync, where they are tested; these pin the glue that cannot be.
+describe('a correction reaches SellerFolio', () => {
+  const html = lf(readFileSync(fileURLToPath(new URL('../../renderer/index.html', import.meta.url)), 'utf8'))
+
+  it('sends through the tested rules rather than deciding anything itself', () => {
+    const body = fnBody(rendererCode, 'flushCorrections')
+    expect(body).toContain('readCorrectionOutcome(status)')
+    expect(body).toContain('CORRECTION_BACKOFF_MS[attempt]')
+    expect(fnBody(rendererCode, 'pendingEntries')).toContain('pendingCorrections(rows)')
+    expect(fnBody(rendererCode, 'pendingEntries')).toContain('rowFromEntry(r)')
+    // The URL, the header and the body are built in core/correctionSync, never here.
+    expect(code).not.toContain('live-correct')
+    expect(code).not.toContain('Bearer')
+  })
+
+  // The bug this closes: a SECOND correction to a lot already sent, or one whose first attempt was
+  // refused, would sit on disk looking saved and never go anywhere.
+  it('makes a lot owe SellerFolio again every time a field is committed', () => {
+    const body = fnBody(rendererCode, 'commitField')
+    expect(body).toContain('delete r.syncedAt')
+    expect(body).toContain('delete r.syncNote')
+    expect(body).toContain('queueCorrectionFlush()')
+    expect(body.indexOf('persistEntry(r)')).toBeGreaterThan(body.indexOf('delete r.syncNote'))
+  })
+
+  // Marking a row anything at all after a transient failure would lose the correction. Out of
+  // attempts means "still queued": the next correction, or the next launch, tries again.
+  it('leaves a row that merely failed queued, and writes nothing', () => {
+    const body = fnBody(rendererCode, 'flushCorrections')
+    const giveUp = body.slice(body.indexOf('if (wait === undefined)'))
+    expect(giveUp.slice(0, 80)).toContain('return')
+    expect(giveUp.slice(0, 80)).not.toContain('syncNote')
+    // Only these two outcomes are ever written onto the row.
+    expect(body).toContain("if (outcome.kind === 'sent') entry.syncedAt =")
+    expect(body).toContain("if (outcome.kind === 'refused') entry.syncNote = outcome.note")
+  })
+
+  it('stops the queue on a refused token instead of retrying it per lot', () => {
+    expect(fnBody(rendererCode, 'flushCorrections')).toContain("if (outcome.kind === 'stop') { correctStopped = outcome.note")
+    expect(fnBody(rendererCode, 'pendingEntries')).toContain('if (correctStopped) return []')
+  })
+
+  // The screen may say a correction has NOT landed. It may never say one has when it has not.
+  it('only claims a correction was sent when the row says so', () => {
+    const body = fnBody(rendererCode, 'correctedNote')
+    expect(body).toContain('if (r.syncedAt) return')
+    // Both must BE there before their order means anything: indexOf gives -1 for a missing
+    // string, and -1 is less than any real index, so the order check alone passes vacuously.
+    expect(body).toContain('if (r.syncNote) return')
+    expect(body.indexOf('if (r.syncNote) return')).toBeLessThan(body.indexOf('if (r.syncedAt) return'))
+    expect(body).toContain('not sent yet')
+    expect(rendererCode).toContain('r.edited ? correctedNote(r)')
+  })
+
+  it('counts what is unsent on the screen, and names the chip it writes into', () => {
+    expect(rendererCode).toContain('unsentCorrections()')
+    expect(rendererCode).toContain('idUnsent')
+    expect(html).toContain('id="idUnsent"')
+  })
+
+  // Four fields corrected on one lot is one request, not four racing each other.
+  it('lets a burst settle before sending', () => {
+    expect(fnBody(rendererCode, 'queueCorrectionFlush')).toContain('CORRECTION_SETTLE_MS')
+  })
+
+  it('sends the backlog on start, once the saved rows are back on screen', () => {
+    const body = rendererCode.slice(rendererCode.indexOf('restoreEntries(recaps, rows, MAX_IDENTIFICATIONS)'))
+    expect(body.slice(0, 400)).toContain('queueCorrectionFlush()')
+  })
 })

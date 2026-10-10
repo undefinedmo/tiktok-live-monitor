@@ -11,9 +11,10 @@ import { AuctionResults } from '../core/auctionResults'
 import { AuctionWatch } from '../core/auctionWatch'
 import { AuctionJournal } from '../core/auctionJournal'
 import { IDENTIFY_TIMEOUT_MS, sendIdentify, type WireClip } from '../core/identifySend'
+import { buildCorrectionRequest, CORRECTION_TIMEOUT_MS } from '../core/correctionSync'
 import type { IdentifyJob } from '../core/identifyClient'
 import { createIdentifyStore, type IdentificationRow } from '../core/identifyStore'
-import { DEFAULT_IDENTIFY_URL, identifyPreflight, updateIdentifySettings } from '../core/identifySettings'
+import { correctPreflight, DEFAULT_IDENTIFY_URL, identifyPreflight, updateIdentifySettings } from '../core/identifySettings'
 import { loadIdentifySettings, nodeStoreIO, saveIdentifySettings } from './identifyFiles'
 import { createClipKeeper } from './identifyClips'
 import { parseTrend, paceCentsPerHour, formatCents, STATS_GMV, STATS_ORDERS } from '../core/liveTrend'
@@ -790,6 +791,35 @@ ipcMain.handle('tt-identify', async (_e, payload: { job?: IdentifyJob; clip?: Wi
   const out = await sendIdentify({ job, clip: wire, cfg: { baseUrl: pre.baseUrl, token: pre.token }, fetch, timeoutMs: IDENTIFY_TIMEOUT_MS })
   if (out.status === 'failed') flog(`[identify] order ${job.orderId} failed: ${out.reason}`) // never the token, never the request
   return out
+})
+
+// The other direction: an override typed on this station, sent back so SellerFolio stops holding
+// the model's answer. Answers with the HTTP status and nothing else — core/correctionSync decides
+// what a status MEANS (sent, refused for good, retry, or stop the queue), and `null` is "no answer
+// at all", which is the ordinary case when a show's uplink drops.
+ipcMain.handle('identify:correct', async (_e, payload: { orderId?: unknown; fields?: unknown }) => {
+  const orderId = typeof payload?.orderId === 'string' ? payload.orderId : ''
+  const fields = payload?.fields
+  if (!orderId || !fields || typeof fields !== 'object' || Array.isArray(fields)) return { status: 400 }
+  // Needs a token and an address, NOT the audio switch — see correctPreflight.
+  const pre = correctPreflight(loadSyncSettings().token, loadIdentifySettings(IDENTIFY_FILE))
+  if (!pre.ok) return { status: 401 }
+  const patch: Record<string, string> = {}
+  for (const [k, v] of Object.entries(fields as Record<string, unknown>)) if (typeof v === 'string') patch[k] = v
+  const req = buildCorrectionRequest({ baseUrl: pre.baseUrl, token: pre.token }, orderId, patch)
+  const abort = new AbortController()
+  const timer = setTimeout(() => abort.abort(), CORRECTION_TIMEOUT_MS)
+  try {
+    const res = await fetch(req.url, { method: 'POST', headers: req.headers, body: req.body, signal: abort.signal })
+    // Only on an answer that is not a plain success, and never the body: a 4xx names the lot, a 5xx
+    // can carry whatever the server was holding.
+    if (!res.ok) flog(`[identify] correction for order ${orderId} answered ${res.status}`)
+    return { status: res.status }
+  } catch {
+    return { status: null } // timeout, DNS, refused connection: all "try again later"
+  } finally {
+    clearTimeout(timer)
+  }
 })
 
 // Clips that failed to identify, kept on disk so Retry still has the audio after a restart or once the live

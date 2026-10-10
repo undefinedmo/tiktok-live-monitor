@@ -16,6 +16,9 @@ import { bulkRetryTargets, canRetry, retryAllLabel } from '../core/identifyRetry
 import type { IdentifyAnswer, IdentifyJob } from '../core/identifyClient'
 import { clipNote, clipReadyEpochSec, createSeenOrders, identifyPayloadFor, splitSalesByAge, viewOutcome, type JournalEvent } from '../core/identifyWiring'
 import { MAX_IDENTIFICATIONS, restoreEntries, rowFromEntry, type IdentificationRow } from '../core/identifyStore'
+import {
+  CORRECTION_BACKOFF_MS, CORRECTION_SETTLE_MS, correctionPatch, pendingCorrections, readCorrectionOutcome,
+} from '../core/correctionSync'
 import { checkLatencyInput, identifyGate, identifyStateFrom, identifyStatus, latencyNote, migrateLegacySwitch } from '../core/identifySettings'
 
 // Structured AI-transcript fields (was core/ledger's LedgerTranscript; the products
@@ -60,6 +63,7 @@ declare global {
       identify: (payload: { job: IdentifyJob; clip: WireClip }) => Promise<IdentifyAnswer>
       rows: () => Promise<IdentificationRow[]>
       saveRow: (row: IdentificationRow) => Promise<boolean>
+      correct?: (payload: { orderId: string; fields: Record<string, string> }) => Promise<{ status: number | null }>
       clipKeep: (payload: { job: IdentifyJob; clip: WireClip }) => Promise<boolean>
       clipTake: (orderId: string) => Promise<{ job: IdentifyJob; clip: WireClip } | null>
       clipDrop: (orderId: string) => Promise<boolean>
@@ -620,6 +624,9 @@ interface Recap {
   fields?: LedgerTranscript
   /** An operator corrected this entry by hand — never silently replaced by a later run. */
   edited?: boolean
+  /** What this lot knows about reaching SellerFolio (core/correctionSync). */
+  syncedAt?: number
+  syncNote?: string
   /** Kept so Retry can re-run THIS lot rather than whatever is selling now. Memory only: a restored row has none. */
   sale?: Sale
   /** What identifies the row on disk (core/identifyStore). A row without them is never persisted. */
@@ -720,6 +727,97 @@ function idFieldGrid(r: Recap, edit: boolean): HTMLElement {
   return dl
 }
 
+// ── corrections going back to SellerFolio ──────────────────────────────────────────────────────
+// An override used to live only in this station's own file, so the server kept the model's answer.
+// The rules are in core/correctionSync (which row is next, what a status means, how long to wait);
+// this turns the handle and writes the answer onto the row.
+
+/** Set when nothing will get through until a person changes something — a refused token. Shown on
+ *  every corrected row, because a queue that has quietly stopped is worse than one that is slow. */
+let correctStopped: string | null = null
+let correctSending = false
+let flushTimer: ReturnType<typeof setTimeout> | undefined
+
+/** The entries that still owe SellerFolio a correction, oldest sale first. Derived through the same
+ *  row builder that persists them, so the queue and the disk cannot disagree about what is pending. */
+function pendingEntries(): Recap[] {
+  if (correctStopped) return []
+  const byOrder = new Map<string, Recap>()
+  for (const r of recaps) if (r.orderId) byOrder.set(r.orderId, r)
+  const rows: IdentificationRow[] = []
+  for (const r of byOrder.values()) {
+    const row = rowFromEntry(r)
+    if (row) rows.push(row)
+  }
+  const out: Recap[] = []
+  for (const row of pendingCorrections(rows)) {
+    const entry = byOrder.get(row.orderId)
+    if (entry) out.push(entry)
+  }
+  return out
+}
+
+/** How many corrections have not reached SellerFolio. What the screen counts. */
+function unsentCorrections(): number {
+  if (correctStopped) {
+    // The queue is stopped, not empty: count what it is holding rather than reporting none.
+    return recaps.filter((r) => r.edited && !r.syncedAt && !r.syncNote).length
+  }
+  return pendingEntries().length
+}
+
+/** Send soon rather than on every blur, so correcting four fields of one lot is one request. */
+function queueCorrectionFlush(): void {
+  if (flushTimer) clearTimeout(flushTimer)
+  flushTimer = setTimeout(() => { flushTimer = undefined; void flushCorrections() }, CORRECTION_SETTLE_MS)
+}
+
+/**
+ * Drain the queue, one lot at a time. A row that keeps failing is LEFT QUEUED rather than marked
+ * anything: the next correction, or the next launch, picks it up again. Only an answer that cannot
+ * change — SellerFolio has no such lot, or will not take the body — is written down as final.
+ */
+async function flushCorrections(): Promise<void> {
+  const api = window.identifyAPI
+  if (correctSending || correctStopped || !api?.correct) return
+  correctSending = true
+  try {
+    for (;;) {
+      const entry = pendingEntries()[0]
+      if (!entry) return
+      const row = rowFromEntry(entry)
+      const patch = row && correctionPatch(row)
+      if (!row || !patch) return
+      let outcome = readCorrectionOutcome(null)
+      for (let attempt = 0; ; attempt++) {
+        let status: number | null = null
+        try { status = (await api.correct({ orderId: row.orderId, fields: patch }))?.status ?? null }
+        catch { status = null } // the bridge itself failed; indistinguishable from no answer
+        outcome = readCorrectionOutcome(status)
+        if (outcome.kind !== 'retry') break
+        const wait = CORRECTION_BACKOFF_MS[attempt]
+        if (wait === undefined) return // out of attempts: still queued, nothing written
+        await new Promise((r) => setTimeout(r, wait))
+      }
+      if (outcome.kind === 'stop') { correctStopped = outcome.note; renderAll(); return }
+      if (outcome.kind === 'sent') entry.syncedAt = Math.floor(Date.now() / 1000)
+      if (outcome.kind === 'refused') entry.syncNote = outcome.note
+      persistEntry(entry)
+      renderAll()
+    }
+  } finally {
+    correctSending = false
+  }
+}
+
+/** What a corrected row says about reaching SellerFolio. Never claims one landed when it did not. */
+function correctedNote(r: Recap): string {
+  if (r.syncNote) return `You corrected it — ${r.syncNote}`
+  if (r.syncedAt) return 'You corrected it · sent to SellerFolio'
+  if (correctStopped) return `You corrected it — not sent: ${correctStopped}`
+  return 'You corrected it · not sent yet'
+}
+
 /** What has been typed but not yet saved. A live show re-renders every few seconds, and without
  *  this a half-typed correction would be wiped by the next sale that landed. */
 const drafts = new Map<Recap, Partial<Record<keyof LedgerTranscript, string>>>()
@@ -775,7 +873,13 @@ function commitField(r: Recap, key: keyof LedgerTranscript, raw: string): boolea
   r.fields = { ...(r.fields ?? {}), [key]: value }
   r.edited = true
   r.status = 'done'
+  // This lot owes SellerFolio a correction again. Without clearing these, a SECOND correction to a
+  // lot already sent — or one whose first attempt was refused — would sit here looking saved and
+  // never go anywhere, which is the exact failure this whole path exists to end.
+  delete r.syncedAt
+  delete r.syncNote
   persistEntry(r)
+  queueCorrectionFlush()
   return true
 }
 
@@ -916,7 +1020,7 @@ function idEntry(r: Recap, current: boolean, redraw: () => void): HTMLElement {
       for (const b of editActs(r, row, redraw)) acts.appendChild(b)
     } else {
       acts.appendChild(el('span', 'id-why',
-        r.edited ? 'you corrected this' : r.status === 'error' ? 'identification failed' : r.status === 'abandoned' || r.status === 'skipped' ? 'not identified' : weak ? 'some fields were not said' : 'identified'))
+        r.edited ? (r.syncNote ? 'corrected — ' + r.syncNote : r.syncedAt ? 'corrected · sent' : 'corrected · not sent yet') : r.status === 'error' ? 'identification failed' : r.status === 'abandoned' || r.status === 'skipped' ? 'not identified' : weak ? 'some fields were not said' : 'identified'))
       const override = el('button', 'qbtn sm', 'Override')
       override.addEventListener('click', () => openEditor(r, redraw, 'card'))
       acts.appendChild(override)
@@ -1071,6 +1175,13 @@ function renderBatchBar(): void {
   if (count) count.textContent = n === 1 ? '1 lot' : `${n} lots`
   const apply = document.getElementById('idBatchApply')
   if (apply) apply.textContent = n === 1 ? 'Apply to this lot' : `Apply to these ${n}`
+  const unsent = document.getElementById('idUnsent')
+  if (unsent) {
+    const n = unsentCorrections()
+    // Only ever says a correction has NOT landed. It is never the place that claims one has.
+    unsent.textContent = correctStopped ? `${n} not sent — ${correctStopped}` : n === 1 ? '1 correction not sent yet' : `${n} corrections not sent yet`
+    unsent.style.display = n ? '' : 'none'
+  }
   const all = document.getElementById('idPickAll') as HTMLInputElement | null
   if (all) {
     all.checked = n > 0 && n === listed.length
@@ -1150,7 +1261,7 @@ function renderIdentifications() {
     tr.appendChild(fieldCell('size', 'mono'))
     tr.appendChild(fieldCell('retailPrice', 'num mono'))
     tr.appendChild(cell(r.price || null, 'num mono'))
-    tr.appendChild(cell(r.edited ? 'You corrected it'
+    tr.appendChild(cell(r.edited ? correctedNote(r)
       : r.status === 'error' ? (r.text || 'Failed') : r.status === 'abandoned' ? 'Not identified (show ended or app closed)' : r.status === 'skipped' ? 'Nothing to identify'
       : r.status === 'transcribing' ? 'Identifying…' : 'Identified live'))
     const acts = el('td')
@@ -1516,6 +1627,8 @@ async function restoreIdentifications(): Promise<void> {
     // A sale the app is shown again after a restart is already on record: it is not identified twice.
     seenOrders.markRestored(e.orderId)
   }
+  // Corrections typed before the app was last closed, or while the uplink was down, go out now.
+  queueCorrectionFlush()
 }
 
 /** The old switch was in localStorage and defaulted off. An operator who turned it off keeps it off. */

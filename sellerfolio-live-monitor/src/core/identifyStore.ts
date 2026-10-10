@@ -60,6 +60,11 @@ export type IdentificationRow = {
   live?: boolean
   edited?: boolean
   fields?: RowFields
+  /** When SellerFolio accepted this correction, epoch seconds. Absent means it still owes one. */
+  syncedAt?: number
+  /** Why this correction will never be sent again. Set only for an answer retrying cannot change,
+   *  so it is both the reason shown on screen and the thing that stops the queue spinning. */
+  syncNote?: string
 }
 
 export type StoreIO = {
@@ -102,6 +107,10 @@ function normalize(raw: unknown, fromDisk: boolean): IdentificationRow | null {
   }
   if (o.live === true) out.live = true
   if (o.edited === true) out.edited = true
+  // Both are kept across a restart on purpose: they are what stops a correction being sent twice,
+  // and what stops a refused one being retried every launch for the rest of the station's life.
+  if (typeof o.syncedAt === 'number' && Number.isFinite(o.syncedAt)) out.syncedAt = o.syncedAt
+  if (typeof o.syncNote === 'string' && o.syncNote) out.syncNote = o.syncNote.slice(0, LIMITS.text)
   if (o.fields && typeof o.fields === 'object' && !Array.isArray(o.fields)) {
     const f: RowFields = {}
     for (const k of FIELD_KEYS) {
@@ -282,6 +291,8 @@ export type EntryLike = {
   live?: boolean
   edited?: boolean
   fields?: RowFields
+  syncedAt?: number
+  syncNote?: string
   orderId?: string
   roomId?: string | null
   atEpochSec?: number
@@ -303,6 +314,8 @@ export function rowFromEntry(e: EntryLike): IdentificationRow | null {
       live: e.live,
       edited: e.edited,
       fields: e.fields,
+      syncedAt: e.syncedAt,
+      syncNote: e.syncNote,
     },
     false,
   )
@@ -323,6 +336,10 @@ export function entryFromRow(r: IdentificationRow): Required<Pick<EntryLike, 'or
   if (r.live) e.live = true
   if (r.edited) e.edited = true
   if (r.fields) e.fields = { ...r.fields }
+  // Carried, or a correction SellerFolio had already accepted would come back owing one — and the
+  // queue would re-send every corrected lot of every show on each launch. Pinned by a test.
+  if (r.syncedAt !== undefined) e.syncedAt = r.syncedAt
+  if (r.syncNote) e.syncNote = r.syncNote
   return e
 }
 

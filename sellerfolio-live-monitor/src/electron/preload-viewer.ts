@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('identifyAPI', {
   save: (args: { baseUrl?: string; enabled?: boolean; streamLatencySec?: number }) => ipcRenderer.invoke('identify:save', args),
   rows: () => ipcRenderer.invoke('identify:rows'),
   saveRow: (row: unknown) => ipcRenderer.invoke('identify:save-row', row),
+  correct: (payload: { orderId: string; fields: Record<string, string> }) => ipcRenderer.invoke('identify:correct', payload),
   identify: (payload: unknown) => ipcRenderer.invoke('tt-identify', payload),
   clipKeep: (payload: unknown) => ipcRenderer.invoke('identify:clip-keep', payload),
   clipTake: (orderId: string) => ipcRenderer.invoke('identify:clip-take', orderId),

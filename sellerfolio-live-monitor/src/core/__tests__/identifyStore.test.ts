@@ -329,6 +329,22 @@ describe('rowFromEntry / entryFromRow', () => {
   it('does not invent a live flag', () => {
     expect(rowFromEntry({ ...entry, live: undefined })?.live).toBeUndefined()
   })
+  // Every later save of the row goes through here. If the round trip dropped these, a correction
+  // SellerFolio had already accepted would come back owing one — and the queue would send every
+  // corrected lot of every show again on the next launch, forever.
+  it('round trips what the row knows about reaching SellerFolio', () => {
+    const sent = rowFromEntry({ ...entry, syncedAt: NOW_SEC - 2 })
+    expect(sent?.syncedAt).toBe(NOW_SEC - 2)
+    expect(entryFromRow(sent!).syncedAt).toBe(NOW_SEC - 2)
+    const refused = rowFromEntry({ ...entry, syncNote: 'no record of this lot' })
+    expect(refused?.syncNote).toBe('no record of this lot')
+    expect(entryFromRow(refused!).syncNote).toBe('no record of this lot')
+  })
+  it('does not invent either of them', () => {
+    const r = rowFromEntry(entry)
+    expect(r?.syncedAt).toBeUndefined()
+    expect(r?.syncNote).toBeUndefined()
+  })
 })
 
 describe('restoreEntries: bringing last session back into the screen', () => {

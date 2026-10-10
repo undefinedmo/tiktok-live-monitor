@@ -141,6 +141,20 @@ export function identifyPreflight(token: string, settings: IdentifySettings): Pr
   return { ok: true, baseUrl: settings.baseUrl, token }
 }
 
+/**
+ * What sending a CORRECTION needs: a token and an address.
+ *
+ * Deliberately not the `enabled` switch. That switch governs whether the station listens to the
+ * show and uploads its audio; a correction is text an operator typed and the app has already saved.
+ * Refusing to send one because audio capture is off would strand finished work for a reason that
+ * has nothing to do with it — and the operator would never find out, because the row would simply
+ * sit there looking saved.
+ */
+export function correctPreflight(token: string, settings: IdentifySettings): Preflight {
+  if (!token) return { ok: false, reason: 'bad_token' }
+  return { ok: true, baseUrl: settings.baseUrl, token }
+}
+
 export type SettingsUpdate = { ok: true; next: IdentifySettings } | { ok: false; error: string }
 
 /**
