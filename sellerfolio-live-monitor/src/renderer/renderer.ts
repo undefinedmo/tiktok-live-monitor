@@ -5,26 +5,6 @@ import { labelNeedsHtml } from '../electron/zplLabel' // preview-only: which pri
 import { PrintDedup } from '../core/printDedup'
 import { SaleSeed } from '../core/saleSeed'
 import { labelCode } from '../core/labelCode'
-import { CLIP_SAMPLE_RATE, makePcmClipStore } from '../core/pcmClipStore'
-import { PCM_WORKLET_NAME, openPcmTap, type TapNode } from '../core/pcmTap'
-import { openAudioTap, type AudioTap, type TapContext } from '../core/audioTap'
-import { AuctionJournal } from '../core/auctionJournal'
-import { makeIdentifyQueue } from '../core/identifyQueue'
-import { BREAKER_COOLDOWN_MS, BREAKER_THRESHOLD, MAX_IDENTIFY_ATTEMPTS, RETRY_BACKOFF_MS, fromWirePayload, makeBreaker, makeIdentifyRun, serverToLocalSec, toWirePayload, type IdentifyPayload, type WireClip } from '../core/identifySend'
-import { shouldKeepClip } from '../core/identifyKept'
-import { bulkRetryTargets, canRetry, retryAllLabel } from '../core/identifyRetry'
-import type { IdentifyAnswer, IdentifyJob } from '../core/identifyClient'
-import { clipNote, clipReadyEpochSec, createSeenOrders, identifyPayloadFor, splitSalesByAge, viewOutcome, type JournalEvent } from '../core/identifyWiring'
-import { MAX_IDENTIFICATIONS, restoreEntries, rowFromEntry, type IdentificationRow } from '../core/identifyStore'
-import {
-  CORRECTION_BACKOFF_MS, CORRECTION_SETTLE_MS, correctionPatch, pendingCorrections, readCorrectionOutcome,
-} from '../core/correctionSync'
-import { checkLatencyInput, identifyGate, identifyStateFrom, identifyStatus, latencyNote, migrateLegacySwitch } from '../core/identifySettings'
-
-// Structured AI-transcript fields (was core/ledger's LedgerTranscript; the products
-// panel still stores per-product transcripts in memory for the session).
-interface LedgerTranscript { brand?: string; item?: string; color?: string; size?: string; retailPrice?: string; summary?: string }
-type IdentifiedFields = { brand: string | null; item: string | null; color: string | null; size: string | null }
 
 interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string; title?: string; code?: string }
 type LabelField = 'itemNumber' | 'custom' | 'buyer' | 'productName' | 'price'
@@ -38,8 +18,6 @@ interface LabelTemplate {
   scale?: Partial<Record<LabelField, number>>
   qr?: boolean
 }
-/** What main knows about identification: the two settings, and whether a capture token is saved. */
-interface IdentifyView { baseUrl: string; enabled: boolean; damaged: boolean; defaultBaseUrl: string; ready: boolean; streamLatencySec: number }
 declare global {
   interface Window {
     ttLive: { onEvent: (cb: (ev: LiveEvent) => void) => void }
@@ -53,21 +31,7 @@ declare global {
       onReady: (cb: (info: { version: string }) => void) => void
     }
     recapAPI?: {
-      enabled: () => Promise<{ enabled: boolean; model: string }>
-      transcribe: (payload: { audio: Uint8Array; productName?: string; structured?: boolean }) => Promise<{ text?: string; fields?: LedgerTranscript; error?: string }>
       suggestRegex?: (payload: { title: string; want: string }) => Promise<{ regex?: string; flags?: string; explain?: string; error?: string }>
-    }
-    identifyAPI?: {
-      state: () => Promise<IdentifyView>
-      save: (args: { baseUrl?: string; enabled?: boolean; streamLatencySec?: number }) => Promise<IdentifyView & { ok: boolean; error?: string }>
-      identify: (payload: { job: IdentifyJob; clip: WireClip }) => Promise<IdentifyAnswer>
-      rows: () => Promise<IdentificationRow[]>
-      saveRow: (row: IdentificationRow) => Promise<boolean>
-      correct?: (payload: { orderId: string; fields: Record<string, string> }) => Promise<{ status: number | null }>
-      clipKeep: (payload: { job: IdentifyJob; clip: WireClip }) => Promise<boolean>
-      clipTake: (orderId: string) => Promise<{ job: IdentifyJob; clip: WireClip } | null>
-      clipDrop: (orderId: string) => Promise<boolean>
-      clipList: () => Promise<string[]>
     }
     syncAPI?: {
       connection: () => Promise<{ loggedIn: boolean; hasShow: boolean; polling: boolean }>
@@ -391,13 +355,6 @@ function renderProductsTable() {
     .sort((a, b) => b.sold - a.sold)
   for (const row of rows) {
     const tr = el('div', 'prow')
-    const busy = productTxBusy.has(row.id)
-    const has = !!productTx[row.id]
-    const tx = el('div', 'ptx' + (busy ? ' busy' : has ? ' has' : ''), busy ? '◴' : '✦')
-    tx.title = has ? (productTx[row.id]?.summary || 'AI details captured — click to re-transcribe this product') : recapEnabled ? 'Click to AI-transcribe this product' : 'Set GEMINI_API_KEY to enable AI transcription'
-    if (recapEnabled && !busy) tx.addEventListener('click', () => void transcribeProduct(row.id, row.name))
-    if (!AI_UI) tx.style.display = 'none'
-    tr.appendChild(tx)
     tr.appendChild(el('div', 'pn', row.name))
     tr.appendChild(el('div', 'pc', String(row.sold)))
     tr.appendChild(el('div', 'pc', String(row.failed)))
@@ -562,6 +519,10 @@ function loadStream(url: string) {
     liveSeekBound = true
     // on every resume after a stall, snap to the live edge (flv.js otherwise resumes behind)
     video.addEventListener('playing', () => seekToLiveEdge(video, 1))
+    // The station stays silent: an audible one can feed the show back into the broadcast. The markup
+    // carries `muted`, and the player controls have a volume button, so a click is undone here.
+    video.muted = true
+    video.addEventListener('volumechange', () => { if (!video.muted) video.muted = true })
   }
   if (flvCatchup !== null) { clearInterval(flvCatchup); flvCatchup = null }
   if (flvPlayer) { try { flvPlayer.destroy() } catch { /* ignore */ } flvPlayer = null }
@@ -571,7 +532,6 @@ function loadStream(url: string) {
   )
   flvPlayer.attachMediaElement(video)
   flvPlayer.on(flvjs.Events.ERROR, () => { window.setTimeout(() => loadStream(lastStreamUrl), 2500) })
-  video.addEventListener('playing', () => void startAudioCapture(), { once: true })
   flvPlayer.load()
   void video.play().catch(() => {})
   // flv.js (unlike the mpegts.js fork) does NOT chase the live edge, so latency accumulates
@@ -579,1091 +539,17 @@ function loadStream(url: string) {
   flvCatchup = window.setInterval(() => { if (!video.paused) seekToLiveEdge(video, 2) }, 2000)
 }
 
-// AI extraction is off in the desktop UI for now. The whole pipeline below — clip
-// capture, Gemini call, per-product structured transcripts — stays wired and tested;
-// only its on-screen affordances are hidden. Flip this to re-surface them.
-const AI_UI = false
-
-// ── auction audio → AI transcript (mirrors sellerfolio-live enrichment) ──────
-// Is the graph running? There is no recorder object to ask any more, so this is the one answer.
-let capturing = false
-// The capture graph: made once, kept until identification is turned off. See core/audioTap for why
-// the audio cannot simply be read off the player, and core/pcmClipStore for why it is kept as samples.
-let audioTap: AudioTap | null = null
-let pcmTap: { stop: () => void } | null = null
-let audioCtx: AudioContext | null = null
-// The last 5 minutes of show audio (sized from the measured p99 inter-sale gap of 219 s), as raw
-// samples. A sale's clip is cut from this to the sample on demand; nothing is recorded per sale.
-// Epoch seconds from this machine's clock -- the same clock the sale's own timestamp is read against.
-const clipStore = makePcmClipStore({ capSec: 300, now: () => Date.now() / 1000 })
-// recapEnabled = core/identifyGate: a capture token is saved AND the Settings switch is on. The switch
-// is stored by the main process (identify.json) and is ON by default, so saving a token is what
-// turns identification on; it used to need a Gemini key on this machine plus a switch that defaulted
-// off, back when the answers had nowhere to go. Nothing is captured or sent while it is off, and
-// main refuses to send while it is off whatever this page thinks.
-let geminiKeyPresent = false // the old local-Gemini product transcript only; identification does not use it
-let recapEnabled = false
-let identifyReady = false // a capture token is saved (the SellerFolio sync token: there is no second one)
-let identifyEnabled = true // the Settings switch, as main last reported it
-let identifyDamaged = false // main could not read the setting and switched identification off
-let identifyHeld = false // an earlier opt-out could not be carried over: unknown means OFF for this session
-let identifyUrl = ''
-let identifyLatencySec = 0 // how far the recorded stream lags the show (core/identifyWiring: STREAM LATENCY); 0 = not measured
-let transcribing = false // the capture lock of transcribeProduct (the local Gemini path) only
-let watchedRoomId: string | null = null
-interface Recap {
-  head: string
-  lot: string
-  price: string
-  /** `abandoned` is the queue's third outcome: the show ended with this sale still waiting. */
-  status: 'transcribing' | 'done' | 'error' | 'skipped' | 'abandoned'
-  /** Identified by the server, which wrote the identity: this row has no fields to show. */
-  live?: boolean
-  text: string
-  /** The five SellerFolio fields. main.ts has always returned these; the old UI threw them away. */
-  fields?: LedgerTranscript
-  /** An operator corrected this entry by hand — never silently replaced by a later run. */
-  edited?: boolean
-  /** What this lot knows about reaching SellerFolio (core/correctionSync). */
-  syncedAt?: number
-  syncNote?: string
-  /** Kept so Retry can re-run THIS lot rather than whatever is selling now. Memory only: a restored row has none. */
-  sale?: Sale
-  /** What identifies the row on disk (core/identifyStore). A row without them is never persisted. */
-  orderId?: string
-  roomId?: string | null
-  atEpochSec?: number
-}
-/** Save a row's current state. Fire and forget: a disk that fails must never reach the show. */
-function persistEntry(e: Recap): void {
-  const row = rowFromEntry(e)
-  const api = window.identifyAPI
-  if (!row || !api) return
-  try { void Promise.resolve(api.saveRow(row)).catch(() => {}) } catch { /* the page still shows the row */ }
-}
-const ID_FIELDS: Array<[keyof LedgerTranscript, string, boolean]> = [
-  ['brand', 'Brand', false], ['item', 'Item', false], ['color', 'Color', false],
-  ['size', 'Size', true], ['retailPrice', 'MSRP', true],
-]
-/** A model that answers "Not stated" has not answered. Treat it as absent, as the server does. */
-function idValue(v: unknown): string | null {
-  const t = typeof v === 'string' ? v.trim() : ''
-  return !t || /^(not stated|unknown|n\/?a|none|-+)$/i.test(t) ? null : t
-}
-function idIsWeak(r: Recap): boolean {
-  if (r.status !== 'done' || (r.live && !r.fields)) return false
-  return ID_FIELDS.some(([k]) => idValue(r.fields?.[k]) === null)
-}
-/** Anything that ended without an identity: a failure, an empty clip, or a sale the show outlived. */
-function idUnresolved(r: Recap): boolean {
-  return r.status === 'error' || r.status === 'skipped' || r.status === 'abandoned'
-}
-const recaps: Recap[] = []
-
-async function startAudioCapture(): Promise<void> {
-  // Off means off: nothing is read from the graph, so there is no clip to send.
-  if (capturing || !recapEnabled) return
-  const video = document.getElementById('live') as HTMLVideoElement | null
-  if (!video) return
-  const Ctor = window.AudioContext
-  if (!Ctor) return
-  // 16 kHz, so the graph resamples once, here, and samples arrive at the rate clips are stored at.
-  audioCtx ??= new Ctor({ sampleRate: CLIP_SAMPLE_RATE })
-  const ctx = audioCtx
-  const tap = await openAudioTap({ element: video, context: ctx as unknown as TapContext })
-  if (!tap) return
-  const pcm = await openPcmTap({
-    context: ctx,
-    source: tap.source,
-    sink: tap.sink,
-    makeNode: () => new AudioWorkletNode(ctx, PCM_WORKLET_NAME) as unknown as TapNode,
-    onSamples: (samples) => clipStore.push(samples),
-  })
-  if (!pcm) { tap.stop(); return }
-  // Awaiting the graph let another call, or the Settings switch, get there first.
-  if (capturing || !recapEnabled) { pcm.stop(); tap.stop(); return }
-  audioTap = tap
-  pcmTap = pcm
-  capturing = true
-}
-function stopAudioCapture(): void {
-  capturing = false
-  const tap = audioTap
-  const pcm = pcmTap
-  audioTap = null
-  pcmTap = null
-  pcm?.stop()
-  tap?.stop() // re-mutes the player and unroutes the tap, so the station is as the markup left it
-  clipStore.reset()
-}
-/** A different show: forget the last one's audio. The graph keeps running -- samples carry no
- *  container, so there is no header to re-establish and nothing to restart. */
-function resetClipBuffer(): void {
-  clipStore.reset()
-}
-/** The most recent `sec` seconds of buffered audio, or null.
- *  NOT the identification window: that is planned per sale by core/clipBuffer + clipRecorder.
- *  This is a "right now" grab kept ONLY for transcribeProduct (the local-Gemini Products-table click).
- *  Do not use it for sales and do not grow it: a second window path is how production drifted before. */
-function recentClip(sec: number): Blob | null {
-  const end = Date.now() / 1000
-  return clipStore.extract({ startEpochSec: end - sec, endEpochSec: end })?.blob ?? null
-}
-
-/** The five fields as a label/value grid — same order and labels as the web app's identity card. */
-function idFieldGrid(r: Recap, edit: boolean): HTMLElement {
-  const dl = el('dl', 'id-fields')
-  for (const [key, label, mono] of ID_FIELDS) {
-    dl.appendChild(el('dt', undefined, label))
-    const dd = el('dd', mono ? 'mono' : undefined)
-    if (edit) {
-      dd.appendChild(idFieldBox(r, key, 'card'))
-    } else {
-      const v = idValue(r.fields?.[key])
-      dd.appendChild(el('span', v ? 'v' : 'v id-none', v ?? (r.status === 'transcribing' ? 'listening…' : 'not said')))
-    }
-    dl.appendChild(dd)
-  }
-  return dl
-}
-
-// ── corrections going back to SellerFolio ──────────────────────────────────────────────────────
-// An override used to live only in this station's own file, so the server kept the model's answer.
-// The rules are in core/correctionSync (which row is next, what a status means, how long to wait);
-// this turns the handle and writes the answer onto the row.
-
-/** Set when nothing will get through until a person changes something — a refused token. Shown on
- *  every corrected row, because a queue that has quietly stopped is worse than one that is slow. */
-let correctStopped: string | null = null
-let correctSending = false
-let flushTimer: ReturnType<typeof setTimeout> | undefined
-
-/** The entries that still owe SellerFolio a correction, oldest sale first. Derived through the same
- *  row builder that persists them, so the queue and the disk cannot disagree about what is pending. */
-function pendingEntries(): Recap[] {
-  if (correctStopped) return []
-  const byOrder = new Map<string, Recap>()
-  for (const r of recaps) if (r.orderId) byOrder.set(r.orderId, r)
-  const rows: IdentificationRow[] = []
-  for (const r of byOrder.values()) {
-    const row = rowFromEntry(r)
-    if (row) rows.push(row)
-  }
-  const out: Recap[] = []
-  for (const row of pendingCorrections(rows)) {
-    const entry = byOrder.get(row.orderId)
-    if (entry) out.push(entry)
-  }
-  return out
-}
-
-/** How many corrections have not reached SellerFolio. What the screen counts. */
-function unsentCorrections(): number {
-  if (correctStopped) {
-    // The queue is stopped, not empty: count what it is holding rather than reporting none.
-    return recaps.filter((r) => r.edited && !r.syncedAt && !r.syncNote).length
-  }
-  return pendingEntries().length
-}
-
-/** Send soon rather than on every blur, so correcting four fields of one lot is one request. */
-function queueCorrectionFlush(): void {
-  if (flushTimer) clearTimeout(flushTimer)
-  flushTimer = setTimeout(() => { flushTimer = undefined; void flushCorrections() }, CORRECTION_SETTLE_MS)
-}
-
-/**
- * Drain the queue, one lot at a time. A row that keeps failing is LEFT QUEUED rather than marked
- * anything: the next correction, or the next launch, picks it up again. Only an answer that cannot
- * change — SellerFolio has no such lot, or will not take the body — is written down as final.
- */
-async function flushCorrections(): Promise<void> {
-  const api = window.identifyAPI
-  if (correctSending || correctStopped || !api?.correct) return
-  correctSending = true
-  try {
-    for (;;) {
-      const entry = pendingEntries()[0]
-      if (!entry) return
-      const row = rowFromEntry(entry)
-      const patch = row && correctionPatch(row)
-      if (!row || !patch) return
-      let outcome = readCorrectionOutcome(null)
-      for (let attempt = 0; ; attempt++) {
-        let status: number | null = null
-        try { status = (await api.correct({ orderId: row.orderId, fields: patch }))?.status ?? null }
-        catch { status = null } // the bridge itself failed; indistinguishable from no answer
-        outcome = readCorrectionOutcome(status)
-        if (outcome.kind !== 'retry') break
-        const wait = CORRECTION_BACKOFF_MS[attempt]
-        if (wait === undefined) return // out of attempts: still queued, nothing written
-        await new Promise((r) => setTimeout(r, wait))
-      }
-      if (outcome.kind === 'stop') { correctStopped = outcome.note; renderAll(); return }
-      if (outcome.kind === 'sent') entry.syncedAt = Math.floor(Date.now() / 1000)
-      if (outcome.kind === 'refused') entry.syncNote = outcome.note
-      persistEntry(entry)
-      renderAll()
-    }
-  } finally {
-    correctSending = false
-  }
-}
-
-/** What a corrected row says about reaching SellerFolio. Never claims one landed when it did not. */
-function correctedNote(r: Recap): string {
-  if (r.syncNote) return `You corrected it — ${r.syncNote}`
-  if (r.syncedAt) return 'You corrected it · sent to SellerFolio'
-  if (correctStopped) return `You corrected it — not sent: ${correctStopped}`
-  return 'You corrected it · not sent yet'
-}
-
-/** What has been typed but not yet saved. A live show re-renders every few seconds, and without
- *  this a half-typed correction would be wiped by the next sale that landed. */
-const drafts = new Map<Recap, Partial<Record<keyof LedgerTranscript, string>>>()
-/** Which box held the caret, so a re-render can hand it back mid-word. */
-let caret: { r: Recap; key: keyof LedgerTranscript; view: EditView; at: number } | null = null
-/** The box this render decided should hold the caret, focused once the render has finished. */
-let focusBox: HTMLInputElement | null = null
-/**
- * Set while an editor is being abandoned, so the blur that follows does not keep the field the
- * operator just pressed Escape in. Chromium does not fire blur for a focused box that is removed
- * from the page, but that is a browser detail and nothing here should depend on it.
- */
-let abandoning = false
-type EditView = 'card' | 'table'
-
-/** The value cell while a lot is being corrected: a box, exactly where the value was. */
-function idFieldBox(r: Recap, key: keyof LedgerTranscript, view: EditView): HTMLInputElement {
-  const inp = document.createElement('input')
-  inp.className = 'id-inline'
-  inp.placeholder = 'not said'
-  inp.dataset.idField = key
-  inp.value = drafts.get(r)?.[key] ?? idValue(r.fields?.[key]) ?? ''
-  const remember = () => { caret = { r, key, view, at: inp.selectionStart ?? inp.value.length } }
-  inp.addEventListener('focus', remember)
-  inp.addEventListener('input', () => {
-    const d = drafts.get(r) ?? {}
-    d[key] = inp.value
-    drafts.set(r, d)
-    remember()
-  })
-  // Leaving a box IS the save. There is no button to remember, and a correction typed in the
-  // middle of a show cannot be lost to a glance back at the stream. Saving does not re-render:
-  // the other boxes are still being typed into, and the row may be in a filter it is about to
-  // fall out of.
-  inp.addEventListener('blur', () => { commitField(r, key, inp.value) })
-  // Same lot, same field, same view: this is the box the caret was in before the re-render.
-  if (caret && caret.r === r && caret.key === key && caret.view === view) focusBox = inp
-  return inp
-}
-
-/**
- * Keep one field's value on the lot and on disk. Text that has not changed is not a correction:
- * tabbing through a lot, or clicking into a box and straight back out, must not mark it as
- * overridden — `edited` is what stops a later identification run from replacing a human's answer.
- * Returns whether anything was actually written.
- */
-function commitField(r: Recap, key: keyof LedgerTranscript, raw: string): boolean {
-  if (abandoning) return false
-  const value = raw.trim()
-  const draft = drafts.get(r)
-  if (draft) delete draft[key]
-  if (value === (idValue(r.fields?.[key]) ?? '')) return false
-  r.fields = { ...(r.fields ?? {}), [key]: value }
-  r.edited = true
-  r.status = 'done'
-  // This lot owes SellerFolio a correction again. Without clearing these, a SECOND correction to a
-  // lot already sent — or one whose first attempt was refused — would sit here looking saved and
-  // never go anywhere, which is the exact failure this whole path exists to end.
-  delete r.syncedAt
-  delete r.syncNote
-  persistEntry(r)
-  queueCorrectionFlush()
-  return true
-}
-
-/** Give the caret back after a render, or typing through a live show would be interrupted. */
-function applyEditFocus(): void {
-  const box = focusBox
-  focusBox = null
-  if (!box) return
-  const at = caret?.at ?? box.value.length
-  box.focus()
-  try { box.setSelectionRange(at, at) } catch { /* not a text box */ }
-}
-
-/**
- * Close the editor, keeping whatever is in its boxes. Every box left on the way out has already
- * been kept by its own blur; this is for the box still holding the caret when Enter or Done is
- * pressed, which never lost focus and so never saved itself.
- */
-function saveEditedFields(r: Recap, within: HTMLElement, redraw: () => void): void {
-  const boxes = within.querySelectorAll<HTMLInputElement>('input[data-id-field]')
-  if (!boxes.length) return
-  for (const box of boxes) commitField(r, box.dataset.idField as keyof LedgerTranscript, box.value)
-  closeEditor(r)
-  redraw()
-}
-
-/** Stop correcting, keeping nothing that was typed. */
-function closeEditor(r: Recap): void {
-  editing.delete(r)
-  drafts.delete(r)
-  caret = null
-}
-
-/**
- * Enter closes the editor; Escape closes it and drops the box that still has the caret. Escape is
- * no longer an undo for the whole lot — the boxes left before it were kept as they were left, which
- * is the point of saving on the way out.
- */
-function editKeys(r: Recap, within: HTMLElement, redraw: () => void): void {
-  within.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); saveEditedFields(r, within, redraw) }
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      abandoning = true
-      try { closeEditor(r); redraw() } finally { abandoning = false }
-    }
-  })
-}
-
-/** Done, shown in place of Override and Retry while a lot is being corrected. There is no Save:
- *  the fields keep themselves as the caret leaves them, so a Save button would be an invitation to
- *  think the work was lost without it. Done only closes the editor. */
-function editActs(r: Recap, within: HTMLElement, redraw: () => void): HTMLElement[] {
-  const done = el('button', 'qbtn sm print', 'Done')
-  done.addEventListener('click', () => saveEditedFields(r, within, redraw))
-  editKeys(r, within, redraw)
-  return [done]
-}
-
-/** Retry arms on the first click and runs on the second — the same guard the web app puts on
- *  re-transcribe, so one stray click cannot throw away an identity someone corrected by hand. */
-function idRetryButton(r: Recap, redraw: () => void): HTMLElement {
-  const b = el('button', 'qbtn sm', 'Retry') as HTMLButtonElement
-  b.disabled = r.status === 'transcribing' // one job per lot: wait for its outcome
-  let armed = false
-  let t: ReturnType<typeof setTimeout> | undefined
-  b.addEventListener('click', () => {
-    if (!armed) {
-      armed = true; b.classList.add('armed'); b.textContent = 'Confirm retry'
-      t = setTimeout(() => { armed = false; b.classList.remove('armed'); b.textContent = 'Retry' }, 4000)
-      return
-    }
-    if (t) clearTimeout(t)
-    armed = false; b.classList.remove('armed')
-    if (!recapEnabled || !canRetry(r, keptClips)) { b.textContent = recapEnabled ? 'no audio for this lot' : 'audio is off'; setTimeout(() => { b.textContent = 'Retry' }, 1800); return }
-    b.textContent = 'Retrying…'
-    void retryEntry(r)
-    redraw()
-  })
-  return b
-}
-
-/** Which entries are mid-edit. Keyed by object so a re-render cannot lose the open editor. */
-const editing = new Set<Recap>()
-
-/**
- * Open the correction editor for a lot. Double-click OPENS; only the Override button toggles. A
- * double-click that closed an open editor would throw away whatever had been typed into it, and a
- * lot still being identified is left alone: its fields are not final yet, and the card view does not
- * render an editor in that state at all.
- */
-function openEditor(r: Recap, redraw: () => void, view: EditView): void {
-  if (r.status === 'transcribing' || editing.has(r)) return
-  editing.add(r)
-  // The caret starts in the first field of the view that was double-clicked, not the other one.
-  caret = { r, key: ID_FIELDS[0]![0], view, at: 0 }
-  redraw()
-}
-
-/** A double-click on Override, Retry, or inside the open editor is not a request to open it. */
-function dblclickOpens(target: EventTarget | null): boolean {
-  const node = target instanceof Element ? target : null
-  return !node || !node.closest('button, input')
-}
-
-function idEntry(r: Recap, current: boolean, redraw: () => void): HTMLElement {
-  const weak = idIsWeak(r)
-  const edit = editing.has(r)
-  const row = el('div', 'recap-entry' + (current ? ' current' : '') + (weak ? ' review' : ''))
-  row.title = 'Double-click to override what was identified'
-  row.addEventListener('dblclick', (e) => { if (dblclickOpens(e.target)) openEditor(r, redraw, 'card') })
-  const head = el('div', 'recap-head')
-  head.appendChild(el('span', undefined, [r.lot, r.head].filter(Boolean).join(' · ')))
-  if (r.price) head.appendChild(el('span', 'price', r.price))
-  row.appendChild(head)
-
-  // While correcting, the five boxes are shown whatever the lot's state: a lot that FAILED to
-  // identify is exactly the one most in need of being filled in by hand.
-  if (edit) {
-    row.appendChild(idFieldGrid(r, true))
-  } else if (idUnresolved(r)) {
-    row.appendChild(el('div', 'recap-text error', '⚠ ' + r.text))
-  } else if (r.live && !r.fields) {
-    if (r.status !== 'transcribing') row.appendChild(el('div', 'recap-text', r.text))
-  } else {
-    row.appendChild(idFieldGrid(r, edit))
-  }
-
-  if (r.status === 'transcribing') {
-    const bar = el('div', 'id-working')
-    bar.appendChild(el('i'))
-    row.appendChild(bar)
-    row.appendChild(el('div', 'id-why', r.live ? 'identifying this lot…' : 'listening to this lot…'))
-  } else {
-    const acts = el('div', 'id-acts')
-    if (edit) {
-      acts.appendChild(el('span', 'id-why', 'saves as you leave each box'))
-      for (const b of editActs(r, row, redraw)) acts.appendChild(b)
-    } else {
-      acts.appendChild(el('span', 'id-why',
-        r.edited ? (r.syncNote ? 'corrected — ' + r.syncNote : r.syncedAt ? 'corrected · sent' : 'corrected · not sent yet') : r.status === 'error' ? 'identification failed' : r.status === 'abandoned' || r.status === 'skipped' ? 'not identified' : weak ? 'some fields were not said' : 'identified'))
-      const override = el('button', 'qbtn sm', 'Override')
-      override.addEventListener('click', () => openEditor(r, redraw, 'card'))
-      acts.appendChild(override)
-      acts.appendChild(idRetryButton(r, redraw))
-    }
-    row.appendChild(acts)
-  }
-  return row
-}
-
-/** The capture lights report what is ACTUALLY running, not what the app can do.
- *  AUDIO is green only while samples are actually reaching the ring buffer — which needs
- *  a saved capture token and the Settings switch (on by default). VIDEO is green only
- *  while the player is genuinely playing. Anything less and an operator checking "is this
- *  capturing?" gets a reassuring light over nothing. */
-function renderCaptureState() {
+/** The stream light reports what is ACTUALLY running: VIDEO is green only while the player is
+ *  genuinely playing, so an operator checking on the stream gets no reassuring light over nothing. */
+function renderStreamState() {
   const v = document.getElementById('live') as HTMLVideoElement | null
   const videoLive = !!v && !v.paused && !v.ended && v.readyState >= 2
-  const audioLive = capturing && clipStore.hasAudio
-  const audio = document.getElementById('sigAudio')
   const video = document.getElementById('sigVideo')
-  if (audio) {
-    audio.classList.toggle('off', !audioLive)
-    audio.title = audioLive ? 'Recording the stream’s audio for identification'
-      : recapEnabled ? 'Idle — audio is captured when a lot sells' : 'Off — turn on Show audio in Settings'
-  }
   if (video) {
     video.classList.toggle('off', !videoLive)
     video.title = videoLive ? 'Playing the live stream' : 'No stream playing'
   }
-  const note = document.getElementById('captureNote')
-  if (note) note.textContent = audioLive ? 'recording' : recapEnabled ? 'armed' : 'audio off'
 }
-
-function renderRecap() {
-  const list = document.getElementById('recapList')
-  if (!list) return
-  list.replaceChildren()
-  const count = document.getElementById('idCount')
-  if (count) count.textContent = String(recaps.filter((r) => r.status === 'done').length)
-  const chip = document.getElementById('idReviewChip')
-  if (chip) {
-    const n = recaps.filter((r) => idIsWeak(r) || idUnresolved(r)).length
-    chip.textContent = `${n} need review`
-    chip.style.display = n ? '' : 'none'
-  }
-  if (!recaps.length) {
-    const e = el('div', 'mono', recapEnabled ? 'items are identified as they sell…' : identifyReady ? 'turn on Show audio in Settings to identify items' : 'save a capture token in Settings to enable')
-    e.style.cssText = 'padding:14px 16px;color:var(--ink-4);font-size:11px;'
-    list.appendChild(e)
-    return
-  }
-  // Two only: the lot selling and the one before it. Everything older is on the Identifications
-  // screen — a scrolling backlog here competes with the show for the operator's attention.
-  recaps.slice(0, 2).forEach((r, i) => list.appendChild(idEntry(r, i === 0, renderAll)))
-  if (recaps.length > 2) {
-    const more = el('div', 'recap-entry')
-    const link = el('a', undefined, 'Earlier lots are on the Identifications screen')
-    link.setAttribute('href', '#')
-    link.style.cssText = 'font-size:11px;color:var(--accent);'
-    link.addEventListener('click', (e) => { e.preventDefault(); showScreen('identify') })
-    more.appendChild(link)
-    list.appendChild(more)
-  }
-}
-
-/** Both views read the same array, so an Override made in one is visible in the other. */
-function renderAll() { renderRecap(); renderIdentifications(); applyEditFocus() }
-
-// ── correcting a run of lots at once ───────────────────────────────────────────────────────────
-// A host sells the same bra in fourteen sizes. When the identification got the brand or the item
-// wrong it got it wrong for all fourteen, and fixing them one at a time during a show is not
-// something anyone will keep up with. So: tick the lots (shift-click for a run), type the fields
-// that are shared once, Apply. A blank box is left alone, which is what makes it safe.
-
-/** The lots ticked on the Identifications screen. Keyed by object, so a re-render keeps the ticks. */
-const picked = new Set<Recap>()
-/** What the batch bar holds. Kept out of the DOM so a re-render mid-show cannot wipe it. */
-const batch: Partial<Record<keyof LedgerTranscript, string>> = {}
-/** The rows the table is currently showing, in the order it shows them. Nothing is ever written to
- *  a lot that is not in here: a filtered-out row must not be changed by a button you cannot see it under. */
-let listed: Recap[] = []
-/** Where the last tick landed, so shift-click can fill in the run between. */
-let lastPicked: number | null = null
-/** Size is never copied across a run. It is the one field that differs lot to lot, and the one the
- *  10-04 audit says to grade on — copying it from the first lot would quietly wreck the rest. */
-const BATCH_COPY_SKIP: Array<keyof LedgerTranscript> = ['size']
-
-function pickedRows(): Recap[] {
-  return listed.filter((r) => picked.has(r))
-}
-
-/** Forget the ticks and empty the bar. Called when the list underneath changes out from under it. */
-function clearBatch(): void {
-  picked.clear()
-  lastPicked = null
-  for (const [k] of ID_FIELDS) delete batch[k]
-  for (const b of document.querySelectorAll<HTMLInputElement>('input[data-batch-field]')) b.value = ''
-}
-
-/** Write the bar's filled-in fields onto every ticked lot, through the same commit the single-lot
- *  editor uses — so each one is marked as corrected and written to disk exactly as a hand edit is. */
-function applyBatch(): void {
-  const rows = pickedRows()
-  const sets = ID_FIELDS.map(([k]) => [k, (batch[k] ?? '').trim()] as const).filter(([, v]) => v !== '')
-  if (!rows.length || !sets.length) return
-  for (const r of rows) for (const [k, v] of sets) commitField(r, k, v)
-  clearBatch()
-  renderAll()
-}
-
-/** Fill the bar from the topmost ticked lot, for the usual case: one lot already reads correctly
- *  and the rest of the run should read the same. Size is left blank — see BATCH_COPY_SKIP. */
-function copyBatchFromFirst(): void {
-  const first = pickedRows()[0]
-  if (!first) return
-  for (const b of document.querySelectorAll<HTMLInputElement>('input[data-batch-field]')) {
-    const k = b.dataset.batchField as keyof LedgerTranscript
-    const v = BATCH_COPY_SKIP.includes(k) ? '' : idValue(first.fields?.[k]) ?? ''
-    b.value = v
-    batch[k] = v
-  }
-}
-
-/** The bar's five boxes, built once. Rebuilding them on every render would wipe what was being
- *  typed into them every time a lot sold. */
-let batchBuilt = false
-function buildBatchFields(): void {
-  const host = document.getElementById('idBatchFields')
-  if (!host || batchBuilt) return
-  batchBuilt = true
-  for (const [key, label, mono] of ID_FIELDS) {
-    const wrap = el('label', 'idbatch-f')
-    wrap.appendChild(el('span', undefined, label))
-    const inp = document.createElement('input')
-    inp.className = 'id-inline' + (mono ? ' mono' : '')
-    inp.placeholder = 'leave as is'
-    inp.dataset.batchField = key
-    inp.addEventListener('input', () => { batch[key] = inp.value })
-    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); applyBatch() } })
-    wrap.appendChild(inp)
-    host.appendChild(wrap)
-  }
-}
-
-function renderBatchBar(): void {
-  buildBatchFields()
-  const n = pickedRows().length
-  const bar = document.getElementById('idBatch')
-  if (bar) bar.style.display = n ? '' : 'none'
-  const count = document.getElementById('idBatchCount')
-  if (count) count.textContent = n === 1 ? '1 lot' : `${n} lots`
-  const apply = document.getElementById('idBatchApply')
-  if (apply) apply.textContent = n === 1 ? 'Apply to this lot' : `Apply to these ${n}`
-  const unsent = document.getElementById('idUnsent')
-  if (unsent) {
-    const n = unsentCorrections()
-    // Only ever says a correction has NOT landed. It is never the place that claims one has.
-    unsent.textContent = correctStopped ? `${n} not sent — ${correctStopped}` : n === 1 ? '1 correction not sent yet' : `${n} corrections not sent yet`
-    unsent.style.display = n ? '' : 'none'
-  }
-  const all = document.getElementById('idPickAll') as HTMLInputElement | null
-  if (all) {
-    all.checked = n > 0 && n === listed.length
-    all.indeterminate = n > 0 && n < listed.length
-  }
-}
-
-/** The tick in a row's first cell. Shift-click sets every row between this one and the last tick
- *  to match it, which is how a run of fourteen is selected without fourteen clicks. */
-function pickCell(r: Recap, index: number): HTMLElement {
-  const td = el('td', 'pick')
-  const box = document.createElement('input')
-  box.type = 'checkbox'
-  box.checked = picked.has(r)
-  box.setAttribute('aria-label', `Select lot ${r.lot || String(index + 1)}`)
-  box.addEventListener('click', (e) => {
-    const on = box.checked
-    const from = (e as MouseEvent).shiftKey ? lastPicked : null
-    const lo = from === null ? index : Math.min(from, index)
-    const hi = from === null ? index : Math.max(from, index)
-    for (let i = lo; i <= hi; i++) {
-      const row = listed[i]
-      if (!row) continue
-      if (on) picked.add(row)
-      else picked.delete(row)
-    }
-    lastPicked = index
-    renderAll()
-  })
-  td.appendChild(box)
-  return td
-}
-
-let idFilter: 'all' | 'review' | 'edited' = 'all'
-function renderIdentifications() {
-  syncRetryAll()
-  const body = document.getElementById('idRows')
-  const empty = document.getElementById('idEmpty')
-  if (!body) return
-  const q = ((document.getElementById('idSearch') as HTMLInputElement | null)?.value ?? '').trim().toLowerCase()
-  const rows = recaps.filter((r) => {
-    if (idFilter === 'review' && !(idIsWeak(r) || idUnresolved(r))) return false
-    if (idFilter === 'edited' && !r.edited) return false
-    if (!q) return true
-    return [r.lot, r.head, r.fields?.brand, r.fields?.item].some((v) => (v ?? '').toLowerCase().includes(q))
-  })
-  body.replaceChildren()
-  if (empty) empty.style.display = rows.length ? 'none' : ''
-  listed = rows
-  rows.forEach((r, index) => {
-    const tr = el('tr', (idIsWeak(r) || idUnresolved(r) ? 'flagged' : '') + (picked.has(r) ? ' picked' : ''))
-    tr.title = 'Double-click to override what was identified'
-    tr.addEventListener('dblclick', (e) => { if (dblclickOpens(e.target)) openEditor(r, renderAll, 'table') })
-    const edit = editing.has(r)
-    const cell = (text: string | null, cls?: string) => {
-      const td = el('td', cls)
-      td.appendChild(el('span', text ? undefined : 'id-none', text ?? 'not said'))
-      return td
-    }
-    tr.appendChild(pickCell(r, index))
-    tr.appendChild(cell(r.lot || '—', 'mono'))
-    // The server now reports what it persisted, so a live row usually HAS its fields. When it does
-    // not — an older worker, or a 200 whose identity could not be read — say so with an em dash
-    // rather than "not said", which would claim the brand was never spoken.
-    const fieldText = (k: keyof LedgerTranscript) => (r.live && !r.fields ? '—' : idValue(r.fields?.[k]))
-    // While correcting, the field's own cell holds the box: the value is replaced where it sits,
-    // rather than copied into a second set of fields a row below it.
-    const fieldCell = (k: keyof LedgerTranscript, cls?: string) => {
-      if (!edit) return cell(fieldText(k), cls)
-      const td = el('td', cls)
-      td.appendChild(idFieldBox(r, k, 'table'))
-      return td
-    }
-    tr.appendChild(fieldCell('brand'))
-    tr.appendChild(fieldCell('item'))
-    tr.appendChild(fieldCell('color'))
-    tr.appendChild(fieldCell('size', 'mono'))
-    tr.appendChild(fieldCell('retailPrice', 'num mono'))
-    tr.appendChild(cell(r.price || null, 'num mono'))
-    tr.appendChild(cell(r.edited ? correctedNote(r)
-      : r.status === 'error' ? (r.text || 'Failed') : r.status === 'abandoned' ? 'Not identified (show ended or app closed)' : r.status === 'skipped' ? 'Nothing to identify'
-      : r.status === 'transcribing' ? 'Identifying…' : 'Identified live'))
-    const acts = el('td')
-    const wrap = el('div', 'rowacts')
-    if (edit) {
-      for (const b of editActs(r, tr, renderAll)) wrap.appendChild(b)
-    } else {
-      const ov = el('button', 'qbtn sm', 'Override')
-      ov.addEventListener('click', () => openEditor(r, renderAll, 'table'))
-      wrap.appendChild(ov)
-      wrap.appendChild(idRetryButton(r, renderAll))
-    }
-    acts.appendChild(wrap)
-    tr.appendChild(acts)
-    body.appendChild(tr)
-  })
-  renderBatchBar()
-}
-// ── live identification: sale → clip → queue → worker → row ────────────────────────────────────
-// Every fresh sale is windowed from the audio buffer, queued, and posted to the identification
-// endpoint by the main process. The queue replaces the old `transcribing` boolean, which silently
-// discarded any sale that arrived while another was in flight. Pure rules live in core/.
-type IdentifyQueueJob = {
-  orderId: string
-  /** What the server is sent, assembled in core/identifyWiring: the job and the extracted clip itself. */
-  payload: IdentifyPayload
-  /** The show this sale belongs to: a retry for a show that has ended is not worth a model call. */
-  show: number
-  entry: Recap
-}
-const MAX_BOUNDARY_EVENTS = 600
-/** Slice time: a chunk is delivered when its second has FINISHED, so the tail lands up to ~1 s late. */
-const CHUNK_SETTLE_MS = 1500
-/** Never wait longer than this for a sale's tail audio, whatever the clocks say. */
-const MAX_TAIL_WAIT_MS = 15_000
-/**
- * Concurrent POSTs. A lot that escalates holds its slot for MAX_IDENTIFY_ATTEMPTS x
- * IDENTIFY_TIMEOUT_MS = 135 s, and a show measured 2026-10-09 sold a lot every ~24 s: at two slots,
- * two slow lots stall the queue for longer than four later lots take to arrive, and every one of
- * them ages while it waits. Six covers that worst case against that pace.
- *
- * Six is safe on the worker, not a guess: 12 cores at load 0.05, and since clips became WAV
- * (core/pcmClipStore) ffmpeg only reformats them rather than decoding Opus. The real ceiling is the
- * model's own rate limit, not the box -- and note BREAKER_THRESHOLD is 2, so if raising this starts
- * drawing 429s, the breaker trips on two consecutive failures and pauses everything for 30 s. That
- * is the number to look at next if identification goes quiet in bursts.
- */
-const IDENTIFY_CONCURRENCY = 6
-let showGeneration = 0
-let boundaryEvents: JournalEvent[] = [] // this show's auction starts/ends and sales, on THIS machine's clock
-let boundaryJournal = new AuctionJournal()
-const seenOrders = createSeenOrders() // a sale is identified once unless someone presses Retry; restored orders are never forgotten
-
-function noteBoundary(e: JournalEvent): void {
-  boundaryEvents.push(e)
-  if (boundaryEvents.length > MAX_BOUNDARY_EVENTS) boundaryEvents.splice(0, boundaryEvents.length - MAX_BOUNDARY_EVENTS)
-}
-/** `note` is what the audio behind an identification should admit to (core/identifyWiring clipNote); it is only said of a success. */
-function settleEntry(entry: Recap, outcome: { status: string; reason?: string; tries?: number; identity?: IdentifiedFields }, note = ''): void {
-  const v = viewOutcome(outcome)
-  entry.status = v.status
-  entry.text = v.text + (v.status === 'done' ? note : '')
-  // The server reports what it PERSISTED, so the row can say what sold instead of showing em
-  // dashes. Never over an operator's correction: `edited` means a human already decided this lot.
-  if (outcome.identity && !entry.edited) {
-    const f = fieldsFromIdentity(outcome.identity)
-    if (f) entry.fields = { ...(entry.fields ?? {}), ...f }
-  }
-  persistEntry(entry)
-  renderAll()
-}
-
-/** The identity as the five-field shape the rows already render. Blank fields are left out rather
- *  than written as empty strings, so "not said" still reads as not said. */
-function fieldsFromIdentity(id: IdentifiedFields): LedgerTranscript | null {
-  const out: LedgerTranscript = {}
-  if (id.brand) out.brand = id.brand
-  if (id.item) out.item = id.item
-  if (id.color) out.color = id.color
-  if (id.size) out.size = id.size
-  return Object.keys(out).length ? out : null
-}
-// Fails fast while the worker is unreachable, so an outage costs one quick failure per sale, not the whole retry budget.
-const identifyBreaker = makeBreaker({ threshold: BREAKER_THRESHOLD, cooldownMs: BREAKER_COOLDOWN_MS, now: () => Date.now() })
-const identifyQueue = makeIdentifyQueue<IdentifyQueueJob, IdentifyAnswer & { tries: number }>({
-  run: makeIdentifyRun<IdentifyQueueJob>({
-    send: async (job) => {
-      const api = window.identifyAPI
-      if (!api) return { status: 'failed', reason: 'network_error', retryable: false }
-      return api.identify(await toWirePayload(job.payload))
-    },
-    maxAttempts: MAX_IDENTIFY_ATTEMPTS,
-    backoffMs: RETRY_BACKOFF_MS,
-    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-    shouldContinue: (job) => job.show === showGeneration && recapEnabled,
-    breaker: identifyBreaker,
-  }),
-  onSettled: (job, outcome) => {
-    settleEntry(job.entry, outcome, clipNote(job.payload.clip))
-    void tidyKeptClip(job, outcome.status)
-  },
-  concurrency: IDENTIFY_CONCURRENCY,
-})
-// ── Retry: from the clip that failed, kept on disk (core/identifyKept), else cut again from the buffer ───────
-/** Orders with a clip kept on disk. A row restored after a restart has no sale, but may still have its clip. */
-const keptClips = new Set<string>()
-/** A failure keeps its clip so a retry has the same audio whenever it is pressed; a success clears an earlier one. Never throws into the show. */
-async function tidyKeptClip(job: IdentifyQueueJob, status: string): Promise<void> {
-  const api = window.identifyAPI
-  if (!api) return
-  try {
-    if (shouldKeepClip(status)) {
-      if (await api.clipKeep(await toWirePayload(job.payload))) keptClips.add(job.orderId)
-      else keptClips.delete(job.orderId)
-    } else if (keptClips.delete(job.orderId)) await api.clipDrop(job.orderId)
-  } catch { /* the row is settled already; at worst Retry cuts the clip again from the buffer */ }
-  renderIdentifications() // the "Retry all" count
-}
-/** Queue a kept clip for another try, on its own row. */
-function queueKeptClip(entry: Recap, kept: { job: IdentifyJob; clip: WireClip }): void {
-  entry.status = 'transcribing'
-  entry.text = ''
-  persistEntry(entry)
-  renderAll()
-  if (!identifyQueue.enqueue({ orderId: kept.job.orderId, payload: fromWirePayload(kept), show: showGeneration, entry })) settleEntry(entry, { status: 'failed', reason: 'already_queued' })
-}
-const retryLoading = new Set<string>() // orders whose kept clip is being read: a second press must not queue a second job
-/**
- * Retry one row. From the clip that failed when it is on disk (the same audio, even after a restart or once the
- * live buffer has moved on), else cut again from the buffer with the sale in memory. False when there is nothing
- * to retry from; the row is then left as it was.
- */
-async function retryEntry(r: Recap): Promise<boolean> {
-  const api = window.identifyAPI
-  const orderId = r.orderId
-  if (!recapEnabled || !api || !orderId || !canRetry(r, keptClips)) return false
-  if (!keptClips.has(orderId)) {
-    if (!r.sale) return false
-    identifySale(r.sale, r)
-    return true
-  }
-  if (retryLoading.has(orderId)) return true
-  retryLoading.add(orderId)
-  let kept: { job: IdentifyJob; clip: WireClip } | null = null
-  try { kept = await api.clipTake(orderId) } catch { kept = null } finally { retryLoading.delete(orderId) }
-  if (r.status === 'transcribing') return true // another press got there first
-  if (!recapEnabled) return false
-  if (kept) { queueKeptClip(r, kept); return true }
-  keptClips.delete(orderId) // it was not on the disk after all
-  if (r.sale) { identifySale(r.sale, r); return true }
-  settleEntry(r, { status: 'failed', reason: 'no_audio' })
-  return true
-}
-/** Every failed row that can be retried, oldest first. Each one still goes through the queue, so an outage that is not over fails fast. */
-async function retryAllFailed(): Promise<void> {
-  for (const r of bulkRetryTargets(recaps, keptClips)) await retryEntry(r)
-  renderAll()
-}
-let retryAllArmed = false
-let retryAllTimer: ReturnType<typeof setTimeout> | undefined
-/** The "Retry all failed" button: shown while there is anything to retry, and asks twice (every retry can cost a model call). */
-function syncRetryAll(): void {
-  const b = document.getElementById('idRetryAll') as HTMLButtonElement | null
-  if (!b) return
-  const n = bulkRetryTargets(recaps, keptClips).length
-  if (!n) retryAllArmed = false
-  b.style.display = n && recapEnabled ? '' : 'none'
-  b.textContent = retryAllLabel(n, retryAllArmed)
-  b.classList.toggle('armed', retryAllArmed)
-}
-document.getElementById('idRetryAll')?.addEventListener('click', () => {
-  if (!retryAllArmed) {
-    retryAllArmed = true
-    syncRetryAll()
-    retryAllTimer = setTimeout(() => { retryAllArmed = false; syncRetryAll() }, 4000)
-    return
-  }
-  if (retryAllTimer) clearTimeout(retryAllTimer)
-  retryAllArmed = false
-  syncRetryAll()
-  void retryAllFailed()
-})
-
-/** The show changed or identification was turned off: sales still WAITING settle as abandoned. */
-function endIdentifyShow(reason: string): void {
-  showGeneration++
-  boundaryEvents = []
-  boundaryJournal = new AuctionJournal()
-  seenOrders.endShow()
-  identifyQueue.abandonAll(reason)
-}
-
-/** A sale on THIS machine's clock: what the row and the window are built from. */
-function saleOnThisClock(s: Sale) {
-  return { orderId: s.orderId, roomId: s.roomId ?? watchedRoomId, atEpochSec: serverToLocalSec(s.createdAt, serverTimeOffsetMs) }
-}
-/** The row for a sale, newest first, kept to the store's cap. Not yet drawn or saved. */
-function newEntryFor(s: Sale, sale: { orderId: string; roomId: string | null; atEpochSec: number }): Recap {
-  const entry: Recap = {
-    head: `${s.productName.slice(0, 30)} — @${s.buyer.handle ?? s.buyer.username}`,
-    lot: s.skuDesc ?? '', price: s.price?.formatted ?? '',
-    status: 'transcribing', text: '', sale: s, live: true,
-    orderId: sale.orderId, roomId: sale.roomId, atEpochSec: sale.atEpochSec,
-  }
-  recaps.unshift(entry)
-  if (recaps.length > MAX_IDENTIFICATIONS) recaps.pop()
-  return entry
-}
-/**
- * A sale that reached the app too late to identify on its own (late-landing order rows are normal) gets a
- * row saying so, not silence. It is not sent: the operator can press Retry, which cuts from whatever the
- * buffer still holds.
- */
-function recordTooOldSale(s: Sale): void {
-  if (!recapEnabled || !window.identifyAPI) return
-  if (seenOrders.has(s.orderId)) return
-  seenOrders.markSent(s.orderId)
-  settleEntry(newEntryFor(s, saleOnThisClock(s)), { status: 'failed', reason: 'too_old' })
-}
-
-/** Identify one sale. `existing` is a row being retried: it is reused, not duplicated. */
-function identifySale(s: Sale, existing?: Recap): void {
-  if (!recapEnabled || !window.identifyAPI) return
-  // A lot already being identified keeps its one in-flight job; a second Retry must not queue another.
-  if (existing?.status === 'transcribing') return
-  if (!existing) {
-    if (seenOrders.has(s.orderId)) return
-    seenOrders.markSent(s.orderId)
-  }
-  // Everything the server is sent is assembled in core/identifyWiring (tested): this only supplies the
-  // sale on THIS machine's clock, the show's journal, and the store.
-  const sale = saleOnThisClock(s)
-  const entry = existing ?? newEntryFor(s, sale)
-  entry.status = 'transcribing'
-  entry.text = ''
-  // Written now, not only when it settles: a lot still waiting when the app closes is then on record
-  // as not identified, instead of vanishing.
-  persistEntry(entry)
-  renderAll()
-  const show = showGeneration
-  // The clip includes the tail after the sale, so wait for that audio to exist.
-  const waitMs = Math.min(MAX_TAIL_WAIT_MS, Math.max(0, (clipReadyEpochSec(sale.atEpochSec, identifyLatencySec) - Date.now() / 1000) * 1000) + CHUNK_SETTLE_MS)
-  setTimeout(() => {
-    if (show !== showGeneration || !recapEnabled) { settleEntry(entry, { status: 'abandoned', reason: 'identification stopped' }); return }
-    const payload = identifyPayloadFor(sale, boundaryEvents, clipStore, identifyLatencySec)
-    if (!payload) { settleEntry(entry, { status: 'failed', reason: 'no_audio' }); return }
-    // A refusal means this order is already queued or running: say so on the row rather than leave it
-    // on "Identifying…" (the job that holds the order settles the same row with its real outcome).
-    if (!identifyQueue.enqueue({ orderId: sale.orderId, payload, show, entry })) settleEntry(entry, { status: 'failed', reason: 'already_queued' })
-  }, waitMs)
-}
-
-// structured per-product (per-bin) transcription — one capture covers every order of that product
-const productTxBusy = new Set<string>()
-async function transcribeProduct(productId: string, productName: string): Promise<boolean> {
-  // `transcribing` is the capture lock: only one local-Gemini clip grab at a time
-  if (!recapEnabled || !geminiKeyPresent || !window.recapAPI || transcribing || productTxBusy.has(productId)) return false
-  transcribing = true
-  productTxBusy.add(productId)
-  renderProductsTable()
-  try {
-    const clip = recentClip(30)
-    if (!clip || clip.size < 2000) return false
-    const audio = new Uint8Array(await clip.arrayBuffer())
-    const res = await window.recapAPI.transcribe({ audio, productName, structured: true })
-    if (res.fields && Object.keys(res.fields).length) productTx[productId] = res.fields
-    else if (res.text) productTx[productId] = { summary: res.text }
-    else return false
-    renderProductsTable()
-    return true
-  } catch { return false } finally {
-    transcribing = false
-    productTxBusy.delete(productId)
-    renderProductsTable()
-  }
-}
-
-function applyIdentifyState(): void {
-  const was = recapEnabled
-  const gate = identifyGate({ hasToken: identifyReady, enabled: identifyEnabled, held: identifyHeld })
-  recapEnabled = gate === 'on'
-  if (recapEnabled) void startAudioCapture() // no-op until the video is playing; its own listener covers that
-  else if (was) { stopAudioCapture(); endIdentifyShow('identification was turned off'); keptClips.clear() }
-  const sw = document.getElementById('aiTranscribe') as HTMLInputElement | null
-  const st = document.getElementById('aiState')
-  if (sw) { sw.checked = recapEnabled; sw.disabled = !identifyReady }
-  if (st) {
-    const [text, cls] = identifyStatus(gate, identifyDamaged, identifyHeld)
-    st.className = 'state ' + cls
-    st.textContent = text
-  }
-  const url = document.getElementById('idUrl') as HTMLInputElement | null
-  if (url) {
-    if (document.activeElement !== url) url.value = identifyUrl
-    url.placeholder = identifyDefaultUrl
-  }
-  const lat = document.getElementById('idLatency') as HTMLInputElement | null
-  if (lat && document.activeElement !== lat) lat.value = identifyLatencySec ? String(identifyLatencySec) : ''
-  const latState = document.getElementById('idLatencyState')
-  if (latState && !latStateHeld) {
-    const n = latencyNote(identifyLatencySec)
-    latState.className = 'state ' + n.cls
-    latState.textContent = n.text
-  }
-  renderAll()
-}
-let identifyDefaultUrl = ''
-let latStateHeld = false // a save result is showing under the delay box; the standing note comes back on the next change
-/** Ask main what the settings are now (a token may have just been saved or removed) and apply them. */
-async function refreshIdentifyState(): Promise<void> {
-  let told: unknown
-  try { told = await window.identifyAPI?.state() } catch { told = undefined }
-  const s = identifyStateFrom(told) // untrusted over IPC: anything not exactly true is false
-  identifyReady = s.ready
-  identifyEnabled = s.enabled
-  identifyDamaged = s.damaged
-  identifyUrl = s.baseUrl
-  identifyDefaultUrl = s.defaultBaseUrl
-  identifyLatencySec = s.streamLatencySec
-  applyIdentifyState()
-}
-document.getElementById('aiTranscribe')?.addEventListener('change', (e) => {
-  const want = (e.target as HTMLInputElement).checked
-  identifyHeld = false // an explicit choice here replaces the unknown one
-  const api = window.identifyAPI
-  if (!api) { applyIdentifyState(); return }
-  void api.save({ enabled: want }).then(() => refreshIdentifyState(), () => refreshIdentifyState())
-})
-document.getElementById('idUrlSave')?.addEventListener('click', () => {
-  const api = window.identifyAPI
-  const box = document.getElementById('idUrl') as HTMLInputElement | null
-  const st = document.getElementById('idUrlState')
-  if (!api || !box) return
-  void api.save({ baseUrl: box.value }).then(async (r) => {
-    // On a refusal the box keeps what was typed, so it can be corrected rather than retyped.
-    if (r.ok) { await refreshIdentifyState(); box.value = r.baseUrl }
-    if (st) { st.className = 'state ' + (r.ok ? 'ok-text' : 'bad-text'); st.textContent = r.ok ? 'Saved' : (r.error ?? 'Could not save') }
-  }, () => { if (st) { st.className = 'state bad-text'; st.textContent = 'Could not save' } })
-})
-
-document.getElementById('idLatencySave')?.addEventListener('click', () => {
-  const api = window.identifyAPI
-  const box = document.getElementById('idLatency') as HTMLInputElement | null
-  const st = document.getElementById('idLatencyState')
-  if (!api || !box) return
-  const c = checkLatencyInput(box.value)
-  // A refusal keeps what was typed, so it can be corrected rather than retyped.
-  if (!c.ok) { if (st) { st.className = 'state bad-text'; st.textContent = c.error; latStateHeld = true } return }
-  latStateHeld = false
-  void api.save({ streamLatencySec: c.sec }).then(async (r) => {
-    if (r.ok) { await refreshIdentifyState(); box.value = identifyLatencySec ? String(identifyLatencySec) : '' }
-    else if (st) { st.className = 'state bad-text'; st.textContent = r.error ?? 'Could not save'; latStateHeld = true }
-  }, () => { if (st) { st.className = 'state bad-text'; st.textContent = 'Could not save'; latStateHeld = true } })
-})
-
-/** Bring last session's identifications back. Never throws and never blocks the page: no rows is a valid answer. */
-async function restoreIdentifications(): Promise<void> {
-  let rows: IdentificationRow[] = []
-  try { rows = (await window.identifyAPI?.rows()) ?? [] } catch { rows = [] }
-  if (!Array.isArray(rows)) return
-  for (const e of restoreEntries(recaps, rows, MAX_IDENTIFICATIONS)) {
-    recaps.push(e)
-    // A sale the app is shown again after a restart is already on record: it is not identified twice.
-    seenOrders.markRestored(e.orderId)
-  }
-  // Corrections typed before the app was last closed, or while the uplink was down, go out now.
-  queueCorrectionFlush()
-}
-
-/** The old switch was in localStorage and defaulted off. An operator who turned it off keeps it off. */
-/** Which orders still have their failed clip on disk, so a restored row can be retried. Never throws. */
-async function restoreKeptClips(): Promise<void> {
-  let ids: string[] = []
-  try { ids = (await window.identifyAPI?.clipList()) ?? [] } catch { ids = [] }
-  if (!Array.isArray(ids)) return
-  for (const id of ids) if (typeof id === 'string') keptClips.add(id)
-  renderAll()
-}
-
-async function migrateLegacyIdentifySwitch(): Promise<void> {
-  const api = window.identifyAPI
-  if (!api) return
-  // Unresolved (the opt-out could not be saved, or the old preference could not be read) holds the gate OFF:
-  // falling through to the new default would switch audio on against a choice the operator made.
-  try { identifyHeld = (await migrateLegacySwitch(localStorage, async (enabled) => (await api.save({ enabled })).ok === true)) === 'unresolved' } catch { identifyHeld = true }
-}
-
-async function initRecap() {
-  try { geminiKeyPresent = (await window.recapAPI?.enabled())?.enabled ?? false } catch { geminiKeyPresent = false }
-  await migrateLegacyIdentifySwitch() // before the gate is first read, or an opt-out would arm the recorder for a moment
-  await refreshIdentifyState()
-  await restoreIdentifications()
-  await restoreKeptClips()
-  // The AI chip lived on the deleted "Current auction item" panel. The Identification section
-  // head carries the state now; AI_UI still gates the whole feature without a plumbing rebuild.
-  // Opened without the Electron preload (a browser preview), the demo block seeds rows so the
-  // layout can be checked without a live show. It supplies DATA; this file owns the markup.
-  const seed = (window as unknown as { __demoRecaps?: Recap[] }).__demoRecaps
-  if (seed?.length && !recaps.length) recaps.push(...seed)
-  renderAll()
-}
-void initRecap()
 
 // ── label printing ──────────────────────────────────────────────────────────
 let selectedPrinter = ''
@@ -2302,19 +1188,11 @@ $('feedCount').textContent = 'v' + __APP_VERSION__
 { const v = document.getElementById('aboutVersion'); if (v) v.textContent = __APP_VERSION__ }
 
 // -- screens: live monitor + label settings ----------------------------------
-// productTx survives the ledger removal: the products panel shows per-product AI
-// transcripts captured this session (in-memory only - nothing persists anymore).
-const productTx: Record<string, LedgerTranscript> = {}
-
-function showScreen(s: 'monitor' | 'settings' | 'identify') {
+function showScreen(s: 'monitor' | 'settings') {
   $('monitorScreen').style.display = s === 'monitor' ? 'flex' : 'none'
   const settings = document.getElementById('settingsScreen')
   if (settings) settings.style.display = s === 'settings' ? 'flex' : 'none'
-  const identify = document.getElementById('identifyScreen')
-  if (identify) identify.style.display = s === 'identify' ? 'flex' : 'none'
-  if (s === 'identify') renderIdentifications()
   $('navMonitor').classList.toggle('active', s === 'monitor')
-  document.getElementById('navIdentify')?.classList.toggle('active', s === 'identify')
   document.getElementById('navSettings2')?.classList.toggle('active', s === 'settings')
   // live status (connecting...) + room/viewers/elapsed only make sense on the Live Monitor
   const meters = document.getElementById('liveMeters')
@@ -2323,43 +1201,14 @@ function showScreen(s: 'monitor' | 'settings' | 'identify') {
   if (livePill) livePill.style.display = s === 'monitor' ? 'flex' : 'none'
 }
 $('navMonitor').addEventListener('click', () => showScreen('monitor'))
-document.getElementById('navIdentify')?.addEventListener('click', () => showScreen('identify'))
 document.getElementById('navSettings2')?.addEventListener('click', () => showScreen('settings'))
-// The review count in the Identification head is the route to the flagged lots.
-document.getElementById('idReviewChip')?.addEventListener('click', () => { idFilter = 'review'; syncIdFilterButtons(); showScreen('identify') })
-// A different list is a different selection: searching with lots still ticked would leave Apply
-// pointing at rows that are no longer on screen.
-document.getElementById('idSearch')?.addEventListener('input', () => { clearBatch(); renderAll() }) // renderAll, so a correction being typed keeps its caret
-document.getElementById('idPickAll')?.addEventListener('change', (e) => {
-  const on = (e.target as HTMLInputElement).checked
-  for (const r of listed) { if (on) picked.add(r); else picked.delete(r) }
-  lastPicked = null
-  renderAll()
-})
-document.getElementById('idBatchApply')?.addEventListener('click', () => applyBatch())
-document.getElementById('idBatchCopy')?.addEventListener('click', () => copyBatchFromFirst())
-document.getElementById('idBatchClear')?.addEventListener('click', () => { clearBatch(); renderAll() })
-function syncIdFilterButtons() {
-  for (const b of document.querySelectorAll<HTMLElement>('[data-idfilter]')) {
-    b.classList.toggle('on', b.dataset.idfilter === idFilter)
-  }
-}
-for (const b of document.querySelectorAll<HTMLElement>('[data-idfilter]')) {
-  b.addEventListener('click', () => {
-    idFilter = (b.dataset.idfilter as 'all' | 'review' | 'edited') ?? 'all'
-    syncIdFilterButtons()
-    clearBatch()
-    renderIdentifications()
-  })
-}
-syncIdFilterButtons()
-renderCaptureState()
-setInterval(renderCaptureState, 1000)
+renderStreamState()
+setInterval(renderStreamState, 1000)
 // Deep link, so a screen can be opened (and screenshotted) without a click. Accepts the query
 // form too, because a fragment does not always survive a headless capture.
 {
   const want = location.hash.replace('#', '') || new URLSearchParams(location.search).get('screen')
-  if (want === 'identify' || want === 'settings') showScreen(want)
+  if (want === 'settings') showScreen(want)
 }
 document.getElementById('diagBtn')?.addEventListener('click', () => void window.diagAPI?.open())
 
@@ -2404,13 +1253,12 @@ function setupSfSync() {
     void api.save(args).then((r) => {
       tokEl.value = ''
       renderSfSync(r)
-      void refreshIdentifyState() // a token saved here is what turns identification on
       if (!r.ok && r.error) { const st = document.getElementById('sfState'); if (st) { st.className = 'bad-text'; st.textContent = r.error } }
     })
   })
   document.getElementById('sfFolder')?.addEventListener('click', () => void api.openFolder())
   document.getElementById('sfOff')?.addEventListener('click', () => {
-    void api.save({ token: '' }).then((r) => { renderSfSync(r); void refreshIdentifyState() })
+    void api.save({ token: '' }).then(renderSfSync)
   })
 }
 setupSfSync()
@@ -2462,8 +1310,6 @@ window.ttLive.onEvent((ev: LiveEvent) => {
     }
     case 'room':
       $('room').textContent = ev.roomId.slice(-8)
-      if (watchedRoomId !== null && ev.roomId !== watchedRoomId) { resetClipBuffer(); endIdentifyShow('the show ended') } // new show: never inherit the last one's audio or queue
-      watchedRoomId = ev.roomId
       if (ev.createdAt) liveStartedAt = ev.createdAt // actual go-live for the elapsed timer
       break
     case 'session':
@@ -2522,11 +1368,6 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       // Primary listing-change signal for the print dedup (700ms, and per-LISTING —
       // unlike a close event's auctionConfigId, which is per-auction on the im sources).
       setPrintListing(ev.current?.auctionConfigId)
-      // Auction starts and ends, kept to window each sale. Server clock -> this machine's clock.
-      for (const r of boundaryJournal.ingest(ev)) {
-        if (r.type === 'auction_start' && r.startedAtMs) noteBoundary({ type: 'auction_start', atEpochSec: serverToLocalSec(r.startedAtMs, serverTimeOffsetMs) })
-        else if (r.type === 'auction_end') noteBoundary({ type: 'auction_end', atEpochSec: serverToLocalSec(r.seenAtMs, serverTimeOffsetMs) })
-      }
       // Paint as soon as there IS a lot, not only once it has a leader — that guard is
       // what kept both panels blank through the entire bidding window. An empty pin body
       // parses to no `current` at all, so this still holds the last paint rather than
@@ -2580,10 +1421,6 @@ window.ttLive.onEvent((ev: LiveEvent) => {
         const lot = (s.skuDesc ?? '').replace(/^#/, '')
         if (lot) setTimeout(() => showSold(lot, s.buyer.username || s.buyer.handle, s.price.formatted), 0)
       }
-      // EVERY fresh sale is identified, not just the first of a batch: two sales in one second must both get an outcome.
-      for (const s of freshSales) noteBoundary({ type: 'sale', atEpochSec: serverToLocalSec(s.createdAt, serverTimeOffsetMs), orderId: s.orderId })
-      // A sale that arrives late is recorded (reason too_old), not filtered out: late order rows are normal.
-      const { toIdentify, tooOld } = splitSalesByAge(freshSales, Date.now(), serverTimeOffsetMs)
 
       // ── THEN UI ──────────────────────────────────────────────────────────
       lastByProduct = ev.byProduct
@@ -2604,8 +1441,6 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       if (!salesAuthoritative) stats.sales = String(ev.totalSales)
       renderStats()
       $('feedCount').title = `${ev.totalSales} sales · $${(ev.totalCents / 100).toFixed(0)}`
-      for (const s of tooOld) recordTooOldSale(s)
-      for (const s of toIdentify) identifySale(s) // identification — after print + render
       break
     }
     case 'stream':

@@ -10,13 +10,6 @@ import { parsePin } from '../core/pin'
 import { AuctionResults } from '../core/auctionResults'
 import { AuctionWatch } from '../core/auctionWatch'
 import { AuctionJournal } from '../core/auctionJournal'
-import { IDENTIFY_TIMEOUT_MS, sendIdentify, type WireClip } from '../core/identifySend'
-import { buildCorrectionRequest, CORRECTION_TIMEOUT_MS } from '../core/correctionSync'
-import type { IdentifyJob } from '../core/identifyClient'
-import { createIdentifyStore, type IdentificationRow } from '../core/identifyStore'
-import { correctPreflight, DEFAULT_IDENTIFY_URL, identifyPreflight, updateIdentifySettings } from '../core/identifySettings'
-import { loadIdentifySettings, nodeStoreIO, saveIdentifySettings } from './identifyFiles'
-import { createClipKeeper } from './identifyClips'
 import { parseTrend, paceCentsPerHour, formatCents, STATS_GMV, STATS_ORDERS } from '../core/liveTrend'
 import { decodeChat } from '../core/chat'
 import { ChatJournal, journalChat, lotInProgress } from '../core/chatJournal'
@@ -754,104 +747,6 @@ ipcMain.handle('sf-sync:save', (_e, a: { baseUrl?: string; token?: string }) => 
   return { ok: true, ...syncView() }
 })
 
-// ── Live identification: POST a sale's clip to the worker ────────────────────
-// The POST is made here, not in the renderer: there is no CORS in the main process, and the capture
-// token (the same one the journal sync uses, decrypted by loadSyncSettings) never reaches the page.
-// The endpoint is the Linux worker over the tailnet -- NEVER hq. Two settings live in identify.json
-// beside sf-sync.json (the address, whether identification is on, and the stream delay); core/identifySettings decides
-// what they mean, including that an address the token must not go to is not used and that an
-// unreadable file reads as OFF. There is no second token: sendIdentify gets the sync token.
-const IDENTIFY_FILE = join(app.getPath('userData'), 'identify.json')
-const identifyFailed = (reason: string) => ({ status: 'failed' as const, reason, retryable: false })
-function identifyView() {
-  const s = loadIdentifySettings(IDENTIFY_FILE)
-  return { baseUrl: s.baseUrl, enabled: s.enabled, damaged: s.damaged, streamLatencySec: s.streamLatencySec, defaultBaseUrl: DEFAULT_IDENTIFY_URL, ready: !!loadSyncSettings().token }
-}
-// The renderer decides when to record audio; this only reports the settings and whether a token exists.
-ipcMain.handle('identify:state', () => identifyView())
-ipcMain.handle('identify:save', (_e, a: { baseUrl?: unknown; enabled?: unknown; streamLatencySec?: unknown }) => {
-  const u = updateIdentifySettings(loadIdentifySettings(IDENTIFY_FILE), a ?? {})
-  if (!u.ok) return { ok: false, error: u.error, ...identifyView() }
-  if (!saveIdentifySettings(IDENTIFY_FILE, u.next)) return { ok: false, error: 'Could not save this setting', ...identifyView() }
-  if (!u.next.enabled) identifyClips.clear() // off means off for audio at rest too: no failed clip stays on this disk
-  return { ok: true, ...identifyView() }
-})
-ipcMain.handle('tt-identify', async (_e, payload: { job?: IdentifyJob; clip?: WireClip }) => {
-  const job = payload?.job
-  const clip = payload?.clip
-  if (!job || typeof job.orderId !== 'string' || !clip || !(clip.bytes instanceof Uint8Array) || !clip.bytes.byteLength) {
-    return identifyFailed('bad_request_local')
-  }
-  // Off means off here too, not only in the page: a clip already queued when the switch was turned off,
-  // or a page that disagrees, must not be able to send audio.
-  const pre = identifyPreflight(loadSyncSettings().token, loadIdentifySettings(IDENTIFY_FILE))
-  if (!pre.ok) return identifyFailed(pre.reason)
-  // Copy: structured clone can hand over a view whose buffer is shared or detached later.
-  const wire: WireClip = { ...clip, bytes: new Uint8Array(clip.bytes) }
-  const out = await sendIdentify({ job, clip: wire, cfg: { baseUrl: pre.baseUrl, token: pre.token }, fetch, timeoutMs: IDENTIFY_TIMEOUT_MS })
-  if (out.status === 'failed') flog(`[identify] order ${job.orderId} failed: ${out.reason}`) // never the token, never the request
-  return out
-})
-
-// The other direction: an override typed on this station, sent back so SellerFolio stops holding
-// the model's answer. Answers with the HTTP status and nothing else — core/correctionSync decides
-// what a status MEANS (sent, refused for good, retry, or stop the queue), and `null` is "no answer
-// at all", which is the ordinary case when a show's uplink drops.
-ipcMain.handle('identify:correct', async (_e, payload: { orderId?: unknown; fields?: unknown }) => {
-  const orderId = typeof payload?.orderId === 'string' ? payload.orderId : ''
-  const fields = payload?.fields
-  if (!orderId || !fields || typeof fields !== 'object' || Array.isArray(fields)) return { status: 400 }
-  // Needs a token and an address, NOT the audio switch — see correctPreflight.
-  const pre = correctPreflight(loadSyncSettings().token, loadIdentifySettings(IDENTIFY_FILE))
-  if (!pre.ok) return { status: 401 }
-  const patch: Record<string, string> = {}
-  for (const [k, v] of Object.entries(fields as Record<string, unknown>)) if (typeof v === 'string') patch[k] = v
-  const req = buildCorrectionRequest({ baseUrl: pre.baseUrl, token: pre.token }, orderId, patch)
-  const abort = new AbortController()
-  const timer = setTimeout(() => abort.abort(), CORRECTION_TIMEOUT_MS)
-  try {
-    const res = await fetch(req.url, { method: 'POST', headers: req.headers, body: req.body, signal: abort.signal })
-    // Only on an answer that is not a plain success, and never the body: a 4xx names the lot, a 5xx
-    // can carry whatever the server was holding.
-    if (!res.ok) flog(`[identify] correction for order ${orderId} answered ${res.status}`)
-    return { status: res.status }
-  } catch {
-    return { status: null } // timeout, DNS, refused connection: all "try again later"
-  } finally {
-    clearTimeout(timer)
-  }
-})
-
-// Clips that failed to identify, kept on disk so Retry still has the audio after a restart or once the live
-// buffer has moved on (core/identifyKept says what is kept; electron/identifyClips does the files). Only
-// while identification is ON, and emptied when it is turned off.
-const identifyClips = createClipKeeper(join(app.getPath('userData'), 'identify-clips'), { now: () => Date.now() })
-ipcMain.handle('identify:clip-keep', (_e, payload: { job: IdentifyJob; clip: WireClip }) => {
-  if (!loadIdentifySettings(IDENTIFY_FILE).enabled) return false
-  return identifyClips.keep(payload)
-})
-ipcMain.handle('identify:clip-take', (_e, orderId: string) => identifyClips.load(orderId))
-ipcMain.handle('identify:clip-drop', (_e, orderId: string) => { identifyClips.drop(orderId); return true })
-ipcMain.handle('identify:clip-list', () => {
-  if (!loadIdentifySettings(IDENTIFY_FILE).enabled) { identifyClips.clear(); return [] }
-  return identifyClips.list()
-})
-
-// Identifications that survive a restart (core/identifyStore: capped by count with an age backstop,
-// every bad line skipped, never throws). Loaded when the page asks, not at launch, so nothing in the
-// store can stand between the app and printing labels.
-const identifyStore = createIdentifyStore(nodeStoreIO(join(app.getPath('userData'), 'identifications.jsonl')), { now: () => Date.now() })
-let lastRowSaveOk = true
-ipcMain.handle('identify:rows', () => {
-  try { return identifyStore.load() } catch { return [] }
-})
-ipcMain.handle('identify:save-row', (_e, row: IdentificationRow) => {
-  const ok = identifyStore.save(row)
-  if (ok !== lastRowSaveOk) flog(ok ? '[identify] saving identifications recovered' : '[identify] could not save an identification to disk') // on change only
-  lastRowSaveOk = ok
-  return ok
-})
-
 // ── Label printing (mirrors the desktop app: webContents.print of HTML) ──────
 const PRINTER_FILE = join(app.getPath('userData'), 'tt-printer.json')
 interface PrinterConfig { printer: string; rawZpl: boolean }
@@ -898,7 +793,7 @@ ipcMain.handle('set-raw-zpl', (_e, enabled: boolean) => {
   return true
 })
 
-// ── AI transcription (Gemini, mirrors sellerfolio-live's enrichment) ─────────
+// ── Gemini: label pattern help only (tt-suggest-regex below) ─────────────────
 // Key resolution: env var wins, else a local gitignored `gemini.key` file in the PoC root
 // (same convention as live-ledger). __dirname is dist/, so '..' is the project root.
 function readGeminiKey(): string {
@@ -923,91 +818,6 @@ ipcMain.handle('tt-open-monitor', () => {
   monitor.focus()
   return { ok: true }
 })
-
-ipcMain.handle('recap-enabled', () => ({ enabled: !!GEMINI_KEY, model: GEMINI_MODEL }))
-
-interface TranscriptFields { brand?: string; item?: string; color?: string; size?: string; retailPrice?: string; summary?: string }
-
-// Structured Gemini call: from an audio clip, extract product attributes (brand/size/retail…)
-// for costing + the ledger. Reused by both tt-transcribe (mimeType audio/webm) and
-// tt-transcribe-orders (mimeType audio/aac, the ffmpeg ADTS clip).
-// Prompt ported verbatim from live-ledger (server/src/media/gemini.ts transcribePrompt).
-function transcribePrompt(hints: string | null): string {
-  const b = hints ? `\nKNOWN BRANDS being sold: ${hints}` : ''
-  return (
-    'You are analyzing a short video clip from a TikTok Shop LIVE auction. ' +
-    "The clip ENDS at the exact moment this item's auction closed / the order was placed, " +
-    'so the SOLD item is the one being auctioned and won at the END of the clip.\n' + b +
-    '\n\nTASK: Watch the whole clip and listen to the audio. Identify the item that was SOLD ' +
-    "(the one being auctioned/won right at the end — listen for 'sold', 'congrats', a winning " +
-    "username, 'going once/twice').\n" +
-    'IMPORTANT: If the host shows or discusses TWO different items in the clip, focus ONLY on the ' +
-    'LAST one — the earlier item likely belongs to a PREVIOUS sale that already closed before this ' +
-    'order. Always describe the item being auctioned/won at the very END.\n' +
-    'Then extract:\n' +
-    '- brand: brand name' + (hints ? " (MUST be one of the known brands above; if not, 'Other: <name>')" : " or 'Not stated'") + '\n' +
-    "- item: product type or name (e.g. 'Random Premium Pull', 'Leggings', 'Handbag')\n" +
-    "- color, size: if visible/called out, else 'Not stated'\n" +
-    "- retail_price_mentioned: any retail/MSRP price SPOKEN, formatted '$XX', else 'Not stated'\n" +
-    '- retail_price_estimated: your best estimate of typical retail for this brand+item (always give one)\n' +
-    '- transcript_summary: a brief summary of what was said about the sold item\n\n' +
-    'Return ONLY a JSON object with keys: brand, item, color, size, ' +
-    'retail_price_mentioned, retail_price_estimated, transcript_summary.'
-  )
-}
-
-// Parse live-ledger's JSON (fence-strip, price-normalize, drop "Not stated") → our fields.
-function parseLiveLedgerResult(raw: string): TranscriptFields {
-  const m = /```(?:json)?\s*([\s\S]*?)```/.exec(raw)
-  let parsed: Record<string, unknown> = {}
-  try { parsed = JSON.parse((m && m[1] ? m[1] : raw).trim()) as Record<string, unknown> } catch { parsed = {} }
-  const price = (v: unknown): string | undefined => {
-    if (!v || String(v).toLowerCase() === 'not stated') return undefined
-    const mm = /\$?(\d+(?:\.\d{1,2})?)/.exec(String(v))
-    return mm ? `$${mm[1]}` : undefined
-  }
-  const str = (v: unknown): string | undefined => {
-    const s = v == null ? '' : String(v).trim()
-    return s && s.toLowerCase() !== 'not stated' ? s : undefined
-  }
-  const f: TranscriptFields = {}
-  const brand = str(parsed.brand); if (brand) f.brand = brand
-  const item = str(parsed.item); if (item) f.item = item
-  const color = str(parsed.color); if (color) f.color = color
-  const size = str(parsed.size); if (size) f.size = size
-  const retail = price(parsed.retail_price_mentioned) ?? price(parsed.retail_price_estimated); if (retail) f.retailPrice = retail
-  const summary = str(parsed.transcript_summary); if (summary) f.summary = summary
-  return f
-}
-
-async function geminiStructured(
-  media: { mimeType: string; data: Uint8Array }[],
-  _label = '',
-): Promise<{ fields?: TranscriptFields; text?: string; error?: string }> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`
-  const parts: unknown[] = [{ text: transcribePrompt(null) }]
-  for (const m of media) parts.push({ inlineData: { mimeType: m.mimeType, data: Buffer.from(m.data).toString('base64') } })
-  const body = {
-    contents: [{ parts }],
-    generationConfig: {
-      temperature: 0.1,
-      maxOutputTokens: 2048,
-      responseMimeType: 'application/json',
-      thinkingConfig: { thinkingBudget: 1024 },
-    },
-  }
-  try {
-    const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
-    const json = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[]; error?: { message?: string } }
-    if (!res.ok) return { error: `gemini ${res.status}: ${json?.error?.message ?? ''}`.slice(0, 200) }
-    const raw = (json.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('').trim()
-    const fields = parseLiveLedgerResult(raw)
-    debug(`[tt] structured fields: ${Object.keys(fields).join(',')}`)
-    return { text: fields.summary || raw, fields }
-  } catch (e) {
-    return { error: (e as Error).message }
-  }
-}
 
 // Turn a plain-language description into a label-extraction pattern. The operator says what they
 // want printed ("the bin letter"); this returns a candidate regex. It is deliberately NOT applied
@@ -1047,38 +857,6 @@ ipcMain.handle('tt-suggest-regex', async (_e, payload: { title?: string; want?: 
     // rather than handed to the renderer to validate.
     if (regex.length > 200) return { error: 'the suggested pattern was too long to trust' }
     return { regex, flags, explain: typeof parsed.explain === 'string' ? parsed.explain.slice(0, 200) : '' }
-  } catch (e) {
-    return { error: (e as Error).message }
-  }
-})
-
-ipcMain.handle('tt-transcribe', async (_e, payload: { audio?: Uint8Array; productName?: string; structured?: boolean }) => {
-  if (!GEMINI_KEY) return { error: 'GEMINI_API_KEY not set' }
-  const audio = payload?.audio instanceof Uint8Array ? payload.audio : new Uint8Array(payload?.audio ?? [])
-  if (!audio.byteLength) return { error: 'no audio captured' }
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`
-  const label = payload?.productName ?? ''
-  const clip = { inlineData: { mimeType: 'audio/webm', data: Buffer.from(audio).toString('base64') } }
-
-  // Structured mode: extract product attributes (brand/size/retail…) for costing + the ledger.
-  if (payload?.structured) {
-    return geminiStructured([{ mimeType: 'audio/webm', data: audio }], label)
-  }
-
-  const prompt =
-    `This is a short audio clip from a live-shopping auction that just sold an item labeled "${label}". ` +
-    `Transcribe the seller's speech verbatim. Return ONLY the transcript text — no labels, no commentary.`
-  const body = {
-    contents: [{ parts: [{ text: prompt }, clip] }],
-    generationConfig: { temperature: 0.1 },
-  }
-  try {
-    const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
-    const json = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[]; error?: { message?: string } }
-    if (!res.ok) return { error: `gemini ${res.status}: ${json?.error?.message ?? ''}`.slice(0, 200) }
-    const text = (json.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('').trim()
-    debug(`[tt] transcript ${text.length} chars`)
-    return { text }
   } catch (e) {
     return { error: (e as Error).message }
   }

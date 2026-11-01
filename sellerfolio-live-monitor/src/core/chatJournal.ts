@@ -8,7 +8,7 @@
 //
 // CLOCKS. There are two, and they are never mixed:
 //   - atMs / atEpochSec are TIKTOK'S clock: the message's own timestamp (common.timestamp).
-//     This is the clock the order `createdAt`, the clip windows and the auction times are on, so
+//     This is the clock the order `createdAt` and the auction times are on, so
 //     a chat line can be joined to a sale or a lot without a conversion.
 //   - the journal envelope's `t` is THIS machine's clock at the moment of journaling (journal.ts).
 //     The gap between t and atMs is the station's skew, which stays recoverable from the data.
