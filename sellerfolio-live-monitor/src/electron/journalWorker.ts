@@ -92,7 +92,9 @@ async function syncAll(cfg: SyncConfig): Promise<boolean> {
         try {
           const res = await fetch(cfg.endpoint, {
             method: 'POST',
-            headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.token}` },
+            // The device id goes in the header (the server binds a computer token to it) and in
+            // the body (where the server stores it) — the same id in both.
+            headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.token}`, 'x-sf-device': cfg.deviceId },
             body: batchBody(cfg.deviceId, batch.lines),
             signal: ctl.signal,
           })

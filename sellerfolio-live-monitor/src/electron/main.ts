@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, ipcMain, session, Menu, nativeTheme, safeStorage, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { join } from 'node:path'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { gunzipSync } from 'node:zlib'
 import { parsePushFrame } from '../core/pushFrame'
 import { LiveFeed } from '../core/liveFeed'
@@ -16,6 +16,10 @@ import { ChatJournal, journalChat, lotInProgress } from '../core/chatJournal'
 import { evaluateWatchdog } from '../core/watchdog'
 import { initFlightLog, flightLogPath, flog, flushFlightLogSync } from './flightlog'
 import { initJournal, setJournalContext, record, flushJournal, setJournalSync, journalDeviceId } from './journal'
+import {
+  parseConnectToken, whoamiVerdict, nextState, suggestErrorText, savedTokenKind, startState, rememberedAfter,
+  shouldCreateMonitor, uploadPlan, connectErrorText, readSuggestion, type ConnState, type Verdict, type Remembered,
+} from '../core/sfConnect'
 import { decodeAuctionIm, extractMessagePayloads } from '../core/auctionIm'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
 import { labelZpl, labelNeedsHtml } from './zplLabel'
@@ -683,52 +687,161 @@ function replayFixtures() {
   }
 }
 
-// ── SellerFolio sync: upload the show journal ────────────────────────────────
-// Local first. The journal file is written regardless; this only decides whether the worker
-// also ships it. The token is a SellerFolio capture token (Settings → capture tokens), kept
-// encrypted with the OS keystore (DPAPI on Windows) — never in plain text on disk.
+// ── SellerFolio connection: this computer's token, and the journal upload ─────
+// The app runs only once this computer is connected to a shop, with a per-computer token
+// (`sfm_…`, made in SellerFolio HQ) that the server locks to this computer's device id. The token
+// is kept encrypted with the OS keystore (DPAPI on Windows) — never in plain text on disk. Beside
+// it, sf-sync.json keeps the shop and label from the last successful check, so a start while
+// SellerFolio can't be reached still runs the show. All the decisions are in core/sfConnect.
+//
+// Local first for the journal: the file is written regardless; this only decides whether the
+// worker also ships it. `baseUrl` stays in the file (not in the UI) for testing against localhost.
 const SYNC_FILE = join(app.getPath('userData'), 'sf-sync.json')
 const SYNC_PATH = '/api/capture/live-monitor/events'
+const WHOAMI_PATH = '/api/desktop/whoami'
+const SUGGEST_PATH = '/api/desktop/suggest-pattern'
 const DEFAULT_SF_URL = 'https://hq.luxesenseedit.com'
-let syncState: { state: string; detail: string } = { state: 'off', detail: '' }
+const WHOAMI_TIMEOUT_MS = 5000
+const RECHECK_MS = 10 * 60_000
+const SUGGEST_TIMEOUT_MS = 30_000
 
-function loadSyncSettings(): { baseUrl: string; token: string } {
+interface SfSettings { baseUrl: string; token: string; remembered: Remembered }
+// Loaded in startApp (safeStorage needs the app ready). In memory for the session; written through
+// to the file on every change. Without safeStorage the token is not written (as before) and so
+// lasts only until the app closes.
+let sf: SfSettings = { baseUrl: DEFAULT_SF_URL, token: '', remembered: null }
+let sfTokenEnc = '' // the token as it is on disk, so a save that does not change it never rewrites it
+let conn: ConnState = { kind: 'none' }
+let syncState: { state: string; detail: string } = { state: 'off', detail: '' }
+let appliedSyncKey: string | null = null // the endpoint|token the upload is running with, or null
+let monitorCreated = false
+let checking: Promise<void> | null = null
+
+function loadSyncSettings(): void {
   try {
-    const j = JSON.parse(readFileSync(SYNC_FILE, 'utf8')) as { baseUrl?: string; tokenEnc?: string }
-    const token = j.tokenEnc && safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(Buffer.from(j.tokenEnc, 'base64')) : ''
-    return { baseUrl: j.baseUrl || DEFAULT_SF_URL, token }
+    const j = JSON.parse(readFileSync(SYNC_FILE, 'utf8')) as { baseUrl?: string; tokenEnc?: string; shop?: unknown; label?: unknown }
+    let token = ''
+    try { token = j.tokenEnc && safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(Buffer.from(j.tokenEnc, 'base64')) : '' } catch { token = '' }
+    sfTokenEnc = j.tokenEnc ?? ''
+    const remembered = typeof j.shop === 'string' && j.shop && typeof j.label === 'string' ? { shop: j.shop, label: j.label } : null
+    sf = { baseUrl: j.baseUrl || DEFAULT_SF_URL, token, remembered }
   } catch {
-    return { baseUrl: DEFAULT_SF_URL, token: '' }
+    sf = { baseUrl: DEFAULT_SF_URL, token: '', remembered: null }
+    sfTokenEnc = ''
   }
 }
-function saveSyncSettings(s: { baseUrl: string; token: string }): void {
-  const tokenEnc = s.token && safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(s.token).toString('base64') : ''
-  try { writeFileSync(SYNC_FILE, JSON.stringify({ baseUrl: s.baseUrl, tokenEnc })) } catch { /* ignore */ }
+function saveSyncSettings(): void {
+  const out: Record<string, string> = { baseUrl: sf.baseUrl, tokenEnc: sfTokenEnc }
+  if (sf.remembered) { out['shop'] = sf.remembered.shop; out['label'] = sf.remembered.label }
+  try { writeFileSync(SYNC_FILE, JSON.stringify(out)) } catch { /* ignore */ }
 }
-/** The upload URL for a server address, or null if the address is not one we will send a token to. */
-function syncEndpoint(baseUrl: string): string | null {
+/** Replace the saved token (and forget the shop/label that went with the old one). */
+function setToken(token: string): void {
+  sf = { ...sf, token, remembered: null }
+  sfTokenEnc = token && safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(token).toString('base64') : ''
+  saveSyncSettings()
+}
+/** A SellerFolio URL for a path, or null if the address is not one we will send a token to. */
+function sfUrl(baseUrl: string, path: string): string | null {
   try {
     const u = new URL(baseUrl)
     const local = u.hostname === 'localhost' || u.hostname === '127.0.0.1'
     if (u.protocol !== 'https:' && !(local && u.protocol === 'http:')) return null
-    return u.origin + SYNC_PATH
+    return u.origin + path
   } catch {
     return null
   }
 }
+/** What the viewer is told (sf-sync:get, sf-connect:*, and the sf-sync-state event). */
 function syncView() {
-  const s = loadSyncSettings()
-  return { baseUrl: s.baseUrl, hasToken: !!s.token, lastFour: s.token ? s.token.slice(-4) : '', canStore: safeStorage.isEncryptionAvailable(), device: journalDeviceId(), ...syncState }
+  return {
+    conn,
+    baseUrl: sf.baseUrl,
+    device: journalDeviceId(),
+    canStore: safeStorage.isEncryptionAvailable(),
+    // An `sfc_` token saved before the update: conn is none, and the Connect screen says why.
+    legacyToken: savedTokenKind(sf.token) === 'legacy',
+    upload: { ...syncState },
+  }
 }
-function applySync(): void {
-  const s = loadSyncSettings()
-  const endpoint = syncEndpoint(s.baseUrl)
-  if (!endpoint || !s.token) syncState = { state: 'off', detail: '' }
-  setJournalSync(endpoint && s.token ? { endpoint, token: s.token } : null, (state, detail) => {
-    syncState = { state, detail }
-    viewerSend('sf-sync-state', syncView())
-  })
+function pushView(): void {
+  viewerSend('sf-sync-state', syncView())
 }
+function sfHeaders(token: string): Record<string, string> {
+  return { authorization: `Bearer ${token}`, 'x-sf-device': journalDeviceId() }
+}
+
+function onUploadState(state: string, detail: string): void {
+  syncState = { state, detail }
+  pushView()
+  // The worker stopped on a 401/403: ask whoami what that means (revoked, other machine, or a blip).
+  if (state === 'auth') void checkConnection()
+}
+/** Start, stop or leave the journal upload to match the connection. Only ever with an sfm_ token. */
+function applyUpload(periodic: boolean): void {
+  const endpoint = sfUrl(sf.baseUrl, SYNC_PATH)
+  const want = endpoint && savedTokenKind(sf.token) === 'computer' ? `${endpoint}|${sf.token}` : null
+  const plan = uploadPlan({ state: conn, want, applied: appliedSyncKey, halted: syncState.state === 'auth', periodic })
+  if (plan === 'keep') return
+  if (plan === 'stop' || !endpoint) {
+    appliedSyncKey = null
+    syncState = { state: 'off', detail: '' }
+    setJournalSync(null, onUploadState)
+    return
+  }
+  appliedSyncKey = want
+  setJournalSync({ endpoint, token: sf.token }, onUploadState)
+}
+
+function setConn(next: ConnState, periodic = false): void {
+  if (next.kind !== conn.kind) flog(`[sellerfolio] ${conn.kind} → ${next.kind}`)
+  conn = next
+  const rem = rememberedAfter(next, sf.remembered)
+  if (rem?.shop !== sf.remembered?.shop || rem?.label !== sf.remembered?.label) {
+    sf = { ...sf, remembered: rem }
+    saveSyncSettings()
+  }
+  applyUpload(periodic)
+  // Revoked / other machine while running: uploads stop above, the view says so, and the monitor
+  // stays open — stopping label printing mid-show costs the seller real orders.
+  if (!process.env.TT_REPLAY && shouldCreateMonitor(conn, monitorCreated)) {
+    monitorCreated = true
+    createMonitor()
+  }
+  pushView()
+}
+
+async function whoami(token: string): Promise<{ verdict: Verdict; body: unknown }> {
+  const url = sfUrl(sf.baseUrl, WHOAMI_PATH)
+  if (!url) return { verdict: 'bad', body: null }
+  const ctl = new AbortController()
+  const timer = setTimeout(() => ctl.abort(), WHOAMI_TIMEOUT_MS)
+  try {
+    const res = await fetch(url, { headers: sfHeaders(token), signal: ctl.signal })
+    let body: unknown = null
+    try { body = await res.json() } catch { /* not JSON */ }
+    return { verdict: whoamiVerdict(res.status, body), body }
+  } catch {
+    return { verdict: whoamiVerdict('network', null), body: null }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** Check the saved token with SellerFolio. One check at a time; a result for a token that has
+ *  since been replaced or cleared is dropped. */
+function checkConnection(periodic = false): Promise<void> {
+  if (checking) return checking
+  checking = (async () => {
+    const token = sf.token
+    if (savedTokenKind(token) !== 'computer') { setConn({ kind: 'none' }, periodic); return }
+    const r = await whoami(token)
+    if (sf.token !== token) return
+    setConn(nextState(conn, r.verdict, r.body, sf.remembered), periodic)
+  })().finally(() => { checking = null })
+  return checking
+}
+
 ipcMain.handle('sf-sync:get', () => syncView())
 // Where each show is saved on this computer (one .jsonl per live room).
 ipcMain.handle('sf-sync:open-folder', async () => {
@@ -736,15 +849,24 @@ ipcMain.handle('sf-sync:open-folder', async () => {
   try { mkdirSync(dir, { recursive: true }) } catch { /* openPath reports it */ }
   return { ok: (await shell.openPath(dir)) === '' }
 })
-ipcMain.handle('sf-sync:save', (_e, a: { baseUrl?: string; token?: string }) => {
-  const cur = loadSyncSettings()
-  const baseUrl = (a?.baseUrl ?? cur.baseUrl).trim() || DEFAULT_SF_URL
-  if (!syncEndpoint(baseUrl)) return { ok: false, error: 'Enter an https:// address', ...syncView() }
-  // An omitted token keeps the saved one; an empty string clears it (turns sync off).
-  const token = a?.token === undefined ? cur.token : a.token.trim()
-  saveSyncSettings({ baseUrl, token })
-  applySync()
-  return { ok: true, ...syncView() }
+// Paste a computer token: checked with whoami before it is saved. A token that does not check out
+// is not saved, and the current connection is left as it was.
+ipcMain.handle('sf-connect:connect', async (_e, input: unknown) => {
+  const parsed = parseConnectToken(typeof input === 'string' ? input : '')
+  if ('error' in parsed) return { ...syncView(), ok: false, error: parsed.error }
+  const r = await whoami(parsed.token)
+  const next = nextState(conn, r.verdict, r.body, null)
+  if (next.kind !== 'connected') return { ...syncView(), ok: false, error: connectErrorText(r.verdict) }
+  setToken(parsed.token)
+  setConn(next)
+  return { ...syncView(), ok: true }
+})
+// Only forgets the token here (and the shop/label with it); HQ is not told — Revoke is done there.
+// A monitor already running is left open, as for a revoke.
+ipcMain.handle('sf-connect:disconnect', () => {
+  setToken('')
+  setConn({ kind: 'none' })
+  return syncView()
 })
 
 // ── Label printing (mirrors the desktop app: webContents.print of HTML) ──────
@@ -793,17 +915,6 @@ ipcMain.handle('set-raw-zpl', (_e, enabled: boolean) => {
   return true
 })
 
-// ── Gemini: label pattern help only (tt-suggest-regex below) ─────────────────
-// Key resolution: env var wins, else a local gitignored `gemini.key` file in the PoC root
-// (same convention as live-ledger). __dirname is dist/, so '..' is the project root.
-function readGeminiKey(): string {
-  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY
-  const f = join(__dirname, '..', 'gemini.key')
-  try { return existsSync(f) ? readFileSync(f, 'utf8').trim() : '' } catch { return '' }
-}
-const GEMINI_KEY = readGeminiKey()
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
-
 // Connection state for the UI: are we logged in, is a live show captured, are we polling?
 ipcMain.handle('tt-connection', async () => ({
   loggedIn: await tiktokLoggedIn(),
@@ -824,41 +935,41 @@ ipcMain.handle('tt-open-monitor', () => {
 // here — the renderer runs it against the operator's own sample title first and shows the result,
 // because a pattern that silently installs itself prints the wrong thing on every label of the
 // next show and nothing looks broken.
+//
+// SellerFolio makes the suggestion (with its own AI key and per-shop limit); the app only sends the
+// sample title and what to pull, with this computer's token.
 ipcMain.handle('tt-suggest-regex', async (_e, payload: { title?: string; want?: string }) => {
-  if (!GEMINI_KEY) return { error: 'GEMINI_API_KEY not set' }
   const title = (payload?.title ?? '').slice(0, 300).trim()
   const want = (payload?.want ?? '').slice(0, 200).trim()
   if (!title) return { error: 'paste a sample listing title first' }
   if (!want) return { error: 'describe what should print' }
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`
-  const prompt = [
-    'You write JavaScript regular expressions that extract one piece of text from a product title.',
-    `TITLE: ${JSON.stringify(title)}`,
-    `WANTED: ${JSON.stringify(want)}`,
-    '',
-    'Return ONLY minified JSON: {"regex":"...","flags":"...","explain":"..."}',
-    'Rules: the FIRST capture group must contain exactly the wanted text. Keep the pattern short and',
-    'literal — prefer explicit alternatives over broad classes. Never use nested quantifiers or',
-    'backreferences. flags is "" or "i". explain is one short sentence in plain English.',
-  ].join('\n')
-  const body = { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0 } }
+  const token = sf.token
+  if (savedTokenKind(token) !== 'computer') return { error: suggestErrorText(401) }
+  const url = sfUrl(sf.baseUrl, SUGGEST_PATH)
+  if (!url) return { error: suggestErrorText('network') }
+  const ctl = new AbortController()
+  const timer = setTimeout(() => ctl.abort(), SUGGEST_TIMEOUT_MS)
   try {
-    const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
-    const json = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[]; error?: { message?: string } }
-    if (!res.ok) return { error: `gemini ${res.status}: ${json?.error?.message ?? ''}`.slice(0, 200) }
-    const raw = (json.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? '').join('').trim()
-    const body2 = raw.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
-    let parsed: { regex?: unknown; flags?: unknown; explain?: unknown }
-    try { parsed = JSON.parse(body2) } catch { return { error: 'the model did not return a pattern' } }
-    const regex = typeof parsed.regex === 'string' ? parsed.regex : ''
-    const flags = typeof parsed.flags === 'string' ? parsed.flags.replace(/[^gimsuy]/g, '') : ''
-    if (!regex) return { error: 'the model did not return a pattern' }
-    // A pattern this long is not something an operator can read or check, so it is refused here
-    // rather than handed to the renderer to validate.
-    if (regex.length > 200) return { error: 'the suggested pattern was too long to trust' }
-    return { regex, flags, explain: typeof parsed.explain === 'string' ? parsed.explain.slice(0, 200) : '' }
-  } catch (e) {
-    return { error: (e as Error).message }
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...sfHeaders(token) },
+      body: JSON.stringify({ title, want }),
+      signal: ctl.signal,
+    })
+    let body: unknown = null
+    try { body = await res.json() } catch { /* not JSON */ }
+    if (res.status !== 200) {
+      const err = body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string' ? (body as { error: string }).error : undefined
+      if (res.status === 401 || res.status === 403) void checkConnection() // let the connection state catch up
+      return { error: suggestErrorText(res.status, err) }
+    }
+    // The server already refuses a pattern that is too long; readSuggestion checks again rather
+    // than hand the renderer something an operator cannot read.
+    return readSuggestion(body) ?? { error: suggestErrorText(502, 'bad_pattern') }
+  } catch {
+    return { error: suggestErrorText('network') }
+  } finally {
+    clearTimeout(timer)
   }
 })
 
@@ -1102,16 +1213,23 @@ function startApp() {
   const pcfg = DRY_PRINT ? { printer: '', rawZpl: false } : loadPrinterConfig()
   rawZplEnabled = pcfg.rawZpl
   if (pcfg.rawZpl && pcfg.printer) warmRawPrinter(pcfg.printer)
+  // The SellerFolio connection, as last saved. Before the first check the viewer shows "checking".
+  loadSyncSettings()
+  conn = startState(sf.token, sf.remembered)
   // The show journal, written on its own thread. Skipped in replay: fixtures are not a show.
+  // Before the first whoami: it loads the device id the token is locked to.
   if (!process.env.TT_REPLAY) {
     initJournal(join(app.getPath('userData'), 'journal'), __JOURNAL_WORKER_SRC__, flog)
-    applySync()
   }
   createViewer()
   if (process.env.TT_REPLAY) {
-    setTimeout(replayFixtures, 1200)
+    setTimeout(replayFixtures, 1200) // replay bypasses the connection gate
   } else {
-    createMonitor()
+    // The monitor starts only once this computer is connected (or was, and SellerFolio can't be
+    // reached now): setConn creates it after the check. Not connected → the Connect screen, and a
+    // successful sf-connect:connect creates it then.
+    void checkConnection()
+    setInterval(() => void checkConnection(true), RECHECK_MS)
   }
   initAutoUpdate()
 }

@@ -157,7 +157,7 @@ describe('show journal', () => {
 })
 
 // ── upload ────────────────────────────────────────────────────────────────────
-interface Hit { auth: string; body: { device: string; events: Record<string, unknown>[] } }
+interface Hit { auth: string; device: string; body: { device: string; events: Record<string, unknown>[] } }
 function server(statusFor: (n: number) => number): Promise<{ url: string; hits: Hit[]; close: () => Promise<void> }> {
   const hits: Hit[] = []
   const srv: Server = createServer((req, res) => {
@@ -165,7 +165,7 @@ function server(statusFor: (n: number) => number): Promise<{ url: string; hits: 
     req.on('data', (c) => { raw += c })
     req.on('end', () => {
       const code = statusFor(hits.length)
-      if (code < 300) hits.push({ auth: String(req.headers.authorization), body: JSON.parse(raw) })
+      if (code < 300) hits.push({ auth: String(req.headers.authorization), device: String(req.headers['x-sf-device']), body: JSON.parse(raw) })
       res.writeHead(code, { 'content-type': 'application/json' }).end('{}')
     })
   })
@@ -198,6 +198,25 @@ describe('show journal → SellerFolio upload', () => {
 
       const file = journalFile()
       expect(await until(() => { try { return Number(readFileSync(`${file}.cursor`, 'utf8')) === statSync(file).size } catch { return false } })).toBe(true)
+    } finally { await closeJournal(); await s.close() }
+  })
+
+  it('sends this computer\'s device id in the X-SF-Device header, the same id as the body', async () => {
+    const s = await server(() => 200)
+    try {
+      const dir = tmp()
+      initJournal(dir, WORKER_SRC)
+      setJournalContext({ room: '7692' })
+      record('sale', { lot: '#1' })
+      await flushJournal()
+      setJournalSync({ endpoint: s.url, token: 'sfm_test' })
+
+      expect(await until(() => s.hits.length >= 1)).toBe(true)
+      const hit = s.hits[0]!
+      expect(journalDeviceId()).toMatch(/^[0-9a-f]{12}$/)
+      expect(hit.device).toBe(journalDeviceId())
+      expect(hit.device).toBe(readFileSync(join(dir, 'device-id'), 'utf8').trim())
+      expect(hit.body.device).toBe(hit.device)
     } finally { await closeJournal(); await s.close() }
   })
 

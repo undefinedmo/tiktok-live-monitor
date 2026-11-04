@@ -46,7 +46,8 @@ declare global {
     }
     sfSyncAPI?: {
       get: () => Promise<SfSyncView>
-      save: (args: { baseUrl?: string; token?: string }) => Promise<SfSyncView & { ok: boolean; error?: string }>
+      connect: (token: string) => Promise<SfSyncView & { ok: boolean; error?: string }>
+      disconnect: () => Promise<SfSyncView>
       openFolder: () => Promise<{ ok: boolean }>
       onState: (cb: (s: SfSyncView) => void) => void
     }
@@ -1034,7 +1035,7 @@ function setupSettings() {
     }
     if (!window.recapAPI?.suggestRegex) {
       ask.disabled = true
-      say('Needs a Gemini key — set GEMINI_API_KEY to use this.')
+      say('Connect this computer to SellerFolio to use suggestions.')
     }
     document.getElementById('rxDismiss')?.addEventListener('click', () => { box.hidden = true; proposed = null })
     document.getElementById('rxUse')?.addEventListener('click', () => {
@@ -1213,7 +1214,8 @@ setInterval(renderStreamState, 1000)
 document.getElementById('diagBtn')?.addEventListener('click', () => void window.diagAPI?.open())
 
 // ── SellerFolio sync card ────────────────────────────────────────────────────
-interface SfSyncView { baseUrl: string; hasToken: boolean; lastFour: string; canStore: boolean; device: string; state: string; detail: string }
+// Interim (Task 6): the view main sends now. Task 7 replaces this card with the Connect screen.
+interface SfSyncView { conn: { kind: string; shop?: string; label?: string }; baseUrl: string; device: string; canStore: boolean; legacyToken: boolean; upload: { state: string; detail: string } }
 const SF_SYNC_LABEL: Record<string, [string, string]> = {
   off: ['Off — shows are saved on this computer only', 'muted'],
   synced: ['Connected — shows are uploading to SellerFolio', 'ok-text'],
@@ -1227,15 +1229,16 @@ function renderSfSync(v: SfSyncView) {
   const tok = document.getElementById('sfToken') as HTMLInputElement | null
   const st = document.getElementById('sfState')
   if (!url || !tok || !st) return
+  const hasToken = v.conn.kind !== 'none'
   if (document.activeElement !== url) url.value = v.baseUrl
-  tok.placeholder = v.hasToken ? `saved · ends in ${v.lastFour}` : 'paste a capture token (sfc_…)'
-  const [text, cls] = SF_SYNC_LABEL[v.state] ?? [v.state, 'muted']
+  tok.placeholder = hasToken ? `saved · ${v.conn.kind}` : 'paste a computer token (sfm_…)'
+  const [text, cls] = SF_SYNC_LABEL[v.upload.state] ?? [v.upload.state, 'muted']
   st.className = cls
-  st.textContent = v.hasToken || v.state !== 'off' ? text : 'Off — add a token to upload shows to SellerFolio'
+  st.textContent = hasToken || v.upload.state !== 'off' ? text : 'Off — add a token to upload shows to SellerFolio'
   if (!v.canStore) st.textContent += ' · this computer cannot store the token securely, so it must be re-entered each launch'
   st.className = 'state ' + cls
   const off = document.getElementById('sfOff')
-  if (off) off.style.display = v.hasToken ? '' : 'none'
+  if (off) off.style.display = hasToken ? '' : 'none'
   const dev = document.getElementById('aboutDevice')
   if (dev) dev.textContent = v.device || '—'
 }
@@ -1246,11 +1249,8 @@ function setupSfSync() {
   void api.get().then(renderSfSync)
   api.onState(renderSfSync)
   save.addEventListener('click', () => {
-    const url = (document.getElementById('sfUrl') as HTMLInputElement).value
     const tokEl = document.getElementById('sfToken') as HTMLInputElement
-    // An empty token box means "keep what is saved", so the address can be changed alone.
-    const args = tokEl.value.trim() ? { baseUrl: url, token: tokEl.value } : { baseUrl: url }
-    void api.save(args).then((r) => {
+    void api.connect(tokEl.value).then((r) => {
       tokEl.value = ''
       renderSfSync(r)
       if (!r.ok && r.error) { const st = document.getElementById('sfState'); if (st) { st.className = 'bad-text'; st.textContent = r.error } }
@@ -1258,7 +1258,7 @@ function setupSfSync() {
   })
   document.getElementById('sfFolder')?.addEventListener('click', () => void api.openFolder())
   document.getElementById('sfOff')?.addEventListener('click', () => {
-    void api.save({ token: '' }).then(renderSfSync)
+    void api.disconnect().then(renderSfSync)
   })
 }
 setupSfSync()
