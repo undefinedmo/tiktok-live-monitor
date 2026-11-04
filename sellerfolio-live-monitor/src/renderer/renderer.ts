@@ -5,7 +5,7 @@ import { labelNeedsHtml } from '../electron/zplLabel' // preview-only: which pri
 import { PrintDedup } from '../core/printDedup'
 import { SaleSeed } from '../core/saleSeed'
 import { labelCode } from '../core/labelCode'
-import { parseConnectToken } from '../core/sfConnect'
+import { parseConnectToken, connectScreen } from '../core/sfConnect'
 
 interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string; title?: string; code?: string }
 type LabelField = 'itemNumber' | 'custom' | 'buyer' | 'productName' | 'price'
@@ -1192,7 +1192,9 @@ $('feedCount').textContent = 'v' + __APP_VERSION__
 // -- screens: live monitor + label settings ----------------------------------
 let wantedScreen: 'monitor' | 'settings' = 'monitor'
 // Set by the SellerFolio connection section below: true while this computer is not connected.
-let connectGate = false
+// Shut until the first connection view arrives (the preload is there before this script runs), so
+// the Live screen never paints before main says whether it may; replay's first view opens it at once.
+let connectGate = !!window.sfSyncAPI
 function showScreen(want: 'monitor' | 'settings') {
   wantedScreen = want
   const s = connectGate ? 'connect' : want
@@ -1219,13 +1221,13 @@ setInterval(renderStreamState, 1000)
 // form too, because a fragment does not always survive a headless capture.
 {
   const want = location.hash.replace('#', '') || new URLSearchParams(location.search).get('screen')
-  if (want === 'settings') showScreen(want)
+  showScreen(want === 'settings' ? 'settings' : 'monitor') // also applies the initial gate
 }
 document.getElementById('diagBtn')?.addEventListener('click', () => void window.diagAPI?.open())
 
 // ── SellerFolio connection: Connect screen + Settings card ───────────────────
 interface SfConn { kind: string; shop?: string; label?: string }
-interface SfSyncView { conn: SfConn; baseUrl: string; device: string; canStore: boolean; legacyToken: boolean; upload: { state: string; detail: string }; replay?: boolean }
+interface SfSyncView { conn: SfConn; baseUrl: string; device: string; canStore: boolean; legacyToken: boolean; upload: { state: string; detail: string }; replay?: boolean; monitorRunning?: boolean }
 
 // Demo mode: open dist/index.html over http WITHOUT the preload and add
 // ?conn=none|legacy|checking|revoked|other_machine|connected|offline|revoked-running to see each state.
@@ -1241,10 +1243,16 @@ function installSfDemo(): void {
     offline: { kind: 'offline', ...shop },
   }
   let conn: SfConn = conns[mode] ?? { kind: 'none' }
-  const view = (): SfSyncView => ({
-    conn, baseUrl: 'https://hq.example', device: '38ffb312af16', canStore: true, legacyToken: mode === 'legacy' && conn.kind === 'none',
-    upload: { state: conn.kind === 'connected' ? 'synced' : conn.kind === 'offline' ? 'offline' : 'off', detail: '' },
-  })
+  // As in main: the monitor is running once a state that may run was seen, and stays running.
+  let running = false
+  const view = (): SfSyncView => {
+    if (conn.kind === 'connected' || conn.kind === 'offline') running = true
+    return {
+      conn, baseUrl: 'https://hq.example', device: '38ffb312af16', canStore: true, legacyToken: mode === 'legacy' && conn.kind === 'none',
+      upload: { state: conn.kind === 'connected' ? 'synced' : conn.kind === 'offline' ? 'offline' : 'off', detail: '' },
+      monitorRunning: running,
+    }
+  }
   let push: ((s: SfSyncView) => void) | null = null
   const set = (c: SfConn) => { conn = c; push?.(view()) }
   if (mode === 'revoked-running') setTimeout(() => set({ kind: 'revoked' }), 1200)
@@ -1267,7 +1275,6 @@ const SF_UPLOAD_LABEL: Record<string, [string, string]> = {
   rejected: ['SellerFolio refused an upload — saving here and retrying.', 'warn-text'],
   error: ['Upload error — saving here and retrying.', 'warn-text'],
 }
-let sfRan = false // this session saw connected/offline, so the monitor is open
 let sfLast: SfSyncView | null = null
 let sfBusy = false
 
@@ -1278,9 +1285,8 @@ function sfShowConfirm(on: boolean): void {
 function renderSfSync(v: SfSyncView): void {
   sfLast = v
   const k = v.conn.kind
-  if (k === 'connected' || k === 'offline') sfRan = true
-  const lost = (k === 'revoked' || k === 'other_machine') && sfRan // monitor is open: keep it, stop uploads
-  const gated = !v.replay && (k === 'none' || (k === 'checking' && !v.conn.shop) || ((k === 'revoked' || k === 'other_machine') && !lost))
+  // Never cover a running show; a confirmed revoke / other machine while it runs is the red bar.
+  const { gated, lost } = connectScreen(v)
 
   // Connect screen
   const banner = document.getElementById('cnBanner')
@@ -1331,7 +1337,7 @@ function renderSfSync(v: SfSyncView): void {
 }
 function setupSfSync(): void {
   const api = window.sfSyncAPI
-  if (!api) return
+  if (!api) { connectGate = false; showScreen(wantedScreen); return } // a plain page without the app: nothing to gate
   void api.get().then(renderSfSync)
   api.onState(renderSfSync)
   const tok = document.getElementById('cnToken') as HTMLInputElement | null
@@ -1359,7 +1365,7 @@ function setupSfSync(): void {
   document.getElementById('sfOffNo')?.addEventListener('click', () => sfShowConfirm(false))
   document.getElementById('sfOffYes')?.addEventListener('click', () => {
     sfShowConfirm(false)
-    void api.disconnect().then((v) => { sfRan = false; renderSfSync(v) })
+    void api.disconnect().then(renderSfSync)
   })
 }
 setupSfSync()

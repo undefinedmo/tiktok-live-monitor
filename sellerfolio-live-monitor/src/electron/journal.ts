@@ -12,8 +12,8 @@
 // journalWorker.ts. If the worker dies or the disk fails, labels print exactly as before.
 
 import { Worker } from 'node:worker_threads'
-import { join } from 'node:path'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import * as nodeFs from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { buildJournalLine, journalFileName } from '../core/journalLine'
 
@@ -79,15 +79,56 @@ function currentFile(type = ''): string {
 }
 
 // A stable per-install id, so two machines journaling at the same instant can never mint the
-// same record id. One tiny synchronous read at startup, before any show is attached.
-function loadDeviceId(directory: string): string {
-  const f = join(directory, 'device-id')
+// same record id — and the id the SellerFolio computer token is locked to. A changed id locks this
+// computer out for good (other_machine), so the file is rewritten ONLY when it is missing (ENOENT)
+// or holds something that is not an id. Any other read error (EBUSY from an antivirus scan, EPERM)
+// gets a per-run id and leaves the file alone. One tiny synchronous read at startup.
+const DEVICE_ID_RE = /^[0-9a-f]{12}$/
+
+export interface DeviceIdFs {
+  readFileSync(path: string, enc: 'utf8'): string
+  writeFileSync(path: string, data: string): void
+  mkdirSync(path: string, opts: { recursive: true }): unknown
+}
+
+type IdRead = { id: string } | { missing: true } | { invalid: true } | { error: string }
+function readId(fs: DeviceIdFs, f: string): IdRead {
   try {
-    const id = readFileSync(f, 'utf8').trim()
-    if (/^[0-9a-f]{12}$/.test(id)) return id
-  } catch { /* first run */ }
+    const id = fs.readFileSync(f, 'utf8').trim()
+    return DEVICE_ID_RE.test(id) ? { id } : { invalid: true }
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException)?.code
+    return code === 'ENOENT' ? { missing: true } : { error: code ?? String((e as Error)?.message ?? e) }
+  }
+}
+
+/**
+ * The device id kept in `file`. `legacy` is where it used to live (journal/device-id): when `file`
+ * is missing or not an id and `legacy` holds a valid one, it is copied across (the old file stays).
+ */
+export function loadDeviceId(file: string, opts: { legacy?: string; warn?: (line: string) => void; fs?: DeviceIdFs } = {}): string {
+  const fs = opts.fs ?? nodeFs
+  const warn = opts.warn ?? (() => {})
+  const write = (id: string): void => {
+    try { fs.mkdirSync(dirname(file), { recursive: true }); fs.writeFileSync(file, id) } catch (e) {
+      warn(`[journal] could not save the device id: ${(e as NodeJS.ErrnoException)?.code ?? String(e)}`)
+    }
+  }
+  const perRun = (why: string): string => {
+    warn(`[journal] could not read the device id (${why}) — using one for this run only; the saved one is left as it is`)
+    return randomBytes(6).toString('hex')
+  }
+  const cur = readId(fs, file)
+  if ('id' in cur) return cur.id
+  if ('error' in cur) return perRun(cur.error)
+  if (opts.legacy && opts.legacy !== file) {
+    const old = readId(fs, opts.legacy)
+    if ('id' in old) { write(old.id); return old.id }
+    // The old file may hold the id the token is locked to: do not mint a new one over a read error.
+    if ('error' in old) return perRun(old.error)
+  }
   const id = randomBytes(6).toString('hex')
-  try { mkdirSync(directory, { recursive: true }); writeFileSync(f, id) } catch { /* an unwritable dir still gets a per-run id */ }
+  write(id) // an unwritable dir still gets a per-run id
   return id
 }
 
@@ -98,10 +139,15 @@ function postSyncConfig(): void {
 }
 
 /** Start the journal. `workerSource` is the bundled journalWorker as a string. Never throws. */
-export function initJournal(directory: string, workerSource: string, onReport?: (line: string) => void): void {
+export function initJournal(directory: string, workerSource: string, onReport?: (line: string) => void, deviceIdFile?: string): void {
   dir = directory
   source = workerSource
-  deviceId = loadDeviceId(directory)
+  if (onReport) report = onReport
+  // `deviceIdFile` (the app passes userData/device-id) keeps the id out of the journal folder the
+  // "Open saved shows" button opens; the old journal/device-id is migrated from. Without it the id
+  // lives in the journal folder, as before.
+  const inJournal = join(directory, 'device-id')
+  deviceId = deviceIdFile ? loadDeviceId(deviceIdFile, { legacy: inJournal, warn: report }) : loadDeviceId(inJournal, { warn: report })
   runId = `${deviceId}.${Date.now().toString(36)}`
   syncConfig = null
   seq = 0
@@ -109,7 +155,6 @@ export function initJournal(directory: string, workerSource: string, onReport?: 
   file = ''
   chatFile = ''
   ctx = {}
-  if (onReport) report = onReport
   spawn()
 }
 

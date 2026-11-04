@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   parseConnectToken, whoamiVerdict, nextState, canRunMonitor, suggestErrorText, type ConnState,
   savedTokenKind, startState, rememberedAfter, shouldCreateMonitor, uploadPlan, connectErrorText, readSuggestion,
+  connectScreen,
 } from '../sfConnect'
 
 describe('parseConnectToken', () => {
@@ -30,11 +31,17 @@ describe('whoamiVerdict', () => {
     expect(whoamiVerdict(200, {})).toBe('ok')
     expect(whoamiVerdict(401, { error: 'unauthorized' })).toBe('revoked')
     expect(whoamiVerdict(403, { error: 'other_machine' })).toBe('other_machine')
-    expect(whoamiVerdict(403, null)).toBe('other_machine')
+    expect(whoamiVerdict(403, null)).toBe('offline')
     expect(whoamiVerdict('network', null)).toBe('offline')
     expect(whoamiVerdict(502, null)).toBe('offline')
     expect(whoamiVerdict(503, null)).toBe('offline')
     expect(whoamiVerdict(400, { error: 'missing_device' })).toBe('bad')
+  })
+  it('a 403 is another computer only when the server says so; any other 403 (WAF, proxy) is offline', () => {
+    expect(whoamiVerdict(403, { error: 'other_machine' })).toBe('other_machine')
+    expect(whoamiVerdict(403, { error: 'forbidden' })).toBe('offline')
+    expect(whoamiVerdict(403, '<html>Access denied</html>')).toBe('offline')
+    expect(whoamiVerdict(403, undefined)).toBe('offline')
   })
   it('treats a request timeout as offline (transient)', () => {
     expect(whoamiVerdict(408, null)).toBe('offline')
@@ -54,12 +61,38 @@ describe('nextState', () => {
   it('ok reads shop and label from the body', () => {
     expect(nextState({ kind: 'checking' }, 'ok', { workspace: { id: 'w', name: 'Luxesense' }, label: 'Table 1' }, null)).toEqual(connected)
   })
-  it('ok with a malformed body is treated as bad', () => {
+  it('ok with a malformed body and nothing remembered is none', () => {
     expect(nextState({ kind: 'checking' }, 'ok', null, null)).toEqual({ kind: 'none' })
     expect(nextState({ kind: 'checking' }, 'ok', { workspace: {}, label: 'x' }, null)).toEqual({ kind: 'none' })
   })
-  it('bad becomes none', () => {
+  it('bad with nothing remembered is none (never run unconnected)', () => {
     expect(nextState(connected, 'bad', null, null)).toEqual({ kind: 'none' })
+  })
+  // An unclear reply with a remembered connection is "can't reach SellerFolio", never a lockout.
+  const remembered = { shop: 'Luxesense', label: 'Table 1' }
+  const offline: ConnState = { kind: 'offline', ...remembered }
+  it('a 200 with an HTML body (captive portal, proxy page) and a remembered shop is offline', () => {
+    // main.ts: res.json() throws on HTML, so the body reaches nextState as null.
+    const s = nextState(connected, whoamiVerdict(200, null), null, remembered)
+    expect(s).toEqual(offline)
+    expect(canRunMonitor(s)).toBe(true)
+    expect(nextState(connected, 'ok', '<html>Sign in to Wi-Fi</html>', remembered)).toEqual(offline)
+    expect(nextState(connected, 'ok', { workspace: {}, label: 'x' }, remembered)).toEqual(offline)
+  })
+  it('a 404 (hq rollback, stray route) and a remembered shop is offline', () => {
+    const s = nextState(connected, whoamiVerdict(404, null), null, remembered)
+    expect(s).toEqual(offline)
+    expect(canRunMonitor(s)).toBe(true)
+    expect(nextState(connected, whoamiVerdict(400, { error: 'missing_device' }), null, remembered)).toEqual(offline)
+  })
+  it('a 404 with no remembered shop is none', () => {
+    const s = nextState({ kind: 'checking' }, whoamiVerdict(404, null), null, null)
+    expect(s).toEqual({ kind: 'none' })
+    expect(canRunMonitor(s)).toBe(false)
+  })
+  it('a remembered shop never softens a confirmed revoke or other machine', () => {
+    expect(nextState(connected, whoamiVerdict(401, { error: 'unauthorized' }), null, remembered)).toEqual({ kind: 'revoked' })
+    expect(nextState(connected, whoamiVerdict(403, { error: 'other_machine' }), null, remembered)).toEqual({ kind: 'other_machine' })
   })
   it('offline with a remembered connection stays usable', () => {
     const s = nextState({ kind: 'checking' }, 'offline', null, { shop: 'Luxesense', label: 'Table 1' })
@@ -78,6 +111,35 @@ describe('nextState', () => {
     const o = nextState(connected, 'other_machine', null, null)
     expect(o).toEqual({ kind: 'other_machine' })
     expect(canRunMonitor(o)).toBe(false)
+  })
+})
+
+describe('connectScreen', () => {
+  const shop = { shop: 'Luxesense', label: 'Table 1' }
+  it('covers the app before the monitor runs when not connected', () => {
+    for (const kind of ['none', 'revoked', 'other_machine', 'checking']) {
+      expect(connectScreen({ conn: { kind }, monitorRunning: false })).toEqual({ gated: true, lost: false })
+    }
+  })
+  it('does not cover a connected, offline or remembered-checking start', () => {
+    for (const conn of [{ kind: 'connected', ...shop }, { kind: 'offline', ...shop }, { kind: 'checking', ...shop }]) {
+      expect(connectScreen({ conn, monitorRunning: false })).toEqual({ gated: false, lost: false })
+    }
+  })
+  it('never covers a running show, whatever the state', () => {
+    for (const kind of ['none', 'checking', 'revoked', 'other_machine', 'connected', 'offline']) {
+      expect(connectScreen({ conn: { kind }, monitorRunning: true }).gated).toBe(false)
+    }
+  })
+  it('shows the red bar only for a confirmed revoke / other machine while running', () => {
+    expect(connectScreen({ conn: { kind: 'revoked' }, monitorRunning: true }).lost).toBe(true)
+    expect(connectScreen({ conn: { kind: 'other_machine' }, monitorRunning: true }).lost).toBe(true)
+    expect(connectScreen({ conn: { kind: 'none' }, monitorRunning: true }).lost).toBe(false)
+    expect(connectScreen({ conn: { kind: 'offline', ...shop }, monitorRunning: true }).lost).toBe(false)
+    expect(connectScreen({ conn: { kind: 'revoked' }, monitorRunning: false }).lost).toBe(false)
+  })
+  it('never gates replay', () => {
+    expect(connectScreen({ conn: { kind: 'none' }, replay: true }).gated).toBe(false)
   })
 })
 

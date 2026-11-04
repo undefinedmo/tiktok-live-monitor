@@ -764,6 +764,9 @@ function syncView() {
     upload: { ...syncState },
     // TT_REPLAY runs no connection check; the renderer must not gate the fixtures behind Connect.
     replay: !!process.env.TT_REPLAY,
+    // The monitor window exists (it is never closed by the connection logic). The renderer never
+    // covers a running show with the Connect screen, and survives its own reload knowing this.
+    monitorRunning: monitorCreated,
   }
 }
 function pushView(): void {
@@ -819,7 +822,8 @@ async function whoami(token: string): Promise<{ verdict: Verdict; body: unknown 
   const ctl = new AbortController()
   const timer = setTimeout(() => ctl.abort(), WHOAMI_TIMEOUT_MS)
   try {
-    const res = await fetch(url, { headers: sfHeaders(token), signal: ctl.signal })
+    // redirect: 'error' — a redirect (captive portal, proxy login) throws, which is 'network' = offline.
+    const res = await fetch(url, { headers: sfHeaders(token), signal: ctl.signal, redirect: 'error' })
     let body: unknown = null
     try { body = await res.json() } catch { /* not JSON */ }
     return { verdict: whoamiVerdict(res.status, body), body }
@@ -957,6 +961,7 @@ ipcMain.handle('tt-suggest-regex', async (_e, payload: { title?: string; want?: 
       headers: { 'content-type': 'application/json', ...sfHeaders(token) },
       body: JSON.stringify({ title, want }),
       signal: ctl.signal,
+      redirect: 'error', // never follow a redirect with the token; it lands in the catch below as "can't reach"
     })
     let body: unknown = null
     try { body = await res.json() } catch { /* not JSON */ }
@@ -1221,7 +1226,8 @@ function startApp() {
   // The show journal, written on its own thread. Skipped in replay: fixtures are not a show.
   // Before the first whoami: it loads the device id the token is locked to.
   if (!process.env.TT_REPLAY) {
-    initJournal(join(app.getPath('userData'), 'journal'), __JOURNAL_WORKER_SRC__, flog)
+    // The device id lives in userData, outside the journal folder "Open saved shows" opens.
+    initJournal(join(app.getPath('userData'), 'journal'), __JOURNAL_WORKER_SRC__, flog, join(app.getPath('userData'), 'device-id'))
   }
   createViewer()
   if (process.env.TT_REPLAY) {

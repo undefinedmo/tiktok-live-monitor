@@ -21,11 +21,15 @@ export function parseConnectToken(input: string): { token: string } | { error: s
   return { error: "That doesn't look like a SellerFolio computer token." }
 }
 
-export function whoamiVerdict(status: number | 'network', _body: unknown): Verdict {
+export function whoamiVerdict(status: number | 'network', body: unknown): Verdict {
   if (status === 'network') return 'offline'
   if (status === 200) return 'ok'
   if (status === 401) return 'revoked'
-  if (status === 403) return 'other_machine' // the server only sends 403 for other_machine
+  if (status === 403) {
+    // Only the server's own answer locks this computer out; a 403 from a WAF or proxy is not a verdict.
+    const err = body && typeof body === 'object' ? (body as { error?: unknown }).error : undefined
+    return err === 'other_machine' ? 'other_machine' : 'offline'
+  }
   if (status >= 500) return 'offline'
   if (status === 408 || status === 429) return 'offline' // transient: a timeout or rate limit is not a verdict on the token
   // 400 (malformed device id) and any unexpected status: never run unconnected.
@@ -46,20 +50,36 @@ export function nextState(
   body: unknown,
   remembered: { shop: string; label: string } | null,
 ): ConnState {
+  // An unclear reply (an unexpected status, or a 200 that is not our JSON — a captive portal or a
+  // proxy page) is not a verdict on the token. With a connection remembered it counts as "can't
+  // reach SellerFolio", so a running show is never locked out by it; with nothing remembered the
+  // app still never runs unconnected.
+  const unclear = (): ConnState => remembered ? { kind: 'offline', shop: remembered.shop, label: remembered.label } : { kind: 'none' }
   switch (v) {
     case 'ok': {
       const r = readOk(body)
-      return r ? { kind: 'connected', ...r } : { kind: 'none' }
+      return r ? { kind: 'connected', ...r } : unclear()
     }
     case 'revoked':
       return { kind: 'revoked' }
     case 'other_machine':
       return { kind: 'other_machine' }
-    case 'offline':
-      return remembered ? { kind: 'offline', shop: remembered.shop, label: remembered.label } : { kind: 'none' }
-    default:
-      return { kind: 'none' }
+    default: // 'offline' and 'bad'
+      return unclear()
   }
+}
+
+/**
+ * What the viewer shows for a connection view. The Connect screen covers the app only while the
+ * monitor is not running (and never in replay); a running show is never covered, and a confirmed
+ * revoke / other machine while it runs shows the red bar instead.
+ */
+export function connectScreen(v: { conn: { kind: string; shop?: string }; monitorRunning?: boolean; replay?: boolean }): { gated: boolean; lost: boolean } {
+  const k = v.conn.kind
+  const running = !!v.monitorRunning
+  const lost = running && (k === 'revoked' || k === 'other_machine')
+  const gated = !v.replay && !running && (k === 'none' || (k === 'checking' && !v.conn.shop) || k === 'revoked' || k === 'other_machine')
+  return { gated, lost }
 }
 
 export function canRunMonitor(s: ConnState): boolean {

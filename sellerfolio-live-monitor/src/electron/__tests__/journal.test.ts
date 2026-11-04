@@ -1,13 +1,14 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { buildSync } from 'esbuild'
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { statSync } from 'node:fs'
-import { closeJournal, flushJournal, initJournal, journalDeviceId, journalFile, record, setJournalContext, setJournalSync } from '../journal'
+import { closeJournal, flushJournal, initJournal, journalDeviceId, journalFile, loadDeviceId, record, setJournalContext, setJournalSync, type DeviceIdFs } from '../journal'
+import { existsSync } from 'node:fs'
 
 // The real worker, bundled the way esbuild.mjs bundles it for the app.
 const WORKER_SRC = buildSync({
@@ -253,3 +254,108 @@ describe('show journal → SellerFolio upload', () => {
   })
 })
 
+// The id the SellerFolio computer token is locked to: a changed id locks the computer out for good.
+describe('device id', () => {
+  const ID = /^[0-9a-f]{12}$/
+  /** A real fs, except that reading `busy` throws `code`. */
+  const failingRead = (busy: string, code: string): DeviceIdFs & { writes: string[] } => {
+    const writes: string[] = []
+    return {
+      writes,
+      readFileSync: (p, enc) => {
+        if (p === busy) throw Object.assign(new Error(`${code}: resource busy or locked`), { code })
+        return readFileSync(p, enc)
+      },
+      writeFileSync: (p, d) => { writes.push(p); writeFileSync(p, d) },
+      mkdirSync: (p, o) => mkdirSync(p, o),
+    }
+  }
+
+  it('an existing id survives every start', () => {
+    const f = join(tmp(), 'device-id')
+    writeFileSync(f, 'a1b2c3d4e5f6\n')
+    expect(loadDeviceId(f)).toBe('a1b2c3d4e5f6')
+    expect(loadDeviceId(f)).toBe('a1b2c3d4e5f6')
+    expect(readFileSync(f, 'utf8')).toBe('a1b2c3d4e5f6\n')
+  })
+
+  it('a first run makes one and keeps it', () => {
+    const f = join(tmp(), 'sub', 'device-id')
+    const id = loadDeviceId(f)
+    expect(id).toMatch(ID)
+    expect(readFileSync(f, 'utf8')).toBe(id)
+    expect(loadDeviceId(f)).toBe(id)
+  })
+
+  it('an EBUSY or EPERM read never overwrites the saved id (a per-run id, and a warning)', () => {
+    for (const code of ['EBUSY', 'EPERM']) {
+      const f = join(tmp(), 'device-id')
+      writeFileSync(f, 'a1b2c3d4e5f6')
+      const fs = failingRead(f, code)
+      const warns: string[] = []
+      const id = loadDeviceId(f, { fs, warn: (l) => warns.push(l) })
+      expect(id).toMatch(ID)
+      expect(id).not.toBe('a1b2c3d4e5f6')
+      expect(fs.writes).toEqual([])
+      expect(readFileSync(f, 'utf8')).toBe('a1b2c3d4e5f6')
+      expect(warns).toHaveLength(1)
+      expect(warns[0]).toContain(code)
+      expect(loadDeviceId(f)).toBe('a1b2c3d4e5f6') // the next clean start is the same computer again
+    }
+  })
+
+  it('an EBUSY read of the old location is not "missing" either: no new id is saved over it', () => {
+    const d = tmp()
+    const legacy = join(d, 'journal', 'device-id')
+    mkdirSync(join(d, 'journal'))
+    writeFileSync(legacy, 'a1b2c3d4e5f6')
+    const f = join(d, 'device-id')
+    const fs = failingRead(legacy, 'EBUSY')
+    const id = loadDeviceId(f, { legacy, fs, warn: () => {} })
+    expect(id).not.toBe('a1b2c3d4e5f6')
+    expect(fs.writes).toEqual([])
+    expect(existsSync(f)).toBe(false)
+    expect(loadDeviceId(f, { legacy })).toBe('a1b2c3d4e5f6')
+  })
+
+  it('migrates the id from journal/device-id and leaves the old file in place', () => {
+    const d = tmp()
+    const legacy = join(d, 'journal', 'device-id')
+    mkdirSync(join(d, 'journal'))
+    writeFileSync(legacy, 'a1b2c3d4e5f6')
+    const f = join(d, 'device-id')
+    expect(loadDeviceId(f, { legacy })).toBe('a1b2c3d4e5f6')
+    expect(readFileSync(f, 'utf8')).toBe('a1b2c3d4e5f6')
+    expect(readFileSync(legacy, 'utf8')).toBe('a1b2c3d4e5f6')
+    writeFileSync(legacy, 'ffffffffffff') // from now on the new file is the one that counts
+    expect(loadDeviceId(f, { legacy })).toBe('a1b2c3d4e5f6')
+  })
+
+  it('regenerates an id that is not one (and ignores an invalid old file)', () => {
+    const d = tmp()
+    const f = join(d, 'device-id')
+    const legacy = join(d, 'old-device-id')
+    writeFileSync(f, 'not an id')
+    writeFileSync(legacy, 'AAAAAAAAAAAA')
+    const id = loadDeviceId(f, { legacy })
+    expect(id).toMatch(ID)
+    expect(readFileSync(f, 'utf8')).toBe(id)
+    expect(loadDeviceId(f, { legacy })).toBe(id)
+  })
+
+  it('initJournal keeps the id outside the journal folder when given a file for it, migrating the old one', async () => {
+    const d = tmp()
+    const journal = join(d, 'journal')
+    mkdirSync(journal)
+    writeFileSync(join(journal, 'device-id'), 'a1b2c3d4e5f6')
+    initJournal(journal, WORKER_SRC, undefined, join(d, 'device-id'))
+    expect(journalDeviceId()).toBe('a1b2c3d4e5f6')
+    expect(readFileSync(join(d, 'device-id'), 'utf8')).toBe('a1b2c3d4e5f6')
+    await closeJournal()
+    const fresh = tmp()
+    initJournal(join(fresh, 'journal'), WORKER_SRC, undefined, join(fresh, 'device-id'))
+    expect(journalDeviceId()).toMatch(ID)
+    expect(readFileSync(join(fresh, 'device-id'), 'utf8')).toBe(journalDeviceId())
+    expect(existsSync(join(fresh, 'journal', 'device-id'))).toBe(false)
+  })
+})
