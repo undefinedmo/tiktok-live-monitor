@@ -762,6 +762,8 @@ function syncView() {
     // An `sfc_` token saved before the update: conn is none, and the Connect screen says why.
     legacyToken: savedTokenKind(sf.token) === 'legacy',
     upload: { ...syncState },
+    // TT_REPLAY runs no connection check; the renderer must not gate the fixtures behind Connect.
+    replay: !!process.env.TT_REPLAY,
   }
 }
 function pushView(): void {

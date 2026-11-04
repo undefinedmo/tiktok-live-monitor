@@ -5,6 +5,7 @@ import { labelNeedsHtml } from '../electron/zplLabel' // preview-only: which pri
 import { PrintDedup } from '../core/printDedup'
 import { SaleSeed } from '../core/saleSeed'
 import { labelCode } from '../core/labelCode'
+import { parseConnectToken } from '../core/sfConnect'
 
 interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string; title?: string; code?: string }
 type LabelField = 'itemNumber' | 'custom' | 'buyer' | 'productName' | 'price'
@@ -1189,20 +1190,29 @@ $('feedCount').textContent = 'v' + __APP_VERSION__
 { const v = document.getElementById('aboutVersion'); if (v) v.textContent = __APP_VERSION__ }
 
 // -- screens: live monitor + label settings ----------------------------------
-function showScreen(s: 'monitor' | 'settings') {
+let wantedScreen: 'monitor' | 'settings' = 'monitor'
+// Set by the SellerFolio connection section below: true while this computer is not connected.
+let connectGate = false
+function showScreen(want: 'monitor' | 'settings') {
+  wantedScreen = want
+  const s = connectGate ? 'connect' : want
   $('monitorScreen').style.display = s === 'monitor' ? 'flex' : 'none'
   const settings = document.getElementById('settingsScreen')
   if (settings) settings.style.display = s === 'settings' ? 'flex' : 'none'
+  const connect = document.getElementById('connectScreen')
+  if (connect) connect.style.display = s === 'connect' ? 'flex' : 'none'
   $('navMonitor').classList.toggle('active', s === 'monitor')
+  $('navMonitor').classList.toggle('disabled', connectGate)
   document.getElementById('navSettings2')?.classList.toggle('active', s === 'settings')
+  document.getElementById('navSettings2')?.classList.toggle('disabled', connectGate)
   // live status (connecting...) + room/viewers/elapsed only make sense on the Live Monitor
   const meters = document.getElementById('liveMeters')
   if (meters) meters.style.display = s === 'monitor' ? 'flex' : 'none'
   const livePill = document.getElementById('livePill')
   if (livePill) livePill.style.display = s === 'monitor' ? 'flex' : 'none'
 }
-$('navMonitor').addEventListener('click', () => showScreen('monitor'))
-document.getElementById('navSettings2')?.addEventListener('click', () => showScreen('settings'))
+$('navMonitor').addEventListener('click', () => { if (!connectGate) showScreen('monitor') })
+document.getElementById('navSettings2')?.addEventListener('click', () => { if (!connectGate) showScreen('settings') })
 renderStreamState()
 setInterval(renderStreamState, 1000)
 // Deep link, so a screen can be opened (and screenshotted) without a click. Accepts the query
@@ -1213,52 +1223,143 @@ setInterval(renderStreamState, 1000)
 }
 document.getElementById('diagBtn')?.addEventListener('click', () => void window.diagAPI?.open())
 
-// ── SellerFolio sync card ────────────────────────────────────────────────────
-// Interim (Task 6): the view main sends now. Task 7 replaces this card with the Connect screen.
-interface SfSyncView { conn: { kind: string; shop?: string; label?: string }; baseUrl: string; device: string; canStore: boolean; legacyToken: boolean; upload: { state: string; detail: string } }
-const SF_SYNC_LABEL: Record<string, [string, string]> = {
-  off: ['Off — shows are saved on this computer only', 'muted'],
-  synced: ['Connected — shows are uploading to SellerFolio', 'ok-text'],
-  offline: ['Can’t reach SellerFolio — saving here, will upload when it is back', 'warn-text'],
-  auth: ['SellerFolio rejected this token — paste a new one', 'bad-text'],
-  rejected: ['SellerFolio refused an upload — saving here and retrying', 'warn-text'],
-  error: ['Upload error — saving here and retrying', 'warn-text'],
+// ── SellerFolio connection: Connect screen + Settings card ───────────────────
+interface SfConn { kind: string; shop?: string; label?: string }
+interface SfSyncView { conn: SfConn; baseUrl: string; device: string; canStore: boolean; legacyToken: boolean; upload: { state: string; detail: string }; replay?: boolean }
+
+// Demo mode: open dist/index.html over http WITHOUT the preload and add
+// ?conn=none|legacy|checking|revoked|other_machine|connected|offline|revoked-running to see each state.
+// Never active when the preload is present (window.sfSyncAPI exists) or without the query.
+function installSfDemo(): void {
+  const mode = new URLSearchParams(location.search).get('conn')
+  if (window.sfSyncAPI || !mode) return
+  const shop = { shop: 'Luxesense Edit', label: 'Front desk' }
+  const conns: Record<string, SfConn> = {
+    none: { kind: 'none' }, legacy: { kind: 'none' }, checking: { kind: 'checking' },
+    revoked: { kind: 'revoked' }, other_machine: { kind: 'other_machine' },
+    connected: { kind: 'connected', ...shop }, 'revoked-running': { kind: 'connected', ...shop },
+    offline: { kind: 'offline', ...shop },
+  }
+  let conn: SfConn = conns[mode] ?? { kind: 'none' }
+  const view = (): SfSyncView => ({
+    conn, baseUrl: 'https://hq.example', device: '38ffb312af16', canStore: true, legacyToken: mode === 'legacy' && conn.kind === 'none',
+    upload: { state: conn.kind === 'connected' ? 'synced' : conn.kind === 'offline' ? 'offline' : 'off', detail: '' },
+  })
+  let push: ((s: SfSyncView) => void) | null = null
+  const set = (c: SfConn) => { conn = c; push?.(view()) }
+  if (mode === 'revoked-running') setTimeout(() => set({ kind: 'revoked' }), 1200)
+  window.sfSyncAPI = {
+    get: async () => view(),
+    connect: async (t: string) => {
+      if (t.trim() === 'sfm_demo') { set({ kind: 'connected', ...shop }); return { ...view(), ok: true } }
+      return { ...view(), ok: false, error: 'SellerFolio did not recognise that token. Make a new one and try again.' }
+    },
+    disconnect: async () => { set({ kind: 'none' }); return view() },
+    openFolder: async () => ({ ok: true }),
+    onState: (cb) => { push = cb },
+  }
 }
-function renderSfSync(v: SfSyncView) {
-  const url = document.getElementById('sfUrl') as HTMLInputElement | null
-  const tok = document.getElementById('sfToken') as HTMLInputElement | null
+installSfDemo()
+
+const SF_UPLOAD_LABEL: Record<string, [string, string]> = {
+  synced: ['Shows are uploading to SellerFolio.', 'ok-text'],
+  offline: ['Can’t reach SellerFolio — saving here, will upload when it is back.', 'warn-text'],
+  rejected: ['SellerFolio refused an upload — saving here and retrying.', 'warn-text'],
+  error: ['Upload error — saving here and retrying.', 'warn-text'],
+}
+let sfRan = false // this session saw connected/offline, so the monitor is open
+let sfLast: SfSyncView | null = null
+let sfBusy = false
+
+function sfShowConfirm(on: boolean): void {
+  const c = document.getElementById('sfConfirm'); if (c) c.style.display = on ? '' : 'none'
+  const r = document.getElementById('sfRow'); if (r) r.style.display = on ? 'none' : ''
+}
+function renderSfSync(v: SfSyncView): void {
+  sfLast = v
+  const k = v.conn.kind
+  if (k === 'connected' || k === 'offline') sfRan = true
+  const lost = (k === 'revoked' || k === 'other_machine') && sfRan // monitor is open: keep it, stop uploads
+  const gated = !v.replay && (k === 'none' || (k === 'checking' && !v.conn.shop) || ((k === 'revoked' || k === 'other_machine') && !lost))
+
+  // Connect screen
+  const banner = document.getElementById('cnBanner')
+  if (banner) {
+    const msg = k === 'revoked' ? 'This computer was disconnected in SellerFolio. Paste a new token to reconnect.'
+      : k === 'other_machine' ? 'This token is already used by another computer. Make a new token for this one in SellerFolio.'
+      : k === 'none' && v.legacyToken ? 'This computer was set up with an older extension token. Make a computer token in SellerFolio and paste it here.'
+      : ''
+    banner.textContent = msg; banner.style.display = msg ? '' : 'none'
+  }
+  const go = document.getElementById('cnGo') as HTMLButtonElement | null
+  const cs = document.getElementById('cnState')
+  if (go) go.disabled = k === 'checking' || sfBusy
+  if (cs && k === 'checking') { cs.className = 'state muted'; cs.textContent = 'Checking…' }
+  else if (cs && cs.textContent === 'Checking…') cs.textContent = ''
+  const dev = document.getElementById('cnDevice'); if (dev) dev.textContent = v.device || '—'
+  const dev2 = document.getElementById('aboutDevice'); if (dev2) dev2.textContent = v.device || '—'
+
+  // Running, then revoked: red bar on the Live screen
+  const bar = document.getElementById('revokedBar'); if (bar) bar.style.display = lost ? 'flex' : 'none'
+
+  // Settings card
+  const who = document.getElementById('sfWho')
+  if (who) {
+    who.textContent = ''
+    if (v.conn.shop && (k === 'connected' || k === 'offline' || k === 'checking')) {
+      const b1 = document.createElement('b'); b1.textContent = v.conn.shop
+      const b2 = document.createElement('b'); b2.textContent = v.conn.label ?? ''
+      who.append('Connected to ', b1, ' as ', b2)
+    } else if (lost) who.textContent = 'Disconnected in SellerFolio'
+    else who.textContent = 'Not connected'
+  }
   const st = document.getElementById('sfState')
-  if (!url || !tok || !st) return
-  const hasToken = v.conn.kind !== 'none'
-  if (document.activeElement !== url) url.value = v.baseUrl
-  tok.placeholder = hasToken ? `saved · ${v.conn.kind}` : 'paste a computer token (sfm_…)'
-  const [text, cls] = SF_SYNC_LABEL[v.upload.state] ?? [v.upload.state, 'muted']
-  st.className = cls
-  st.textContent = hasToken || v.upload.state !== 'off' ? text : 'Off — add a token to upload shows to SellerFolio'
-  if (!v.canStore) st.textContent += ' · this computer cannot store the token securely, so it must be re-entered each launch'
-  st.className = 'state ' + cls
-  const off = document.getElementById('sfOff')
-  if (off) off.style.display = hasToken ? '' : 'none'
-  const dev = document.getElementById('aboutDevice')
-  if (dev) dev.textContent = v.device || '—'
+  if (st) {
+    let text = ''; let cls = 'muted'
+    if (lost) { text = 'This show keeps printing; uploads have stopped.'; cls = 'bad-text' }
+    else if (k === 'offline') { text = 'Can’t reach SellerFolio — the show keeps running and uploads when it’s back.'; cls = 'warn-text' }
+    else if (k === 'checking') text = 'Checking…'
+    else if (k === 'connected') [text, cls] = SF_UPLOAD_LABEL[v.upload.state] ?? ['', 'muted']
+    if (k === 'connected' && !v.canStore) text += ' This computer cannot store the token securely, so it must be re-entered each launch.'
+    st.className = 'state ' + cls; st.textContent = text
+  }
+  const off = document.getElementById('sfOff'); if (off) off.style.display = k === 'none' ? 'none' : ''
+  if (k === 'none') sfShowConfirm(false)
+
+  connectGate = gated
+  showScreen(wantedScreen)
 }
-function setupSfSync() {
+function setupSfSync(): void {
   const api = window.sfSyncAPI
-  const save = document.getElementById('sfSave') as HTMLButtonElement | null
-  if (!api || !save) return
+  if (!api) return
   void api.get().then(renderSfSync)
   api.onState(renderSfSync)
-  save.addEventListener('click', () => {
-    const tokEl = document.getElementById('sfToken') as HTMLInputElement
-    void api.connect(tokEl.value).then((r) => {
-      tokEl.value = ''
+  const tok = document.getElementById('cnToken') as HTMLInputElement | null
+  const go = document.getElementById('cnGo') as HTMLButtonElement | null
+  const cs = document.getElementById('cnState')
+  const submit = () => {
+    if (!tok || !cs || sfBusy || sfLast?.conn.kind === 'checking') return
+    const parsed = parseConnectToken(tok.value)
+    if ('error' in parsed) { cs.className = 'state bad-text'; cs.textContent = parsed.error; return }
+    sfBusy = true; if (go) go.disabled = true
+    cs.className = 'state muted'; cs.textContent = 'Connecting…'
+    void api.connect(parsed.token).then((r) => {
+      sfBusy = false
+      if (r.ok) { tok.value = ''; cs.textContent = '' } else { cs.className = 'state bad-text'; cs.textContent = r.error ?? 'Could not connect.' }
       renderSfSync(r)
-      if (!r.ok && r.error) { const st = document.getElementById('sfState'); if (st) { st.className = 'bad-text'; st.textContent = r.error } }
+    }, () => {
+      sfBusy = false; cs.className = 'state bad-text'; cs.textContent = 'Could not connect.'
+      if (sfLast) renderSfSync(sfLast)
     })
-  })
+  }
+  go?.addEventListener('click', submit)
+  tok?.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit() })
   document.getElementById('sfFolder')?.addEventListener('click', () => void api.openFolder())
-  document.getElementById('sfOff')?.addEventListener('click', () => {
-    void api.disconnect().then(renderSfSync)
+  document.getElementById('sfOff')?.addEventListener('click', () => sfShowConfirm(true))
+  document.getElementById('sfOffNo')?.addEventListener('click', () => sfShowConfirm(false))
+  document.getElementById('sfOffYes')?.addEventListener('click', () => {
+    sfShowConfirm(false)
+    void api.disconnect().then((v) => { sfRan = false; renderSfSync(v) })
   })
 }
 setupSfSync()
