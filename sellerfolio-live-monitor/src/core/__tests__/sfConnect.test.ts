@@ -17,10 +17,13 @@ describe('parseConnectToken', () => {
   it('rejects an extension token', () => {
     const r = parseConnectToken('sfc_abc')
     expect(r).toEqual({ error: TOKEN_IS_EXTENSIONS })
-    // Names what was pasted, what is wanted, and the exact button — not just a settings path.
-    expect(TOKEN_IS_EXTENSIONS).toMatch(/Chrome extension/)
+    // Names what was pasted (a capture token — NOT "the extension's": SellerFolio's own Live Monitor section
+    // makes this kind too), what is wanted, the exact button, and what it means when the button is missing.
+    expect(TOKEN_IS_EXTENSIONS).not.toMatch(/extension/i)
+    expect(TOKEN_IS_EXTENSIONS).toMatch(/capture token/)
     expect(TOKEN_IS_EXTENSIONS).toMatch(/sfm_/)
     expect(TOKEN_IS_EXTENSIONS).toMatch(/Connect a computer/)
+    expect(TOKEN_IS_EXTENSIONS).toMatch(/not updated/)
   })
   it('rejects anything else, including a bare prefix', () => {
     const e = { error: "That isn't a computer token. Computer tokens start with sfm_ — make one with the steps above." }

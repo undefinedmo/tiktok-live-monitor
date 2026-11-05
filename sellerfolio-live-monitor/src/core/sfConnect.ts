@@ -11,11 +11,14 @@ export type ConnState =
 
 export type Verdict = 'ok' | 'revoked' | 'other_machine' | 'offline' | 'bad'
 
-/** An sfc_ token is the Chrome extension's, which every shop already has — the likeliest wrong paste. Say
- *  what it is, and the exact button that makes the right one, rather than a settings path to hunt through. */
+/** An sfc_ token is a shared CAPTURE token — what the Chrome extension uses, and what SellerFolio's Live Monitor
+ *  section made before computer tokens existed (it is still what a SellerFolio without desktop-connect makes, under
+ *  the heading "Live Monitor"). So never call it "the extension's": say it is the older kind, name the button that
+ *  makes the right one, and say what it means when that button is not there. */
 export const TOKEN_IS_EXTENSIONS =
-  "That's the Chrome extension's token (sfc_…). This app needs its own computer token (sfm_…): in SellerFolio open " +
-  'Settings → Capture devices, scroll to Live Monitor, name this computer and click Connect a computer.'
+  "That's a capture token (sfc_…), the older kind. This version needs a computer token (sfm_…): in SellerFolio open " +
+  'Settings → Capture devices → Live Monitor and click Connect a computer. If you only see "Create a token for this ' +
+  'device" there, your SellerFolio is not updated for this version of the app yet.'
 
 export function parseConnectToken(input: string): { token: string } | { error: string } {
   const t = (input ?? '').trim()
