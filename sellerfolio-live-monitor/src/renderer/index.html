@@ -504,6 +504,87 @@
       .lf-drawernote{margin:0 0 4px;font-size:12px;}
       @media (prefers-reduced-motion:reduce){ .title-drawer-scrim,.title-drawer{transition:none;} }
 
+      /* lane G — Sales so far (#salesSoFar) + show timeline (#showTimeline, .tl-tip, .tl-pop) */
+      #statsGrid[hidden],#salesSoFar[hidden],#showTimeline[hidden],#showTimeline [hidden],.tl-tip[hidden],.tl-pop[hidden]{display:none!important;}
+      .ssf-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 16px 0;}
+      .ssf-meta{font-family:var(--mono);font-size:10.5px;color:var(--ink-4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .ssf-meta.warn{color:var(--flag);}
+      .ssf-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));padding:4px 6px 10px;}
+      .ssf-cell{padding:6px 10px;min-width:0;border-left:1px solid var(--line);cursor:default;}
+      .ssf-cell:first-child{border-left:0;}
+      .ssf-cell .l{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);white-space:nowrap;}
+      .ssf-cell .v{font-weight:700;font-size:20px;line-height:1.2;letter-spacing:-.02em;margin-top:2px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .ssf-cell .s{font-family:var(--mono);font-size:9.5px;color:var(--ink-4);margin-top:1px;white-space:nowrap;}
+      .ssf-cell.hq .l::after{content:'';display:inline-block;width:5px;height:5px;margin-left:5px;border-radius:50%;background:var(--accent);opacity:.55;vertical-align:1px;}
+      .tl-head{display:flex;align-items:center;gap:10px;width:100%;padding:11px 16px;border:0;background:none;text-align:left;color:inherit;}
+      .tl-head:hover{background:var(--panel-hover);}
+      .tl-head:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
+      .tl-sum{font-family:var(--mono);font-size:11px;color:var(--ink-4);margin-left:auto;}
+      .tl-chev{width:8px;height:8px;border-right:1.6px solid var(--ink-3);border-bottom:1.6px solid var(--ink-3);transform:rotate(-45deg);transition:transform .15s;flex:none;}
+      .tl-panel.open .tl-chev{transform:rotate(45deg);}
+      .tl-panel.open .tl-head{border-bottom:1px solid var(--line);}
+      .tl-tools{display:flex;align-items:center;flex-wrap:wrap;gap:6px 12px;padding:8px 12px 8px 16px;border-bottom:1px solid var(--line);}
+      .tl-legend{display:inline-flex;gap:10px;font-size:11px;color:var(--ink-3);}
+      .tl-legend>span{display:inline-flex;align-items:center;gap:5px;}
+      .tl-sw{display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--ink-4);}
+      .tl-sw.sold{background:var(--gain);} .tl-sw.unsold{background:var(--loss);} .tl-sw.unknown{opacity:.6;}
+      .tl-hint{font-size:11px;color:var(--ink-4);}
+      .tl-zoom{display:inline-flex;gap:4px;margin-left:auto;}
+      .tl-zb{height:26px;min-width:28px;padding:0 8px;border:1px solid var(--line-strong);border-radius:6px;background:var(--panel);font:600 12px var(--mono);color:var(--ink-2);}
+      .tl-zb:hover{background:var(--panel-hover);}
+      .tl-zb:disabled{opacity:.45;cursor:default;background:var(--panel);}
+      .tl-zb:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+      .tl-msg{padding:16px;font-size:12.5px;color:var(--ink-3);}
+      .tl-plot{display:flex;min-width:0;}
+      .tl-labels{flex:0 0 68px;border-right:1px solid var(--line);background:var(--panel-2);}
+      .tl-lab{display:flex;align-items:center;padding:0 8px;font-family:var(--mono);font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:600;border-top:1px solid var(--line);}
+      .tl-lab:first-child{border-top:0;}
+      .tl-scroll{flex:1 1 auto;min-width:0;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;}
+      .tl-svg{display:block;}
+      .tl-sep{stroke:var(--line);stroke-width:1;shape-rendering:crispEdges;}
+      .tl-grid{stroke:var(--line);stroke-dasharray:2 3;stroke-width:1;shape-rendering:crispEdges;}
+      .tl-tick{font-family:var(--mono);font-size:9.5px;fill:var(--ink-4);}
+      .tl-selspan{fill:var(--accent);opacity:.08;pointer-events:none;}
+      .tl-run{cursor:pointer;outline:none;}
+      .tl-runhit{fill:transparent;}
+      .tl-runbar{fill:var(--ink-4);opacity:.55;}
+      .tl-run.sold .tl-runbar{fill:var(--gain);opacity:.85;}
+      .tl-run.unsold .tl-runbar{fill:var(--loss);opacity:.75;}
+      .tl-run:hover .tl-runbar{opacity:1;}
+      .tl-runs.has-sel .tl-run:not(.sel) .tl-runbar{opacity:.35;}
+      .tl-run.sel .tl-runbar,.tl-run:focus-visible .tl-runbar{opacity:1;stroke:var(--accent);stroke-width:2;}
+      .tl-runlbl{font-family:var(--mono);font-size:10px;fill:#fff;pointer-events:none;}
+      .tl-chathit{fill:transparent;}
+      .tl-chat{fill:var(--accent);opacity:.35;pointer-events:none;}
+      .tl-chatq{fill:var(--accent-2);opacity:.9;pointer-events:none;}
+      .tl-peak{font-family:var(--mono);font-size:9px;fill:var(--ink-4);pointer-events:none;}
+      .tl-q{fill:var(--ink-4);stroke:var(--panel);stroke-width:1;}
+      .tl-q.k-size{fill:var(--accent);} .tl-q.k-authenticity{fill:var(--onair);} .tl-q.k-condition{fill:var(--flag);}
+      .tl-q.k-price{fill:var(--gain);} .tl-q.k-shipping{fill:var(--ink-3);} .tl-q.k-fit_fabric{fill:var(--accent-2);}
+      .tl-q.k-color{fill:var(--loss);} .tl-q.k-rerun{fill:var(--ink-2);}
+      .tl-q:hover,.tl-flag:hover{stroke:var(--ink);}
+      .tl-flag{fill:var(--loss);stroke:var(--panel);stroke-width:1;}
+      .tl-said{fill:var(--ink-3);cursor:pointer;}
+      .tl-said:hover,.tl-said.sel{fill:var(--accent);}
+      .tl-foot{padding:6px 16px 8px;border-top:1px solid var(--line);font-family:var(--mono);font-size:10px;color:var(--ink-4);}
+      .tl-tip{position:fixed;z-index:60;pointer-events:none;max-width:288px;display:flex;flex-direction:column;gap:2px;padding:7px 10px;border-radius:8px;background:var(--ink);color:#fff;font-size:11px;line-height:1.4;box-shadow:0 6px 18px rgba(8,8,16,.25);}
+      .tl-tipln{display:block;}
+      .tl-tipln.mut{opacity:.7;}
+      .tl-tipln.tx{white-space:normal;overflow-wrap:anywhere;}
+      .tl-pop{position:fixed;z-index:61;width:300px;max-width:calc(100vw - 16px);padding:10px 12px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);box-shadow:0 12px 32px rgba(0,0,0,.18);font-size:12.5px;}
+      .tl-pophead{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+      .tl-pophead b{font-size:14px;}
+      .tl-pill{padding:1px 8px;border-radius:20px;font-size:10.5px;font-weight:600;background:var(--panel-2);color:var(--ink-3);}
+      .tl-pill.sold{background:var(--gain-bg);color:var(--gain);} .tl-pill.unsold{background:var(--loss-bg);color:var(--loss);}
+      .tl-popx{margin-left:auto;width:28px;height:28px;border:0;border-radius:6px;background:none;color:var(--ink-3);}
+      .tl-popx:hover{background:var(--panel-2);color:var(--ink);}
+      .tl-popkv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 10px;margin:0;}
+      .tl-popkv dt{color:var(--ink-3);}
+      .tl-popkv dd{margin:0;color:var(--ink);overflow-wrap:anywhere;}
+      .tl-popsaid{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);}
+      .tl-popsaid p{margin:3px 0 0;color:var(--ink-2);}
+      @media (prefers-reduced-motion:reduce){ .tl-chev{transition:none;} }
+
     </style>
   </head>
   <body>
@@ -586,6 +667,9 @@
         </div>
 
         <div class="sf-scroll rightpanel">
+          <!-- lane G (showStats.ts): "Sales so far" strip (hides #statsGrid once it mounts) + the show timeline -->
+          <div id="salesSoFar" class="panel ssf" hidden></div>
+          <div id="showTimeline" class="panel tl-panel" hidden></div>
           <div id="statsGrid"></div>
           <div class="panel">
             <div class="panel-head">

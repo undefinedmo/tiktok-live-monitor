@@ -29,6 +29,7 @@ import type { LiveEvent, StatusEvent, PinState } from '../core/types'
 import { registerControlIpc, attachControlToViewer } from './controlIpc' // lane A
 import { registerStoreIpc } from './storeIpc' // lane B
 import { registerBuyerHistoryIpc, BUYER_HISTORY_PATH } from './buyerHistory' // lane D
+import { registerShowStatsIpc } from './showStats' // lane G
 
 const DASHBOARD = 'https://shop.tiktok.com/streamer/live/event/dashboard'
 // Set TT_START_URL to log in via Seller Center (https://seller-us.tiktok.com/) —
@@ -911,6 +912,16 @@ registerBuyerHistoryIpc({
   send: viewerSend,
   log: flog,
 })
+// ┌── lane G: Sales so far + show timeline from hq (showStats.ts) — show:get · show:timeline-open ·
+// events show:stats / show:timeline. GET-only polls, 30 s / 60 s, never on the print path.
+registerShowStatsIpc({
+  url: (path) => sfUrl(sf.baseUrl, path),
+  headers: () => (savedTokenKind(sf.token) === 'computer' ? sfHeaders(sf.token) : null),
+  show: () => pollRoomId,
+  send: viewerSend,
+  log: flog,
+})
+// └── end lane G
 
 // ── Label printing (mirrors the desktop app: webContents.print of HTML) ──────
 const PRINTER_FILE = join(app.getPath('userData'), 'tt-printer.json')

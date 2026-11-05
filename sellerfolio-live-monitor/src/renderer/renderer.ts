@@ -14,6 +14,7 @@ import { initChatDesk, onChat, onChatScreenShown } from './chatDesk' // lane C
 import { initBuyerHistory } from './buyerHistory' // lane D
 import { initPrintLog, onPrintResult } from './printLog' // lane E
 import { initDesigner } from './designer' // lane F
+import { initShowStats } from './showStats' // lane G: Sales so far + show timeline
 
 // ┌── lane F: label template types (moves to designer.ts) ─────────────────────
 // The print path's own types (the template may carry the designer's `layout`). The template
@@ -753,6 +754,7 @@ for (const [name, init] of [
   ['buyerHistory', () => initBuyerHistory()],
   ['printLog', () => initPrintLog()],
   ['designer', () => initDesigner()],
+  ['showStats', () => initShowStats()], // lane G
 ] as [string, () => void][]) {
   try { init() } catch (e) { console.error(`[live-ui] ${name} failed to start`, e) }
 }

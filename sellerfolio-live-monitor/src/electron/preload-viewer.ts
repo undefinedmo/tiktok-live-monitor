@@ -63,3 +63,12 @@ contextBridge.exposeInMainWorld('buyerAPI', {
   lookup: (ids: string[]) => ipcRenderer.invoke('buyer:lookup', ids),
   onCounts: (cb: (p: unknown) => void) => ipcRenderer.on('buyer:counts', (_e, p) => cb(p)),
 })
+
+// ┌── lane G, electron/showStats.ts → hq GET /api/desktop/show-stats + /api/desktop/timeline.
+contextBridge.exposeInMainWorld('showAPI', {
+  get: () => ipcRenderer.invoke('show:get'),
+  setTimelineOpen: (open: boolean) => ipcRenderer.invoke('show:timeline-open', open),
+  onStats: (cb: (v: unknown) => void) => ipcRenderer.on('show:stats', (_e, v) => cb(v)),
+  onTimeline: (cb: (v: unknown) => void) => ipcRenderer.on('show:timeline', (_e, v) => cb(v)),
+})
+// └── end lane G
