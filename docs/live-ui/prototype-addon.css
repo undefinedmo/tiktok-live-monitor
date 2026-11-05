@@ -1,0 +1,383 @@
+  <style>/* Prototype additions. Everything here sits on top of the real Live Monitor UI and uses its tokens. */
+.rail{width:76px;gap:4px;padding:8px 6px}
+.rail > .navicon,.rail > div[style]{display:none}
+.ad-nav{position:relative;width:64px;min-height:58px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;border-radius:8px;background:none;font:600 11px var(--ui);color:var(--ink-3);cursor:pointer}
+.ad-nav:hover{background:var(--panel-hover)}
+.ad-nav.on{background:var(--accent-tint);color:var(--accent-2)}
+.ad-nav svg{width:22px;height:22px}
+.ad-count{position:absolute;top:4px;right:9px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--loss);color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.ad-ctrl{display:flex;align-items:center;gap:8px;margin-left:14px}
+.ad-arm{display:flex;align-items:center;gap:8px;height:36px;padding:0 11px;border:1px solid var(--line-strong);border-radius:8px;background:var(--panel);font:600 12.5px var(--ui);color:var(--ink);cursor:pointer}
+.ad-knob{width:30px;height:18px;border-radius:9px;background:var(--ink-4);position:relative;flex:none}
+.ad-knob i{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff}
+.ad-arm.on{border-color:var(--gain)}.ad-arm.on .ad-knob{background:var(--gain)}.ad-arm.on .ad-knob i{left:14px}
+.ad-run{display:flex;align-items:center;gap:8px;height:36px;padding:0 12px;border:0;border-radius:8px;background:var(--accent);color:#fff;font:700 13px var(--ui);cursor:pointer}
+.ad-run:hover{background:var(--accent-2)}
+.ad-run:disabled{background:var(--panel-3);color:var(--ink-3);cursor:not-allowed}
+.ad-last{display:flex;align-items:center;gap:8px;height:36px;padding:0 12px;border:1px solid var(--line-strong);border-radius:8px;background:var(--panel);color:var(--ink);font:700 13px var(--ui);cursor:pointer}
+.ad-last:hover{background:var(--panel-hover)}
+.ad-key{font-family:var(--mono);font-size:10.5px;font-weight:500;padding:1px 5px;border:1px solid currentColor;border-radius:4px}
+.ad-search{flex:none;padding:8px 12px;border-bottom:1px solid var(--line)}
+.ad-in{width:100%;min-height:36px;padding:0 10px;border:1px solid var(--line-strong);border-radius:6px;font:400 13.5px var(--ui);background:var(--panel);color:var(--ink);box-sizing:border-box}
+#chatList .chatrow.ad-q{display:flex;flex-direction:column;gap:7px;padding:9px 10px;margin:0 -6px;border-radius:8px;border:1px solid #bcd2ff;background:var(--accent-tint)}
+#chatList .chatrow.ad-q.need{background:var(--flag-bg);border-color:#e6c48f}
+#chatList .chatrow.ad-q.done{background:var(--gain-bg);border-color:#b5dfc4}
+#chatList .chatrow.ad-q.skip{background:var(--panel-2);border-color:var(--line)}
+.ad-reply{display:flex;gap:6px}
+.ad-reply .ad-in{flex:1 1 0;min-width:0}
+.ad-btn{min-height:36px;padding:0 12px;border:1px solid var(--line-strong);border-radius:6px;background:var(--panel);font:600 13px var(--ui);color:var(--ink);cursor:pointer}
+.ad-btn:hover{background:var(--panel-hover)}
+.ad-btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.ad-btn.primary:hover{background:var(--accent-2)}
+.ad-btn:disabled{background:var(--panel-3);border-color:var(--line);color:var(--ink-3);cursor:not-allowed}
+.ad-sub{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--ink-3)}
+.ad-link{background:none;border:0;padding:2px;font:600 12px var(--ui);color:var(--accent-2);cursor:pointer;text-decoration:underline}
+.ad-wish{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:99px;background:var(--accent-tint);color:var(--accent-2);font-size:11px;font-weight:600}
+.ad-host{font-size:13px}
+.ad-host b{color:var(--gain)}
+.ad-rows{padding:8px 16px 12px}
+.ad-row{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:30px;font-size:13.5px}
+.ad-tag{padding:2px 8px;border-radius:99px;background:var(--panel-2);font-size:12px;font-weight:600;color:var(--ink-2)}
+.ad-chattools{display:flex;flex-direction:column;gap:8px}
+.ad-kinds{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px;padding:3px;border-radius:8px;background:var(--panel-2)}
+.ad-kind{min-height:32px;border:0;border-radius:6px;background:none;font:600 12.5px var(--ui);color:var(--ink-2);cursor:pointer}
+.ad-kind.on{background:var(--panel);color:var(--ink);box-shadow:0 0 0 1px var(--line)}
+.ad-kindn{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--flag-bg);color:var(--flag);font-size:11px}
+.tag.ad-new{color:#fff;background:var(--gain);border-color:var(--gain);font-size:10px;font-weight:700}
+.tag.ad-ord{min-width:20px;box-sizing:border-box;text-align:center;color:var(--ink-2);background:var(--panel-2);border-color:var(--line-strong);font-size:10px;letter-spacing:0}
+#topBuyersList .tag{flex:none;margin-right:auto}
+.topbar{min-width:0;flex-wrap:nowrap}
+.ad-ctrl{flex:none}.ad-arm,.ad-run,.ad-last,.topmeter{white-space:nowrap}
+.ad-arm,.ad-run,.ad-last{flex:none}
+#liveMeters{flex:none}
+#statsGrid > *{min-width:0}
+.ad-big #livePill{display:none !important}
+.ad-big #statsGrid{grid-template-columns:minmax(0,.75fr) minmax(0,1.5fr) minmax(0,.8fr)}
+.ad-big .ad-ctrl{margin-left:6px}
+.ad-big .video-col{flex:0 1 300px;min-width:240px;padding:12px}
+.ad-big .chat-col{min-width:240px}
+.ad-big .rightpanel{min-width:0;padding:12px}
+.ad-big #statsGrid{gap:8px}
+.ad-big #statsGrid > *{padding-left:12px;padding-right:10px}
+.ad-big .topmeter:first-child{display:none}
+.ad-tabs{display:flex;gap:2px;flex:none;padding:3px;border-radius:8px;background:var(--panel-2);align-self:flex-start}
+.ad-tab{min-height:36px;padding:0 16px;border:0;border-radius:6px;background:none;font:600 13px var(--ui);color:var(--ink-2);cursor:pointer}
+.ad-tab.on{background:var(--panel);color:var(--ink);box-shadow:0 0 0 1px var(--line)}
+.ad-designer{grid-template-columns:minmax(0,1fr) minmax(280px,340px);gap:12px;align-items:start}
+@media (max-width:1000px){.ad-designer{grid-template-columns:minmax(0,1fr)}}
+.ad-mode{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;padding:10px 14px;border:1px solid #bcd2ff;border-radius:10px;background:var(--accent-tint);font-size:13px}
+.ad-mode.std{background:var(--panel-2);border-color:var(--line)}
+.ad-mode .ad-btn{flex:none}
+.ad-canvasfoot{padding:10px 16px}
+.ad-toggles{display:flex;flex-wrap:wrap;gap:6px}
+.ad-toggle{min-height:34px;padding:0 10px;border:1px solid var(--line-strong);border-radius:6px;background:var(--panel);font:600 12px var(--ui);color:var(--ink);cursor:pointer}
+.ad-toggle.on{background:var(--accent-tint);border-color:var(--accent);color:var(--accent-2)}
+.ad-toggle:disabled{background:var(--panel-3);border-color:var(--line);color:var(--ink-3);cursor:not-allowed}
+.ad-warn{padding:7px 9px;border-radius:6px;background:var(--flag-bg);color:var(--flag);font-size:12px;font-weight:600}
+.ad-in:disabled{background:var(--panel-3);color:var(--ink-3);cursor:not-allowed}
+.ad-el.logo{display:flex;align-items:center;justify-content:center;background:var(--panel-3);color:var(--ink-3);font-size:10px;box-sizing:border-box}
+.ad-scrim{position:fixed;inset:0;z-index:20;background:rgba(12,12,16,.35);opacity:0;pointer-events:none;transition:opacity .18s ease}
+.ad-scrim.show{opacity:1;pointer-events:auto}
+.ad-drawer{position:fixed;top:0;right:0;bottom:0;z-index:21;width:min(480px,92vw);display:flex;flex-direction:column;background:var(--panel);border-left:1px solid var(--line);box-shadow:-12px 0 32px rgba(0,0,0,.14);overflow-y:auto;transform:translateX(102%);visibility:hidden;transition:transform .2s ease,visibility .2s}
+.ad-drawer.show{transform:none;visibility:visible;transition:transform .2s ease}
+.ad-drawerhead{position:sticky;top:0;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;background:var(--panel);border-bottom:1px solid var(--line)}
+.ad-drawerhead h3{margin:0;font-size:16px}
+.ad-x{flex:none;width:36px;height:36px;display:flex;align-items:center;justify-content:center;border:0;border-radius:8px;background:none;font:400 16px var(--ui);color:var(--ink-2);cursor:pointer}
+.ad-x:hover{background:var(--panel-2);color:var(--ink)}
+.ad-drawer .set-card{margin:0;border:0;box-shadow:none;border-radius:0}
+@media (prefers-reduced-motion:reduce){.ad-scrim,.ad-drawer{transition:none}}
+.ad-textrow{display:flex;align-items:center;gap:10px;margin-top:10px}
+.ad-a{min-width:48px;min-height:40px;font-size:15px}
+.ad-pct{min-width:48px;text-align:center;font-family:var(--mono);font-weight:600}
+.ad-feednote{margin-top:6px}
+.ad-bad{color:var(--loss);font-weight:600}
+.ad-log{padding:10px 16px 12px;font-family:var(--mono);font-size:12px;color:var(--ink-2);display:flex;flex-direction:column;gap:3px;max-height:112px;overflow:auto}
+.ad-screen{display:none;flex:1;min-width:0;min-height:0;overflow:auto;padding:16px;gap:12px;background:var(--canvas)}
+.ad-screen.show{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(300px,.8fr);align-items:start}
+@media (max-width:1000px){.ad-screen.show{grid-template-columns:minmax(0,1fr)}}
+.ad-col{display:flex;flex-direction:column;gap:12px;min-width:0}
+.ad-canvas{display:flex;justify-content:center;align-items:center;min-height:420px;padding:24px;background-color:var(--panel-3);background-image:radial-gradient(var(--line-strong) 1px,transparent 1px);background-size:20px 20px;overflow:auto}
+.ad-label{position:relative;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.25);overflow:hidden;flex:none;color:#000}
+.ad-el{position:absolute;white-space:nowrap;line-height:1.1;font:700 12px Arial,Helvetica,sans-serif;border:0;background:none;color:#000;padding:0;cursor:grab;outline:1px dashed var(--line-strong);touch-action:none}
+.ad-el.inv{background:#000;color:#fff;padding:.08em .22em}
+.ad-el.sel{outline:2px solid var(--accent)}
+.ad-el.qr{background:repeating-conic-gradient(#000 0 25%,#fff 0 50%) 0 0/28% 28%;border:3px solid #000;box-sizing:border-box}
+.ad-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.ad-tools select{width:auto;min-width:140px}
+.ad-layer{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:40px;padding:0 12px;margin-bottom:6px;border:1px solid var(--line);border-radius:6px;background:var(--panel);font:400 13.5px var(--ui);color:var(--ink);cursor:pointer}
+.ad-layer.on{border-color:var(--accent);background:var(--accent-tint)}
+.ad-pad{padding:12px 16px;display:flex;flex-direction:column;gap:10px}
+.ad-f{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;color:var(--ink-2)}
+.ad-q2{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:7px}
+</style>
+</head>
+  <body>
+    <div class="topbar">
+      <div class="brand"><img src="data:image/png;base64,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" alt="SellerFolio" /><span>SellerFolio Live</span></div>
+      <div class="livepill" id="livePill"><span id="status">connecting…</span><span class="sep">&middot;</span><span id="sessionName">—</span></div>
+      <div style="flex:1;"></div>
+      <div id="liveMeters" class="topmeters">
+        <div class="topmeter">Room<b id="room">—</b></div>
+        <div class="topmeter">Viewers<b id="viewers">—</b></div>
+        <div class="topmeter onair">Live<b id="elapsed">—</b></div>
+      </div>
+    </div>
+    <!-- #dot kept hidden (orange status dot removed); the JS still updates it -->
+    <div id="liveStats" class="visually-hidden"><span id="dot"></span></div>
+    <!-- watchdog: degraded signal paths (raised/cleared by main's 15s check) -->
+    <div id="watchdogBar"></div>
+    <!-- shown only in TT_DRY_PRINT mode -->
+    <div id="dryBanner">Dry run &mdash; the app is following the show, but no labels will print.</div>
+
+    <div class="terminal-body">
+      <div class="rail">
+        <div class="navicon active" id="navMonitor" title="Live Monitor"><div class="navgrid"><i></i><i></i><i></i><i></i></div></div>
+        <div style="flex:1;"></div>
+        <div class="navicon" id="navSettings2" title="Label settings">⚙</div>
+        <div style="height:8px;"></div>
+      </div>
+
+      <div id="monitorScreen" class="monitor">
+        <div class="video-col">
+          <div class="stream-card">
+            <video id="live" muted autoplay playsinline controls></video>
+            <div class="stream-badge"><i></i>LIVE</div>
+            <!-- the "sold" moment: shown for a few seconds over the picture when an auction closes -->
+            <div id="soldBanner" class="sold-banner" role="status" aria-live="polite">
+              <div class="sold-check"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 12.5l4.2 4.2L18.5 8" /></svg></div>
+              <div class="sold-eyebrow">Item sold</div>
+              <div class="sold-name" id="soldName">&mdash;</div>
+              <div class="sold-meta"><span id="soldLot"></span><span id="soldPrice" class="sold-price"></span></div>
+            </div>
+            <div id="lotOverlay" class="lot-card">
+              <div class="lot-thumb"></div>
+              <div style="flex:1 1 120px;min-width:0;overflow:hidden;">
+                <div class="lot-eyebrow"><span id="lotNum">CURRENT LOT</span> &middot; high bidder <span id="lotBuyer">--</span></div>
+                <div id="lotName">--</div>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:14px;row-gap:6px;flex:0 1 auto;margin-left:auto;">
+                <div class="lot-fig"><div class="k">Current bid &middot; <span id="lotBids">0</span> bids</div><div class="v" id="lotBid">--</div></div>
+                <div class="lot-fig"><div class="k">Ends in</div><div class="v ends" id="lotEnds">--</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="chat-col">
+          <div class="chat-wrap">
+            <div class="section-head">
+              <span class="section-title">Live chat</span>
+              <span class="livecount"><i></i><span id="chatViewers">--</span></span>
+            </div>
+            <div id="chatList" class="sf-scroll">
+              <span class="mono placeholder">waiting for comments...</span>
+            </div>
+            <!-- The composer is gone on purpose: we cannot post to the stream, and an input that
+                 does nothing is worse than no input. Pulling buyer questions out of chat before
+                 they scroll away is separate work. -->
+            <p class="chat-note">Reading only. Replies don&rsquo;t reach the stream.</p>
+          </div>
+        </div>
+
+        <div class="sf-scroll rightpanel">
+          <div id="statsGrid"></div>
+          <div class="panel">
+            <div class="panel-head">
+              <span class="eyebrow">Live bid feed</span>
+              <span class="meta">
+                <span id="updateReady" title="" style="display:none;">Update ready ↻</span>
+                <span id="feedCount"></span>
+              </span>
+            </div>
+            <div id="bidFeed" class="sf-scroll bidfeed"><div class="mono placeholder" style="padding:18px 16px;">Waiting for sales...</div></div>
+            <div class="visually-hidden">
+              <select id="feedSize"><option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option></select>
+              <button id="feedPrev"></button><span id="feedPage">1/1</span><button id="feedNext"></button>
+            </div>
+          </div>
+          <div class="panel" id="failedPanel" style="display:none;">
+            <div class="panel-head">
+              <span class="eyebrow bad">Payment issues</span>
+              <span id="failedCount" class="chip bad">0</span>
+            </div>
+            <div id="failedList" class="sf-scroll"></div>
+          </div>
+          <div class="panel pad">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <span class="eyebrow">Top buyers &middot; this show</span>
+              <span id="topBuyersCount" class="mono muted" style="font-size:10px;"></span>
+            </div>
+            <div id="topBuyersList"></div>
+          </div>
+          <!-- "Current auction item" was deleted: it showed name, bid, bid count and ends-in, every
+               one of which the lot overlay on the video already shows, and the overlay adds the high
+               bidder besides. The overlay is also always visible, where this column scrolls. -->
+          <div class="panel">
+            <div class="panel-head">
+              <span class="eyebrow">Thermal print queue</span>
+              <button id="labelSettingsFooter" class="chip amber">LABEL SETTINGS</button>
+            </div>
+            <div id="printQueue"><div class="mono placeholder" style="padding:14px 16px;">No labels yet</div></div>
+            <div class="visually-hidden">
+              <button id="printNext" disabled></button>
+              <input id="customNum" />
+              <button id="printCustom"></button>
+              <input id="rangeFrom" />
+              <input id="rangeTo" />
+              <button id="printRange"></button>
+              <div id="products"></div>
+            </div>
+          </div>
+          <div class="panel pad capture">
+            <span class="eyebrow">Live stream</span>
+            <!-- This reports real state: the light is on only while the player is playing. The bars
+                 were fixed inline percentages — a frozen equaliser that read as live telemetry. -->
+            <span class="sig off" id="sigVideo"><i></i>VIDEO</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ SETTINGS SCREEN ============ -->
+      <div id="settingsScreen">
+        <span class="screen-title">Settings</span>
+        <div class="body sf-scroll" style="flex:1;min-height:0;overflow-y:auto;">
+          <div class="set-grid">
+            <div class="set-col">
+
+              <div class="modal-box set-card">
+                <h3>Printer</h3>
+                <label class="switch-row" for="autoPrint">
+                  <span><b>Print a label when an item sells</b><small>The app&rsquo;s main job. Turn it off to watch a show without printing.</small></span>
+                  <input type="checkbox" id="autoPrint" class="switch" />
+                </label>
+                <div class="field">
+                  <span class="f-lbl">Printer</span>
+                  <div class="custom-row" style="margin:0;">
+                    <select id="printerSel" style="flex:1 1 240px;min-width:0;"><option value="">No printer</option></select>
+                    <button id="printTest" class="qbtn" type="button" style="flex:none;" disabled>Print test label</button>
+                  </div>
+                  <div id="printerState" class="state muted">&mdash;</div>
+                </div>
+                <label class="check"><input type="checkbox" id="rawZpl" /> Fast printing (raw ZPL) &mdash; ~20&times; faster spool</label>
+                <div class="preview" style="margin-top:2px;">Sends ZPL straight to the printer, skipping the slow render. Only for ZPL-capable label printers (e.g. Arkscan 2054A). Names with emoji auto-fall-back to normal printing.</div>
+                <div class="set-note" style="margin-top:12px;">
+                  <p>A label prints from whichever reports the sale first: the auction closing on screen (about 1.5 seconds after the timer) or TikTok&rsquo;s order record (about 3 seconds). The second report is ignored, so each item gets one label.</p>
+                  <div id="feedWinsSeen" class="ok-text" style="margin-top:7px;font-size:11px;"></div>
+                </div>
+              </div>
+
+              <div class="modal-box set-card">
+                <h3>Label layout</h3>
+                <label>Label size
+                  <select id="setSize">
+                    <option value="1x1">1 &times; 1 in</option>
+                    <option value="1.5x1.5">1.5 &times; 1.5 in</option>
+                    <option value="2x1">2 &times; 1 in</option>
+                    <option value="2x2">2 &times; 2 in</option>
+                    <option value="2.25x1.25">2.25 &times; 1.25 in</option>
+                  </select>
+                </label>
+                <div class="fields">
+                  <div class="field-row"><label><input type="checkbox" id="setItemNumber" /> Item number (#)</label><span class="sizestep"><button type="button" data-size="itemNumber" data-d="-1">&minus;</button><b id="sz-itemNumber">&mdash;</b><button type="button" data-size="itemNumber" data-d="1">+</button></span></div>
+                  <div class="field-row"><label><input type="checkbox" id="setBuyer" /> Buyer</label><span class="sizestep"><button type="button" data-size="buyer" data-d="-1">&minus;</button><b id="sz-buyer">&mdash;</b><button type="button" data-size="buyer" data-d="1">+</button></span></div>
+                  <div class="field-row"><label><input type="checkbox" id="setProductName" /> Product name (full)</label><span class="sizestep"><button type="button" data-size="productName" data-d="-1">&minus;</button><b id="sz-productName">&mdash;</b><button type="button" data-size="productName" data-d="1">+</button></span></div>
+                  <div class="field-row"><label><input type="checkbox" id="setPrice" /> Price</label><span class="sizestep"><button type="button" data-size="price" data-d="-1">&minus;</button><b id="sz-price">&mdash;</b><button type="button" data-size="price" data-d="1">+</button></span></div>
+                  <div class="field-row"><label title="SF1:T:&lt;sku_id&gt; — scanned at the pack station to match the item to its order. Printed only on sale labels (not manual Next/Custom/Range)."><input type="checkbox" id="setQr" /> QR code (pack station)</label></div>
+                  <div class="field-row"><label><input type="checkbox" id="setCustom" /> Text from the title <span class="muted">(for example, the bin)</span></label><span class="sizestep"><button type="button" data-size="custom" data-d="-1">&minus;</button><b id="sz-custom">&mdash;</b><button type="button" data-size="custom" data-d="1">+</button></span></div>
+                </div>
+                <div class="field" style="margin-top:10px;">
+                  <label class="f-lbl" for="presetSel">What to pull from the title</label>
+                  <select id="presetSel" style="width:100%;">
+                    <option value="">Choose what to print&hellip;</option>
+                  </select>
+                </div>
+                <div class="preview" style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
+                  <span style="flex:none;">Try a title:</span>
+                  <input id="sampleTitle" class="ai-edit" style="flex:1 1 260px;max-width:none;" spellcheck="false" placeholder="paste a real listing title&hellip;" />
+                  <span style="flex:none;">&rarr; prints <b id="extractPreview">&mdash;</b></span>
+                </div>
+                <div class="preview" style="display:flex;align-items:center;gap:7px;margin-top:6px;">
+                  <span style="flex:none;">Try a buyer:</span>
+                  <input id="sampleBuyer" class="ai-edit" style="flex:1 1 160px;max-width:220px;" spellcheck="false" placeholder="buyer name&hellip;" />
+                  <span id="samplePathHint" class="muted" style="flex:none;"></span>
+                </div>
+                <details class="adv" id="advPattern">
+                  <summary>Advanced: edit or save a pattern</summary>
+                  <p class="muted">A regular expression, matched against the listing title. Whatever the first pair of brackets captures is what prints.</p>
+                  <!-- Say what you want in plain words and let the model write the pattern. The
+                       suggestion is never applied on its own: it is run against the sample title
+                       above and the extracted text is shown first, because a pattern that installs
+                       itself prints the wrong thing on every label of the next show and nothing
+                       looks broken. -->
+                  <div class="rxai">
+                    <input type="text" id="rxWant" placeholder="Describe what should print, e.g. the bin letter" spellcheck="false" />
+                    <button type="button" id="rxAsk" class="qbtn" style="flex:none;">Suggest pattern</button>
+                  </div>
+                  <div id="rxResult" class="rxresult" hidden>
+                    <div class="rxline"><span class="k">Pattern</span><code id="rxPattern"></code></div>
+                    <div class="rxline"><span class="k">Prints</span><b id="rxPrints"></b></div>
+                    <div id="rxExplain" class="muted"></div>
+                    <div class="rxacts">
+                      <button type="button" id="rxDismiss" class="qbtn sm">Dismiss</button>
+                      <button type="button" id="rxUse" class="qbtn sm print">Use this</button>
+                    </div>
+                  </div>
+                  <div id="rxState" class="state muted"></div>
+                  <div class="custom-row">
+                    <input type="text" id="setRegex" placeholder="pattern, e.g. (Bin [A-Z])" spellcheck="false" />
+                    <input type="text" id="setFlags" placeholder="flags" title="Pattern flags — i ignores upper/lower case" spellcheck="false" />
+                  </div>
+                  <div class="custom-row" style="margin-top:6px;">
+                    <input type="text" id="presetName" placeholder="name to save it as&hellip;" style="flex:1 1 180px;" />
+                    <button type="button" id="presetSave" class="chip amber" style="flex:none;">Save pattern</button>
+                    <button type="button" id="presetDelete" class="chip" style="flex:none;" disabled>Delete</button>
+                  </div>
+                </details>
+              </div>
+
+              <div class="modal-box set-card">
+                <h3>SellerFolio sync</h3>
+                <div class="set-note"><p>Every show is saved on this computer as it happens. With a token, it is also uploaded to SellerFolio &mdash; in the background, on its own thread, so it can never slow a label.</p></div>
+                <div class="field-pair">
+                  <div class="field">
+                    <label class="f-lbl" for="sfUrl">Server address</label>
+                    <input type="text" id="sfUrl" placeholder="https://hq.luxesenseedit.com" spellcheck="false" />
+                  </div>
+                  <div class="field">
+                    <label class="f-lbl" for="sfToken">Capture token</label>
+                    <input type="password" id="sfToken" autocomplete="off" spellcheck="false" />
+                  </div>
+                </div>
+                <div class="custom-row" style="margin:12px 0 0;">
+                  <button type="button" id="sfSave" class="qbtn print" style="flex:none;">Save</button>
+                  <button type="button" id="sfOff" class="qbtn" style="flex:none;display:none;" title="Remove the saved token and stop uploading">Turn off</button>
+                  <button type="button" id="sfFolder" class="qbtn" style="flex:none;" title="Open the folder where each show is saved on this computer">Open saved shows</button>
+                  <span id="sfState" class="state muted" style="margin:0;">&mdash;</span>
+                </div>
+              </div>
+
+              <div class="modal-box set-card" style="margin-bottom:0;">
+                <h3>About</h3>
+                <div class="kv"><span>Version</span><b id="aboutVersion">&mdash;</b><span id="aboutUpdate" class="muted">No update waiting</span></div>
+                <div class="kv"><span>This computer</span><b id="aboutDevice" class="mono">&mdash;</b></div>
+                <button id="diagBtn" class="qbtn" type="button" style="margin-top:12px;" title="Opens the flight-recorder log folder; the last 200 lines are also copied to the clipboard">Open diagnostics log</button>
+              </div>
+
+            </div>
+            <div class="set-side">
+              <div class="modal-box set-card" style="margin-bottom:0;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;">
+                  <h3 style="margin:0;">Preview <span id="labelPreviewSize" class="muted" style="font-weight:400;margin-left:4px;"></span></h3>
+                  <button id="printSample" class="chip amber" type="button" style="flex:none;" disabled>Print sample</button>
+                </div>
+                <div id="labelPreviewWrap">
+                  <iframe id="labelPreview" title="label preview" scrolling="no"></iframe>
+                </div>
+                <p class="muted" style="margin:10px 0 0;font-size:12px;">Exactly how this label prints.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Static/demo mock data — runs ONLY when opened without the Electron
