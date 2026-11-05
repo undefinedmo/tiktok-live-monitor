@@ -472,6 +472,87 @@ export function logoDots(el: LogoElement, imgW: number, imgH: number, dpi = DPI)
   return { w: Math.max(1, Math.round(imgW * s)), h: Math.max(1, Math.round(imgH * s)) }
 }
 
+/** The element's box in whole dots at `dpi` (what a logo's bitmap must fit inside). */
+export const boxDots = (el: ElementBase, dpi = DPI): { w: number; h: number } => ({ w: Math.max(1, Math.round(el.w * dpi)), h: Math.max(1, Math.round(el.h * dpi)) })
+
+/**
+ * Whether a logo's printer bitmap was made for its CURRENT box: same dpi, inside the box, and
+ * touching it on at least one side (logoDots contains the image, so a fresh bitmap always fills
+ * the box's width or its height). False ⇒ the designer rebuilds it — after a label-size change
+ * clamps the box, or a resize, the old bitmap is the wrong size.
+ */
+export function monoIsCurrent(el: LogoElement, dpi = DPI): boolean {
+  const m = el.mono
+  if (!m) return false
+  const b = boxDots(el, dpi)
+  return m.dpi === dpi && m.w <= b.w && m.h <= b.h && (m.w >= b.w - 1 || m.h >= b.h - 1)
+}
+
+/**
+ * The bitmap, made to fit inside maxW × maxH dots. One that already fits is returned AS IS (the
+ * same object, so the ZPL is byte-identical); a larger one is scaled down, aspect kept, by
+ * nearest neighbour; null when nothing would be left. The defensive half of the logo-size fix:
+ * a stale bitmap must never print over the rest of the tag.
+ */
+export function fitMono(m: MonoBitmap, maxW: number, maxH: number): MonoBitmap | null {
+  if (!(m.w > 0 && m.h > 0) || !(maxW >= 1 && maxH >= 1)) return null
+  if (m.w <= maxW && m.h <= maxH) return m
+  const s = Math.min(maxW / m.w, maxH / m.h)
+  const w = Math.min(Math.floor(maxW), Math.max(1, Math.floor(m.w * s)))
+  const h = Math.min(Math.floor(maxH), Math.max(1, Math.floor(m.h * s)))
+  const srcBpr = Math.ceil(m.w / 8), bpr = Math.ceil(w / 8)
+  const bit = (x: number, y: number): boolean => {
+    const i = (y * srcBpr + (x >> 3)) * 2
+    return ((parseInt(m.hex.slice(i, i + 2), 16) || 0) & (0x80 >> (x & 7))) !== 0
+  }
+  let hex = ''
+  for (let y = 0; y < h; y++) {
+    const sy = Math.min(m.h - 1, Math.floor(((y + 0.5) * m.h) / h))
+    for (let b = 0; b < bpr; b++) {
+      let byte = 0
+      for (let k = 0; k < 8; k++) {
+        const x = b * 8 + k
+        if (x >= w) continue
+        if (bit(Math.min(m.w - 1, Math.floor(((x + 0.5) * m.w) / w)), sy)) byte |= 0x80 >> k
+      }
+      hex += byte.toString(16).padStart(2, '0').toUpperCase()
+    }
+  }
+  return { dpi: m.dpi, w, h, hex }
+}
+
+// ── logo image size (the driver path loads the label as a data: URL) ───────────────
+
+/** The most a logo's stored data: URL may weigh. The driver path prints the whole label from a
+ *  `data:text/html,` URL (logo inside, percent-encoded, ~+6%), and Chromium refuses URLs over
+ *  2 MB — past that EVERY tag with the logo fails. 250 KB keeps even four logos far below it. */
+export const MAX_LOGO_DATAURL_BYTES = 250_000
+/** The smallest longest-side a logo is shrunk to before giving up on PNG. */
+export const MIN_LOGO_PX = 120
+
+export interface FittedImage { dataUrl: string; w: number; h: number; shrunk: boolean; fits: boolean }
+
+/**
+ * Encode an image no heavier than `maxBytes`: try `encode` at w × h, and while it is too heavy
+ * step the dimensions down (×0.8, aspect kept) until it fits or the longest side reaches
+ * `minSide`. `encode` (the designer's canvas) picks the format — PNG first, so flat logos stay
+ * crisp. `shrunk` = it had to get smaller; `fits` = false only if even the floor was too heavy
+ * (the caller then tries a lossy format or refuses the image).
+ */
+export function fitImageBytes(w: number, h: number, encode: (w: number, h: number) => string, maxBytes = MAX_LOGO_DATAURL_BYTES, minSide = MIN_LOGO_PX): FittedImage {
+  let cw = Math.max(1, Math.round(w)), ch = Math.max(1, Math.round(h))
+  let url = encode(cw, ch)
+  let shrunk = false
+  while (url.length > maxBytes && Math.max(cw, ch) > minSide) {
+    // ×0.8 a step, but never below the floor (the last step lands exactly on it).
+    const k = Math.max(0.8, minSide / Math.max(cw, ch))
+    cw = Math.max(1, Math.round(cw * k)); ch = Math.max(1, Math.round(ch * k))
+    url = encode(cw, ch)
+    shrunk = true
+  }
+  return { dataUrl: url, w: cw, h: ch, shrunk, fits: url.length <= maxBytes }
+}
+
 // ── the HTML renderer ─────────────────────────────────────────────────────────
 
 const escHtml = (s: string) =>
@@ -602,7 +683,11 @@ export function layoutZpl(layout: LabelLayout, data: LayoutData, regex: RegexSpe
       const q = QR_QUIET * fit.mag
       z += `^FO${Math.round(el.x * dpi) + q},${Math.round(el.y * dpi) + q}^BQN,2,${fit.mag}^FD${QR_ECC}A,${escZpl(payload)}^FS\n`
     } else if (el.type === 'logo') {
-      const m = el.mono
+      if (!el.mono) continue
+      // Never print a bitmap bigger than its box (a stale one from before a size change would
+      // overprint the text): scale it down to fit. One that fits is used unchanged.
+      const box = boxDots(el, dpi)
+      const m = fitMono(el.mono, box.w, box.h)
       if (!m) continue
       const bpr = Math.ceil(m.w / 8), total = bpr * m.h
       const ox = Math.max(0, Math.round((el.w * dpi - m.w) / 2)), oy = Math.max(0, Math.round((el.h * dpi - m.h) / 2))

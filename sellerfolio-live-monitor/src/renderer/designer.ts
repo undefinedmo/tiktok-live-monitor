@@ -14,7 +14,7 @@ import { labelCode } from '../core/labelCode'
 import {
   LAYOUT_SIZES, FONTS, DPI, SNAP_IN, PT_MIN, PT_MAX, ELEMENT_CSS, FIT_MIN_PT, FIT_STEP_PT, snapIn, elementText, normalizeLayout,
   migrateFromTemplate, layoutBody, layoutNeedsHtml, zplCanDraw, qrAdvice, hasNonZplText, monoFromRgba, logoDots, newText, newQr,
-  newLogo, lineHeightIn, parseItemNumber, extractCustom, isLayoutSize,
+  newLogo, lineHeightIn, parseItemNumber, extractCustom, isLayoutSize, monoIsCurrent, boxDots, fitImageBytes, MAX_LOGO_DATAURL_BYTES,
   type LabelLayout, type LayoutElement, type TextElement, type QrElement, type LogoElement, type LayoutSize, type TextSource, type QrMode, type TextAlign,
 } from '../core/labelLayout'
 import { DEFAULT_TEMPLATE, type LabelTemplate, type LabelData } from '../electron/label'
@@ -122,6 +122,8 @@ function commit(): void {
   labelTemplate = { ...labelTemplate, labelSize: draft.size, layout: clone(draft) }
   saveTemplate()
   renderDesigner()
+  // A size change clamps logo boxes and a resize changes them: the printer bitmaps must follow.
+  syncMonos()
 }
 
 // ── tiny DOM helpers ─────────────────────────────────────────────────────────────
@@ -463,14 +465,19 @@ function logoProps(sel: LogoElement, pb: HTMLElement, zpl: boolean, size: { widt
   pb.appendChild(choose)
   if (logoError) pb.appendChild(warn(logoError))
   if (!sel.dataUrl) pb.appendChild(sub('PNG, JPG, GIF, WebP or SVG. A black logo on white prints best.'))
-  pb.appendChild(field('Width, in', inchInput('logow', sel.w, 0.1, size.widthIn, (v) => { sel.w = v; void refreshMono(sel.id) })))
-  pb.appendChild(field('Height, in', inchInput('logoh', sel.h, 0.1, size.heightIn, (v) => { sel.h = v; void refreshMono(sel.id) })))
+  if (logoNotice[sel.id]) pb.appendChild(warn(logoNotice[sel.id]!))
+  // commit() rebuilds the printer bitmap for the new box (syncMonos).
+  pb.appendChild(field('Width, in', inchInput('logow', sel.w, 0.1, size.widthIn, (v) => { sel.w = v })))
+  pb.appendChild(field('Height, in', inchInput('logoh', sel.h, 0.1, size.heightIn, (v) => { sel.h = v })))
   if (zpl) for (const n of zplCanDraw(sel).notes) pb.appendChild(warn(n))
 }
 
 // ── logos ────────────────────────────────────────────────────────────────────────
 
 let logoError = ''
+/** Per logo: a note shown under it when its image had to be made smaller. */
+const logoNotice: Record<string, string> = {}
+const SHRUNK_NOTE = 'This image was large, so it was saved smaller. Big images can stop tags printing through the driver. Print a test tag to check it.'
 const MAX_LOGO_BYTES = 5 * 1024 * 1024
 const MAX_LOGO_PX = 600 // kept image's longest side: plenty for 203 dpi, small in localStorage
 
@@ -481,6 +488,29 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     img.onerror = () => reject(new Error('That file could not be read as an image.'))
     img.src = src
   })
+}
+
+/**
+ * The image as a data: URL no heavier than MAX_LOGO_DATAURL_BYTES (the driver path prints from a
+ * data: URL, which Chromium caps at 2 MB). PNG first — flat logos stay crisp and small — stepping
+ * down in size; a noisy image that is still too heavy as a small PNG is tried as JPEG on white
+ * (the tag is white anyway), again stepping down. `shrunk` = it is smaller or lossier than chosen.
+ */
+function encodeLogo(img: HTMLImageElement): { dataUrl: string; shrunk: boolean } {
+  const iw = img.naturalWidth || 300, ih = img.naturalHeight || 300
+  const k = Math.min(1, MAX_LOGO_PX / Math.max(iw, ih))
+  const w = Math.max(1, Math.round(iw * k)), hh = Math.max(1, Math.round(ih * k))
+  const draw = (cw: number, ch: number, white: boolean): HTMLCanvasElement => {
+    const c = document.createElement('canvas'); c.width = cw; c.height = ch
+    const ctx = c.getContext('2d')
+    if (ctx) { if (white) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cw, ch) } ctx.drawImage(img, 0, 0, cw, ch) }
+    return c
+  }
+  const png = fitImageBytes(w, hh, (cw, ch) => draw(cw, ch, false).toDataURL('image/png'))
+  if (png.fits) return { dataUrl: png.dataUrl, shrunk: png.shrunk }
+  const jpg = fitImageBytes(w, hh, (cw, ch) => draw(cw, ch, true).toDataURL('image/jpeg', 0.85), MAX_LOGO_DATAURL_BYTES, 60)
+  if (jpg.fits) return { dataUrl: jpg.dataUrl, shrunk: true }
+  throw new Error('That image is too detailed to print reliably. Choose a simpler logo.')
 }
 
 /** The 1-bit printer bitmap of a logo at its current box size (ZPL ^GF). */
@@ -496,10 +526,43 @@ async function monoFor(el: LogoElement): Promise<LogoElement['mono']> {
   return monoFromRgba(ctx.getImageData(0, 0, w, hh).data, w, hh, DPI)
 }
 
-async function refreshMono(id: string): Promise<void> {
-  const el = draft.elements.find((e) => e.id === id)
-  if (el?.type !== 'logo' || !el.dataUrl) return
-  try { el.mono = await monoFor(el); commit() } catch { /* keep the old bitmap */ }
+/** What a logo's bitmap is being built for; each key is tried once (no rebuild loop). */
+const monoKey = (el: LogoElement): string => { const b = boxDots(el); return `${el.id}|${b.w}x${b.h}|${el.dataUrl?.length ?? 0}` }
+const monoTried = new Set<string>()
+
+/** Rebuild the printer bitmap of every logo whose box it no longer matches (a label-size change
+ *  clamped the box, or it was resized). Async, best-effort: a rebuild that lands after the box
+ *  changed again is dropped and the next commit tries the new box. layoutZpl also scales a stale
+ *  bitmap down to its box, so a missed rebuild can never print over the text. */
+function syncMonos(): void {
+  for (const el of draft.elements) {
+    if (el.type !== 'logo' || !el.dataUrl || monoIsCurrent(el)) continue
+    const key = monoKey(el)
+    if (monoTried.has(key)) continue
+    monoTried.add(key)
+    void monoFor(el).then((mono) => {
+      const now = draft.elements.find((e) => e.id === el.id)
+      if (now?.type !== 'logo' || monoKey(now) !== key || !mono) return
+      now.mono = mono
+      commit()
+    }).catch(() => { /* keep the old bitmap; layoutZpl fits it to the box */ })
+  }
+}
+
+/** Layouts saved before the byte cap: re-encode any logo heavier than it, once, at startup. */
+async function shrinkSavedLogos(): Promise<void> {
+  let changed = false
+  for (const el of draft.elements) {
+    if (el.type !== 'logo' || !el.dataUrl || el.dataUrl.length <= MAX_LOGO_DATAURL_BYTES) continue
+    try {
+      const out = encodeLogo(await loadImage(el.dataUrl))
+      el.dataUrl = out.dataUrl
+      el.mono = await monoFor(el)
+      logoNotice[el.id] = SHRUNK_NOTE
+      changed = true
+    } catch { /* leave it; the operator can choose the image again */ }
+  }
+  if (changed) commit()
 }
 
 function chooseLogo(id: string): void {
@@ -521,10 +584,9 @@ function chooseLogo(id: string): void {
       })
       const img = await loadImage(raw)
       const iw = img.naturalWidth || 300, ih = img.naturalHeight || 300
-      const k = Math.min(1, MAX_LOGO_PX / Math.max(iw, ih))
-      const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(iw * k)); c.height = Math.max(1, Math.round(ih * k))
-      c.getContext('2d')?.drawImage(img, 0, 0, c.width, c.height)
-      el.dataUrl = c.toDataURL('image/png')
+      const out = encodeLogo(img)
+      el.dataUrl = out.dataUrl
+      if (out.shrunk) logoNotice[el.id] = SHRUNK_NOTE; else delete logoNotice[el.id]
       // Keep the image's shape: same width, height from its aspect.
       const L = LAYOUT_SIZES[draft.size]
       el.h = Math.min(L.heightIn - el.y, Math.max(0.1, snapIn((el.w * ih) / iw)))
@@ -837,4 +899,6 @@ export function initDesigner(): void {
   // The raw-ZPL switch is the source of truth; repaint whenever it changes (banner or elsewhere).
   document.getElementById('rawZpl')?.addEventListener('change', () => setTimeout(renderDesigner, 0))
   setTab('designer')
+  // Saved layouts from before the logo fixes: shrink heavy images, rebuild stale bitmaps.
+  if (labelTemplate.layout) { void shrinkSavedLogos(); syncMonos() }
 }

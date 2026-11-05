@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   LAYOUT_SIZES, DPI, snapIn, elementText, placeText, qrPayload, qrFit, qrAdvice, normalizeLayout, migrateFromTemplate,
   defaultLayout, zplCanDraw, layoutHtml, layoutZpl, layoutNeedsHtml, monoFromRgba, logoDots, newText, newQr, newLogo,
+  fitMono, monoIsCurrent, fitImageBytes, MAX_LOGO_DATAURL_BYTES, MIN_LOGO_PX, type MonoBitmap,
   type LabelLayout, type LayoutData, type TextElement, type QrElement, type LogoElement,
 } from '../labelLayout'
 import { LABEL_SIZES, DEFAULT_TEMPLATE, basePt, labelHtml, type LabelTemplate } from '../../electron/label'
@@ -326,6 +327,95 @@ describe('logos', () => {
     const fo = /\^FO(\d+),(\d+)\^GFA/.exec(z)!
     expect(+fo[1]!).toBe(Math.round(0.5 * DPI) + Math.round((0.5 * DPI - 16) / 2))
     expect(layoutHtml(l, sale, rx)).toContain('src="data:image/png;base64,AA"')
+  })
+})
+
+/** A w×h bitmap, black where `dark(x, y)`. */
+const bitmap = (w: number, h: number, dark: (x: number, y: number) => boolean = () => true): MonoBitmap => {
+  const px: number[] = []
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) px.push(...(dark(x, y) ? [0, 0, 0, 255] : [255, 255, 255, 255]))
+  return monoFromRgba(px, w, h)
+}
+/** The ^GF fields of a ZPL string: where, and the bitmap's size in dots. */
+const gfs = (z: string) => [...z.matchAll(/\^FO(\d+),(\d+)\^GFA,(\d+),\d+,(\d+),([0-9A-F]*)\^FS/g)].map((m) => {
+  const bpr = +m[4]!, total = +m[3]!
+  return { x: +m[1]!, y: +m[2]!, bpr, rows: total / bpr, hex: m[5]! }
+})
+
+describe('logo bitmap never outgrows its box (size change / resize)', () => {
+  it('fitMono returns a bitmap that fits unchanged (same object ⇒ byte-identical ZPL)', () => {
+    const m = bitmap(16, 2)
+    expect(fitMono(m, 16, 2)).toBe(m)
+    expect(fitMono(m, 100, 100)).toBe(m)
+  })
+  it('fitMono scales a too-big bitmap down, aspect kept, pixels sampled', () => {
+    const m = bitmap(16, 16, (x) => x < 8) // left half black
+    const f = fitMono(m, 8, 100)!
+    expect([f.w, f.h, f.dpi]).toEqual([8, 8, 203])
+    expect(f.hex).toBe('F0'.repeat(8))
+    expect(f.hex.length).toBe(Math.ceil(f.w / 8) * 2 * f.h)
+    expect(fitMono(m, 0, 10)).toBeNull()
+  })
+  it('a 4×6 logo printed after switching to 2×1 stays inside its clamped box (the review case)', () => {
+    // 2 in square logo on 4x6: a 406-dot bitmap. Switching to 2x1 clamps the box to 2 × 1 in.
+    const big = newLogo({ id: 'g', x: 0, y: 0, w: 2, h: 2, dataUrl: 'data:image/png;base64,AA', mono: bitmap(406, 406) })
+    const l = normalizeLayout({ version: 1, size: '2x1', elements: [big, text({ id: 't', src: 'lot', x: 0, y: 0.5, w: 2, pt: 20 })] })!
+    const g = l.elements[0] as LogoElement
+    expect([g.w, g.h]).toEqual([2, 1])
+    expect(g.mono!.w).toBe(406) // the stale bitmap survives normalising…
+    expect(monoIsCurrent(g)).toBe(false) // …and the designer sees it must rebuild it
+    const [gf] = gfs(layoutZpl(l, sale, rx))
+    expect(gf).toBeDefined()
+    // …but ZPL never prints it bigger than the box (203 dots tall on 1 in stock).
+    expect(gf!.rows).toBeLessThanOrEqual(Math.round(1 * DPI))
+    expect(gf!.bpr * 8).toBeLessThanOrEqual(Math.ceil((2 * DPI) / 8) * 8)
+    expect(gf!.y + gf!.rows).toBeLessThanOrEqual(Math.round(1 * DPI))
+    expect(gf!.hex.length).toBe(gf!.bpr * 2 * gf!.rows)
+  })
+  it('a bitmap that cannot fit at all is left off rather than overflowing', () => {
+    // A hand-edited box below one dot: nothing to draw into.
+    const g = newLogo({ id: 'g', w: 0.001, h: 0.001, dataUrl: 'data:image/png;base64,AA', mono: bitmap(8, 8) })
+    const z = layoutZpl({ version: 1, size: '2x1', elements: [g] }, sale, rx)
+    for (const gf of gfs(z)) expect(gf.rows).toBeLessThanOrEqual(1)
+  })
+  it('monoIsCurrent: fresh contain-fit bitmaps are current; stale, oversize or other-dpi ones are not', () => {
+    const el = newLogo({ w: 1, h: 0.5 }) // 203 × 102 dots
+    expect(monoIsCurrent({ ...el, mono: bitmap(...(Object.values(logoDots(el, 400, 100)) as [number, number])) })).toBe(true)
+    expect(monoIsCurrent({ ...el, mono: bitmap(102, 102) })).toBe(true) // fills the height
+    expect(monoIsCurrent({ ...el, mono: bitmap(50, 50) })).toBe(false) // made for a smaller box
+    expect(monoIsCurrent({ ...el, mono: bitmap(406, 102) })).toBe(false) // wider than the box
+    expect(monoIsCurrent({ ...el, mono: { ...bitmap(203, 51), dpi: 300 } })).toBe(false)
+    expect(monoIsCurrent(el)).toBe(false)
+  })
+})
+
+describe('logo image byte cap (driver path loads the label as a data: URL)', () => {
+  // A fake encoder: one byte per pixel, so weight follows area like a noisy PNG.
+  const enc = (w: number, h: number) => 'x'.repeat(w * h)
+  it('an image under the cap is kept as is', () => {
+    const r = fitImageBytes(300, 200, enc)
+    expect(r).toMatchObject({ w: 300, h: 200, shrunk: false, fits: true })
+  })
+  it('a heavy image steps down until it fits, aspect kept', () => {
+    const r = fitImageBytes(600, 600, enc) // 360 KB
+    expect(r.fits).toBe(true)
+    expect(r.shrunk).toBe(true)
+    expect(r.dataUrl.length).toBeLessThanOrEqual(MAX_LOGO_DATAURL_BYTES)
+    expect(r.w).toBe(r.h)
+    expect(r.w).toBeLessThan(600)
+  })
+  it('stops at the floor and says it does not fit (the caller then tries JPEG / refuses)', () => {
+    const r = fitImageBytes(600, 300, () => 'x'.repeat(MAX_LOGO_DATAURL_BYTES + 1))
+    expect(r.fits).toBe(false)
+    expect(Math.max(r.w, r.h)).toBe(MIN_LOGO_PX)
+  })
+  it('the cap leaves the driver URL well under Chromium’s 2 MB even percent-encoded, with four logos', () => {
+    const ABC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    const head = 'data:image/png;base64,'
+    const b64 = head + ABC.repeat(Math.floor((MAX_LOGO_DATAURL_BYTES - head.length) / 64))
+    expect(4 * encodeURIComponent(b64).length).toBeLessThan(2 * 1024 * 1024)
+    // Even a pathological image of nothing but '+' and '/' (×3 encoded) fits on its own.
+    expect(encodeURIComponent(head + '+/'.repeat(MAX_LOGO_DATAURL_BYTES / 2 - 12)).length).toBeLessThan(2 * 1024 * 1024)
   })
 })
 
