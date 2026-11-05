@@ -11,6 +11,7 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSyn
 import { dirname, join } from 'node:path'
 import { JournalWriter } from '../core/journalWriter'
 import { backoffMs, batchBody, orderJournalFiles, takeLines, verdictFor } from '../core/journalSync'
+import { StoreIndex, emptyStoreResult, type StoreQuery, type StoreResult } from '../core/storeIndex'
 
 const FLUSH_MS = 250 // the most a crash can lose
 const FLUSH_AT = 200 // ...or sooner, in a burst
@@ -133,16 +134,28 @@ async function tick(): Promise<void> {
   if (sync === cfg && !halted) schedule(ok ? IDLE_MS : backoffMs(failures))
 }
 
+// ── lane B: the show store ────────────────────────────────────────────────────
+// An in-memory index of this show's journal (core/storeIndex.ts), answering the searches the
+// viewer runs. Fed every record as it is queued, so a query never waits on the disk.
+// SCAFFOLD STUB: StoreIndex ingests nothing and answers empty.
+const store = new StoreIndex()
+
 type Msg =
   | { kind: 'rec'; file: string; line: string }
   | { kind: 'flush'; id: number }
   | { kind: 'sync-config'; config: SyncConfig | null }
   | { kind: 'sync-now' }
+  | { kind: 'store-query'; id: number; query: StoreQuery }
 
 parentPort?.on('message', (m: Msg) => {
   if (m.kind === 'rec') {
     writer.add(m.file, m.line)
+    try { store.ingest(m.line) } catch { /* the store is best-effort; the journal write is not */ }
     if (writer.size >= FLUSH_AT) flush()
+  } else if (m.kind === 'store-query') {
+    let result: StoreResult
+    try { result = store.query(m.query) } catch { result = emptyStoreResult(m.query) }
+    parentPort?.postMessage({ kind: 'store-result', id: m.id, result })
   } else if (m.kind === 'flush') {
     const r = flush()
     parentPort?.postMessage({ kind: 'flushed', id: m.id, written: r.written, failed: r.failed })

@@ -25,6 +25,10 @@ import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTem
 import { labelZpl, labelNeedsHtml } from './zplLabel'
 import { sendRawToPrinter, warmRawPrinter, probeRawPrinter, describePrinterStatus, isBlockingStatus } from './rawPrint'
 import type { LiveEvent, StatusEvent, PinState } from '../core/types'
+// live-ui lanes (see docs/live-ui/LANES.md): each lane owns its own module, wired below
+import { registerControlIpc, attachControlToViewer } from './controlIpc' // lane A
+import { registerStoreIpc } from './storeIpc' // lane B
+import { registerBuyerHistoryIpc, BUYER_HISTORY_PATH } from './buyerHistory' // lane D
 
 const DASHBOARD = 'https://shop.tiktok.com/streamer/live/event/dashboard'
 // Set TT_START_URL to log in via Seller Center (https://seller-us.tiktok.com/) —
@@ -196,6 +200,7 @@ function createViewer() {
       if (message.startsWith('[render]')) console.log('[viewer]', message)
     })
   }
+  try { attachControlToViewer(viewer) } catch { /* lane A: zoom + F14 are never worth a failed start */ }
   void viewer.loadFile(join(__dirname, 'index.html'))
   // The dashboard IS the app. When it closes: clear the ref (so late WS/poll
   // events stop firing at a destroyed webContents) and quit so the hidden
@@ -884,6 +889,22 @@ ipcMain.handle('sf-connect:disconnect', () => {
   return syncView()
 })
 
+// ── live-ui lanes: IPC for the new UI (docs/live-ui/LANES.md) ────────────────
+// Scaffold-owned block: lanes change their own modules, not these lines. Channels:
+//   lane A controlIpc.ts   ctl:zoom-get · ctl:zoom-set · event ctl:key
+//   lane B storeIpc.ts     store:search-sales · store:search-chat · store:failed-payments
+//   lane D buyerHistory.ts buyer:lookup · event buyer:counts
+// None of these is on the print path; all are async and best-effort.
+registerControlIpc({ viewer: () => viewer, send: viewerSend })
+registerStoreIpc()
+registerBuyerHistoryIpc({
+  url: () => sfUrl(sf.baseUrl, BUYER_HISTORY_PATH),
+  headers: () => (savedTokenKind(sf.token) === 'computer' ? sfHeaders(sf.token) : null),
+  show: () => pollRoomId,
+  send: viewerSend,
+  log: flog,
+})
+
 // ── Label printing (mirrors the desktop app: webContents.print of HTML) ──────
 const PRINTER_FILE = join(app.getPath('userData'), 'tt-printer.json')
 interface PrinterConfig { printer: string; rawZpl: boolean }
@@ -1079,7 +1100,8 @@ ipcMain.handle('print-label', (_e, args: { labelData: LabelData; printerName: st
     // "#42", like every other record — the label data carries the bare number.
     record('print', { lot: item ? `#${item}` : undefined, buyer: args?.labelData?.buyer, productName: args?.labelData?.productName, price: args?.labelData?.price, code: args?.labelData?.code, ok: r.success, error: r.error, queuedAt, spoolMs: done - queuedAt, dry: DRY_PRINT || undefined })
     saleSeenAt.delete(item)
-    return r
+    // spoolMs: queue → spooler, the number the Print log shows ("#80 tag sent in 50 ms").
+    return { ...r, spoolMs: done - queuedAt }
   })
 })
 

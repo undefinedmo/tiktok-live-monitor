@@ -42,3 +42,24 @@ contextBridge.exposeInMainWorld('chatAPI', {
   send: (text: string) => ipcRenderer.invoke('tt-chat-send', text),
   onSent: (cb: (r: unknown) => void) => ipcRenderer.on('tt-chat-sent', (_e, r) => cb(r)),
 })
+
+// ── live-ui lanes (docs/live-ui/LANES.md) — scaffold-owned; the handlers are in each lane's module.
+// Lane A, electron/controlIpc.ts: Text size (window zoom, per computer) and hardware keys (F14).
+contextBridge.exposeInMainWorld('controlAPI', {
+  getZoom: () => ipcRenderer.invoke('ctl:zoom-get'),
+  setZoom: (factor: number) => ipcRenderer.invoke('ctl:zoom-set', factor),
+  onKey: (cb: (key: string) => void) => ipcRenderer.on('ctl:key', (_e, key) => cb(key)),
+})
+
+// Lane B, electron/storeIpc.ts → journal worker's core/storeIndex.ts.
+contextBridge.exposeInMainWorld('storeAPI', {
+  searchSales: (text: string, limit?: number) => ipcRenderer.invoke('store:search-sales', { text, limit }),
+  searchChat: (text: string, limit?: number) => ipcRenderer.invoke('store:search-chat', { text, limit }),
+  failedPayments: (limit?: number) => ipcRenderer.invoke('store:failed-payments', { limit }),
+})
+
+// Lane D, electron/buyerHistory.ts → hq POST /api/desktop/buyer-history.
+contextBridge.exposeInMainWorld('buyerAPI', {
+  lookup: (ids: string[]) => ipcRenderer.invoke('buyer:lookup', ids),
+  onCounts: (cb: (p: unknown) => void) => ipcRenderer.on('buyer:counts', (_e, p) => cb(p)),
+})

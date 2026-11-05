@@ -6,7 +6,16 @@ import { PrintDedup } from '../core/printDedup'
 import { SaleSeed } from '../core/saleSeed'
 import { labelCode } from '../core/labelCode'
 import { parseConnectToken, connectScreen } from '../core/sfConnect'
+import type { StoreResult } from '../core/storeIndex'
+// live-ui lanes (docs/live-ui/LANES.md): each module is owned by one lane; this file only calls them.
+import { initShell, onScreen, type Screen } from './shell' // lane A
+import { initSalesView, onSales } from './salesView' // lane B
+import { initChatDesk, onChat, onChatScreenShown } from './chatDesk' // lane C
+import { initBuyerHistory } from './buyerHistory' // lane D
+import { initPrintLog, onPrintResult } from './printLog' // lane E
+import { initDesigner } from './designer' // lane F
 
+// ┌── lane F: label template types (moves to designer.ts) ─────────────────────
 interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string; title?: string; code?: string }
 type LabelField = 'itemNumber' | 'custom' | 'buyer' | 'productName' | 'price'
 interface LabelTemplate {
@@ -19,6 +28,7 @@ interface LabelTemplate {
   scale?: Partial<Record<LabelField, number>>
   qr?: boolean
 }
+// └── end lane F ────────────────────────────────────────────────────────────────
 declare global {
   interface Window {
     ttLive: { onEvent: (cb: (ev: LiveEvent) => void) => void }
@@ -26,7 +36,8 @@ declare global {
       getPrinters: () => Promise<{ printers: { name: string; displayName: string; isDefault: boolean }[]; saved: string; rawZpl: boolean; dry?: boolean }>
       savePrinter: (name: string) => Promise<boolean>
       setRawZpl: (enabled: boolean) => Promise<boolean>
-      print: (labelData: LabelData, printerName: string, template: LabelTemplate) => Promise<{ success: boolean; error?: string }>
+      // spoolMs: queue → spooler, measured in main (lane E's Print log shows it)
+      print: (labelData: LabelData, printerName: string, template: LabelTemplate) => Promise<{ success: boolean; error?: string; spoolMs?: number }>
     }
     updateAPI?: {
       onReady: (cb: (info: { version: string }) => void) => void
@@ -53,6 +64,24 @@ declare global {
       openSettings?: () => Promise<{ ok: boolean }>
       onState: (cb: (s: SfSyncView) => void) => void
     }
+    // ── live-ui bridges (preload-viewer.ts; handlers in electron/controlIpc.ts, storeIpc.ts, buyerHistory.ts)
+    /** lane A: window zoom (1 = 100%) for Text size, and hardware keys ('F14' = Print last). */
+    controlAPI?: {
+      getZoom: () => Promise<number>
+      setZoom: (factor: number) => Promise<number>
+      onKey: (cb: (key: string) => void) => void
+    }
+    /** lane B: the show store in the journal worker. Resolves empty (never rejects) when there is none. */
+    storeAPI?: {
+      searchSales: (text: string, limit?: number) => Promise<StoreResult>
+      searchChat: (text: string, limit?: number) => Promise<StoreResult>
+      failedPayments: (limit?: number) => Promise<StoreResult>
+    }
+    /** lane D: past-order counts by ttuid. lookup answers from main's cache now; onCounts gets fetched ones later. */
+    buyerAPI?: {
+      lookup: (ids: string[]) => Promise<{ counts: Record<string, number> }>
+      onCounts: (cb: (p: { counts: Record<string, number> }) => void) => void
+    }
   }
 }
 
@@ -75,6 +104,7 @@ function ago(ms: number): string {
   return `${Math.floor(s / 3600)}h`
 }
 
+// ┌── lane F: the saved label template (moves to designer.ts; printLabel reads labelTemplate) ──
 const DEFAULT_TEMPLATE: LabelTemplate = {
   labelSize: '2x1', itemNumber: true, buyer: true, productName: true, price: false,
   custom: { enabled: false, regex: '', flags: '' },
@@ -85,6 +115,7 @@ let labelTemplate: LabelTemplate = (() => {
   try { return { ...DEFAULT_TEMPLATE, ...JSON.parse(localStorage.getItem('tt-label-template') || '{}') } } catch { return DEFAULT_TEMPLATE }
 })()
 const saveTemplate = () => localStorage.setItem('tt-label-template', JSON.stringify(labelTemplate))
+// └── end lane F ────────────────────────────────────────────────────────────────
 
 // ── state ───────────────────────────────────────────────────────────────────
 let sessionStart: number | undefined // current_session.start_time (scheduled)
@@ -137,6 +168,9 @@ function renderStats() {
   }
 }
 
+// ┌── lane B: live sales feed (renderFeed + setupFeed move to salesView.ts) ────
+// allSales / provisionalSales / feedRows / provKeyOf STAY here: onAuctionClosed and the print
+// path use them. Lane B reads what it needs through onSales() / its own deps.
 // ── live sales feed (comp "bid feed") — paginated ───────────────────────────
 let allSales: Sale[] = []
 // Provisional rows from the fast close signals (pin/im), shown the instant an auction
@@ -219,7 +253,9 @@ function setupFeed() {
   $('feedPrev').addEventListener('click', () => { feedPage = Math.max(0, feedPage - 1); renderFeed() })
   $('feedNext').addEventListener('click', () => { feedPage += 1; renderFeed() })
 }
+// └── end lane B (feed) ─────────────────────────────────────────────────────────
 
+// ┌── lane C: live chat column (appendChat / appendOwnChat / setupChatInput move to chatDesk.ts)
 // ── live chat (decoded comments) ────────────────────────────────────────────
 const chatSeen = new Set<string>()
 // Chat-name hues, picked to hold 4.5:1 on the white chat column (the old set was tuned for a
@@ -308,7 +344,9 @@ function setupChatInput() {
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void send() } })
 }
 setupChatInput()
+// └── end lane C ────────────────────────────────────────────────────────────────
 
+// ┌── lane B: top buyers (renderTopBuyer moves to salesView.ts) ────────────────
 // ── top buyers (this show) ──────────────────────────────────────────────────
 // Ranked leaderboard for the live session. buyers is ev.topBuyers — already sorted
 // by spend desc and recomputed each sales poll — so this updates as sales land, and
@@ -342,6 +380,7 @@ function renderTopBuyer(buyers: BuyerAgg[]) {
     list.appendChild(row)
   })
 }
+// └── end lane B (top buyers) ───────────────────────────────────────────────────
 
 // ── products ────────────────────────────────────────────────────────────────
 function renderProductsTable() {
@@ -454,6 +493,7 @@ function fmtLeft(ms: number): string {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 }
 
+// ┌── lane B: payment issues (renderFailed moves to salesView.ts; source becomes storeAPI.failedPayments)
 // ── failed / expired payments ───────────────────────────────────────────────
 let failedSales: Sale[] = []
 function renderFailed() {
@@ -491,6 +531,7 @@ function renderFailed() {
     list.appendChild(row)
   }
 }
+// └── end lane B (payment issues) ───────────────────────────────────────────────
 
 // ── session elapsed ─────────────────────────────────────────────────────────
 function fmtClock(unixSec: number): string {
@@ -542,23 +583,14 @@ function loadStream(url: string) {
   flvCatchup = window.setInterval(() => { if (!video.paused) seekToLiveEdge(video, 2) }, 2000)
 }
 
-/** The stream light reports what is ACTUALLY running: VIDEO is green only while the player is
- *  genuinely playing, so an operator checking on the stream gets no reassuring light over nothing. */
-function renderStreamState() {
-  const v = document.getElementById('live') as HTMLVideoElement | null
-  const videoLive = !!v && !v.paused && !v.ended && v.readyState >= 2
-  const video = document.getElementById('sigVideo')
-  if (video) {
-    video.classList.toggle('off', !videoLive)
-    video.title = videoLive ? 'Playing the live stream' : 'No stream playing'
-  }
-}
+// (The VIDEO light and its renderStreamState() were removed in the live-ui build, owner decision 8.)
 
 // ── label printing ──────────────────────────────────────────────────────────
 let selectedPrinter = ''
 let autoPrint = false
 let feedWinsSeen = 0 // "won" feed rows observed this session (lets you confirm the observer catches wins even before flipping to feed mode)
 let lastPrintedNumber: number | null = null
+// ┌── lane E: the legacy print queue (printQueue + renderQueue go away; the Print log replaces them)
 const printQueue: { label: string; status: 'printing' | 'printed' | 'error' }[] = []
 
 function renderQueue() {
@@ -584,6 +616,7 @@ function renderQueue() {
     q.appendChild(row)
   }
 }
+// └── end lane E ────────────────────────────────────────────────────────────────
 
 /**
  * `register: true` records the lot in the print guard as though a source had claimed it.
@@ -615,8 +648,11 @@ async function printLabel(data: LabelData, { register = false }: { register?: bo
     entry.status = res.success ? 'printed' : 'error'
     const n = Number(data.itemNumber)
     if (res.success && Number.isFinite(n)) { lastPrintedNumber = n; updatePrintNext() }
-  } catch {
+    // lane E: the Print log — after the label is out, never before
+    try { onPrintResult({ data, ok: res.success, error: res.error, spoolMs: res.spoolMs, at: Date.now() }) } catch { /* UI only */ }
+  } catch (e) {
     entry.status = 'error'
+    try { onPrintResult({ data, ok: false, error: String((e as Error)?.message ?? e), at: Date.now() }) } catch { /* UI only */ }
   }
   renderQueue()
 }
@@ -873,6 +909,8 @@ window.updateAPI?.onReady((info) => {
   if (about) { about.className = 'ok-text'; about.textContent = `Update v${info.version} is downloaded — it installs when you close the app` }
 })
 
+// ┌── lane F: label settings — preview, sample, per-field sizes, saved patterns, setupSettings
+//     (moves to designer.ts; the regex tools move into #titleDrawer) ───────────────
 // ── label print preview ──────────────────────────────────────────────────────
 // Renders the REAL print HTML (labelHtml) for a representative sale, scaled up, so the
 // user sees exactly how the thermal label will print as they change the template.
@@ -1184,28 +1222,30 @@ function setupSettings() {
   document.getElementById('labelSettings')?.addEventListener('click', open)
   document.getElementById('labelSettingsFooter')?.addEventListener('click', open)
 }
+// └── end lane F ────────────────────────────────────────────────────────────────
 setupSettings()
 setupFeed()
 renderStats()
 $('feedCount').textContent = 'v' + __APP_VERSION__
 { const v = document.getElementById('aboutVersion'); if (v) v.textContent = __APP_VERSION__ }
 
-// -- screens: live monitor + label settings ----------------------------------
-let wantedScreen: 'monitor' | 'settings' = 'monitor'
+// -- screens: Show (monitor), Chat, Settings — behind the Connect gate --------
+let wantedScreen: Screen = 'monitor'
 // Set by the SellerFolio connection section below: true while this computer is not connected.
 // Shut until the first connection view arrives (the preload is there before this script runs), so
 // the Live screen never paints before main says whether it may; replay's first view opens it at once.
 let connectGate = !!window.sfSyncAPI
-function showScreen(want: 'monitor' | 'settings') {
+function showScreen(want: Screen) {
   wantedScreen = want
-  const s = connectGate ? 'connect' : want
-  $('monitorScreen').style.display = s === 'monitor' ? 'flex' : 'none'
-  const settings = document.getElementById('settingsScreen')
-  if (settings) settings.style.display = s === 'settings' ? 'flex' : 'none'
-  const connect = document.getElementById('connectScreen')
-  if (connect) connect.style.display = s === 'connect' ? 'flex' : 'none'
-  $('navMonitor').classList.toggle('active', s === 'monitor')
-  $('navMonitor').classList.toggle('disabled', connectGate)
+  const s: Screen | 'connect' = connectGate ? 'connect' : want
+  const show = (id: string, on: boolean) => { const e = document.getElementById(id); if (e) e.style.display = on ? 'flex' : 'none' }
+  show('monitorScreen', s === 'monitor')
+  show('chatScreen', s === 'chat')
+  show('settingsScreen', s === 'settings')
+  show('connectScreen', s === 'connect')
+  // The legacy rail icons (lane A replaces the rail; these lookups tolerate their absence).
+  document.getElementById('navMonitor')?.classList.toggle('active', s === 'monitor')
+  document.getElementById('navMonitor')?.classList.toggle('disabled', connectGate)
   document.getElementById('navSettings2')?.classList.toggle('active', s === 'settings')
   document.getElementById('navSettings2')?.classList.toggle('disabled', connectGate)
   // live status (connecting...) + room/viewers/elapsed only make sense on the Live Monitor
@@ -1213,16 +1253,33 @@ function showScreen(want: 'monitor' | 'settings') {
   if (meters) meters.style.display = s === 'monitor' ? 'flex' : 'none'
   const livePill = document.getElementById('livePill')
   if (livePill) livePill.style.display = s === 'monitor' ? 'flex' : 'none'
+  // lanes A + C: paint the rail; repaint the Chat screen when it opens. UI only, never fatal.
+  try { onScreen(s, connectGate) } catch (e) { console.error('[live-ui] shell.onScreen', e) }
+  if (s === 'chat') { try { onChatScreenShown() } catch (e) { console.error('[live-ui] chatDesk.onChatScreenShown', e) } }
 }
-$('navMonitor').addEventListener('click', () => { if (!connectGate) showScreen('monitor') })
+document.getElementById('navMonitor')?.addEventListener('click', () => { if (!connectGate) showScreen('monitor') })
 document.getElementById('navSettings2')?.addEventListener('click', () => { if (!connectGate) showScreen('settings') })
-renderStreamState()
-setInterval(renderStreamState, 1000)
+
+// ── live-ui lanes: start each module (inert stubs until the lane lands) ─────
+// Here, not earlier: showScreen and the state it reads exist from this point, so a lane may call
+// deps.showScreen() inside its init. Before the first showScreen(), so onScreen() sees an inited
+// shell. Each is wrapped: a lane failing to start must never stop this file reaching the event loop.
+for (const [name, init] of [
+  ['shell', () => initShell({ showScreen: (s) => showScreen(s), print: (d) => void printLabel(d) })],
+  ['salesView', () => initSalesView({ printSale })],
+  ['chatDesk', () => initChatDesk()],
+  ['buyerHistory', () => initBuyerHistory()],
+  ['printLog', () => initPrintLog()],
+  ['designer', () => initDesigner()],
+] as [string, () => void][]) {
+  try { init() } catch (e) { console.error(`[live-ui] ${name} failed to start`, e) }
+}
+
 // Deep link, so a screen can be opened (and screenshotted) without a click. Accepts the query
 // form too, because a fragment does not always survive a headless capture.
 {
   const want = location.hash.replace('#', '') || new URLSearchParams(location.search).get('screen')
-  showScreen(want === 'settings' ? 'settings' : 'monitor') // also applies the initial gate
+  showScreen(want === 'settings' || want === 'chat' ? want : 'monitor') // also applies the initial gate
 }
 document.getElementById('diagBtn')?.addEventListener('click', () => void window.diagAPI?.open())
 
@@ -1550,6 +1607,8 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       if (!salesAuthoritative) stats.sales = String(ev.totalSales)
       renderStats()
       $('feedCount').title = `${ev.totalSales} sales · $${(ev.totalCents / 100).toFixed(0)}`
+      // lane B (+ D's badges through it): last, after every print above has been dispatched.
+      try { onSales(ev, freshSales) } catch (e) { console.error('[live-ui] salesView.onSales', e) }
       break
     }
     case 'stream':
@@ -1564,6 +1623,8 @@ window.ttLive.onEvent((ev: LiveEvent) => {
       break
     case 'chat':
       appendChat(ev.items)
+      // lane C: questions, wishes, the asking panel and the Chat screen
+      try { onChat(ev.items) } catch (e) { console.error('[live-ui] chatDesk.onChat', e) }
       break
     case 'watchdog':
       renderWatchdog(ev.alerts)

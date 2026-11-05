@@ -16,6 +16,7 @@ import { dirname, join } from 'node:path'
 import * as nodeFs from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { buildJournalLine, journalFileName } from '../core/journalLine'
+import { emptyStoreResult, type StoreQuery, type StoreResult } from '../core/storeIndex'
 
 interface Context { room?: string; session?: string; sessionName?: string }
 
@@ -34,6 +35,9 @@ let syncConfig: { endpoint: string; token: string } | null = null
 let onSync: (state: string, detail: string) => void = () => {}
 const waiters = new Map<number, (ok: boolean) => void>()
 let flushSeq = 0
+// lane B: store queries in flight (queryStore → worker 'store-query' → 'store-result')
+const storeWaiters = new Map<number, (r: StoreResult | null) => void>()
+let storeSeq = 0
 
 const MAX_RESTARTS = 3
 
@@ -41,8 +45,9 @@ function spawn(): void {
   try {
     const w = new Worker(source, { eval: true })
     w.unref() // the journal must never be what keeps the app from quitting
-    w.on('message', (m: { kind: string; id?: number; failed?: number; message?: string; state?: string; detail?: string }) => {
+    w.on('message', (m: { kind: string; id?: number; failed?: number; message?: string; state?: string; detail?: string; result?: StoreResult }) => {
       if (m.kind === 'flushed' && m.id !== undefined) { waiters.get(m.id)?.(!m.failed); waiters.delete(m.id) }
+      else if (m.kind === 'store-result' && m.id !== undefined) { storeWaiters.get(m.id)?.(m.result ?? null); storeWaiters.delete(m.id) }
       else if (m.kind === 'sync') { report(`[journal] sync ${m.state}${m.detail ? ` — ${m.detail}` : ''}`); onSync(m.state ?? '', m.detail ?? '') }
       else if (m.kind === 'error') report(`[journal] ${m.message ?? 'write error'}`)
       else if (m.kind === 'recovered') report('[journal] writes recovered')
@@ -53,6 +58,8 @@ function spawn(): void {
       worker = null
       for (const done of waiters.values()) done(false)
       waiters.clear()
+      for (const done of storeWaiters.values()) done(null)
+      storeWaiters.clear()
       if (restarts < MAX_RESTARTS) {
         restarts++
         report(`[journal] worker exited (${code}) — restarting (${restarts}/${MAX_RESTARTS})`)
@@ -187,6 +194,22 @@ export function flushJournal(timeoutMs = 1500): Promise<boolean> {
     const timer = setTimeout(() => { waiters.delete(id); resolve(false) }, timeoutMs)
     waiters.set(id, (ok) => { clearTimeout(timer); resolve(ok) })
     try { w.postMessage({ kind: 'flush', id }) } catch { clearTimeout(timer); waiters.delete(id); resolve(false) }
+  })
+}
+
+/**
+ * LANE B — ask the worker's show store (core/storeIndex.ts). Never blocks the calling thread and
+ * never rejects: no worker, a timeout or a dead worker all resolve to an empty result of the
+ * right kind.
+ */
+export function queryStore(query: StoreQuery, timeoutMs = 1500): Promise<StoreResult> {
+  const w = worker
+  if (!w) return Promise.resolve(emptyStoreResult(query))
+  return new Promise<StoreResult>((resolve) => {
+    const id = ++storeSeq
+    const timer = setTimeout(() => { storeWaiters.delete(id); resolve(emptyStoreResult(query)) }, timeoutMs)
+    storeWaiters.set(id, (r) => { clearTimeout(timer); resolve(r ?? emptyStoreResult(query)) })
+    try { w.postMessage({ kind: 'store-query', id, query }) } catch { clearTimeout(timer); storeWaiters.delete(id); resolve(emptyStoreResult(query)) }
   })
 }
 

@@ -316,12 +316,32 @@
       .sm-nm{font-weight:600;} .sm-meta{color:var(--ink-3);font-size:11px;}
       .sm-right{margin-left:auto;text-align:right;white-space:nowrap;}
       .sm-synced{color:var(--gain);font-size:11px;} .sm-empty{padding:20px 16px;color:var(--ink-3);}
+
+      /* ══ live-ui build (docs/live-ui/LANES.md) ═══════════════════════════════════
+         Scaffold base: the Chat screen is a sibling of #monitorScreen; showScreen() sets display:flex. */
+      #chatScreen{flex:1;display:none;min-width:0;min-height:0;}
+      /* Each lane appends ONLY inside its own block below. Shared classes stay above. */
+
+      /* lane A — shell: #navRail, #topControls, #textSizeSlot */
+
+      /* lane B — sales view: #feedSearch, feed rows, past-order badges on sale rows */
+
+      /* lane C — chat: #chatTools, question cards, #askingPanel, #chatScreen */
+
+      /* lane D — buyer history: .tag variants for the past-order badge (NEW / count) */
+
+      /* lane E — print log: #printLogPanel, #printLog */
+
+      /* lane F — settings tabs + label designer: #settingsTabs, #designerTab, #titleDrawer */
+
     </style>
   </head>
   <body>
     <div class="topbar">
       <div class="brand"><img src="./sf-logo.png" alt="SellerFolio" /><span>SellerFolio Live</span></div>
       <div class="livepill" id="livePill"><span id="status">connecting…</span><span class="sep">&middot;</span><span id="sessionName">—</span></div>
+      <!-- lane A (shell.ts): Arm switch, disabled "Run next" ("Coming soon"), Print last [F14] -->
+      <div id="topControls" class="top-controls"></div>
       <div style="flex:1;"></div>
       <div id="liveMeters" class="topmeters">
         <div class="topmeter">Room<b id="room">—</b></div>
@@ -339,12 +359,14 @@
     <div id="dryBanner">Dry run &mdash; the app is following the show, but no labels will print.</div>
 
     <div class="terminal-body">
-      <div class="rail">
+      <!-- lane A (shell.ts) owns the rail: Show / Chat / Settings with the Chat badge. The two legacy
+           icons below keep working until it does; renderer.ts tolerates their removal. -->
+      <nav id="navRail" class="rail" aria-label="Screens">
         <div class="navicon active" id="navMonitor" title="Live Monitor"><div class="navgrid"><i></i><i></i><i></i><i></i></div></div>
         <div style="flex:1;"></div>
         <div class="navicon" id="navSettings2" title="Label settings">⚙</div>
         <div style="height:8px;"></div>
-      </div>
+      </nav>
 
       <div id="monitorScreen" class="monitor">
         <div class="video-col">
@@ -378,13 +400,16 @@
               <span class="section-title">Live chat</span>
               <span class="livecount"><i></i><span id="chatViewers">--</span></span>
             </div>
+            <!-- lane C (chatDesk.ts): chat search + All chat / Questions toggle -->
+            <div id="chatTools" class="chat-tools"></div>
             <div id="chatList" class="sf-scroll">
               <span class="mono placeholder">waiting for comments...</span>
             </div>
             <!-- The composer is gone on purpose: we cannot post to the stream, and an input that
                  does nothing is worse than no input. Pulling buyer questions out of chat before
                  they scroll away is separate work. -->
-            <p class="chat-note">Reading only. Replies don&rsquo;t reach the stream.</p>
+            <!-- lane C rewrites this note ("Replies post as Host after approval.") -->
+            <p class="chat-note" id="chatNote">Reading only. Replies don&rsquo;t reach the stream.</p>
           </div>
         </div>
 
@@ -398,6 +423,8 @@
                 <span id="feedCount"></span>
               </span>
             </div>
+            <!-- lane B (salesView.ts): "Search all sales" box + "Last 10 sales. Search finds the rest." -->
+            <div id="feedSearch" class="feed-search"></div>
             <div id="bidFeed" class="sf-scroll bidfeed"><div class="mono placeholder" style="padding:18px 16px;">Waiting for sales...</div></div>
             <div class="visually-hidden">
               <select id="feedSize"><option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option></select>
@@ -411,6 +438,9 @@
             </div>
             <div id="failedList" class="sf-scroll"></div>
           </div>
+          <!-- lane C (chatDesk.ts): the "Buyers are asking for" panel. Hidden while empty (an empty
+               flex child still takes a gap); lane C un-hides it. -->
+          <div id="askingPanel" class="panel" hidden></div>
           <div class="panel pad">
             <div style="display:flex;align-items:center;justify-content:space-between;">
               <span class="eyebrow">Top buyers &middot; this show</span>
@@ -421,11 +451,15 @@
           <!-- "Current auction item" was deleted: it showed name, bid, bid count and ends-in, every
                one of which the lot overlay on the video already shows, and the overlay adds the high
                bidder besides. The overlay is also always visible, where this column scrolls. -->
-          <div class="panel">
+          <!-- lane E (printLog.ts): the Print log replaces the Thermal print queue. #printLog takes the
+               lines; the legacy #printQueue below stays (and keeps showing) until lane E removes it
+               together with renderQueue() in renderer.ts. -->
+          <div class="panel" id="printLogPanel">
             <div class="panel-head">
-              <span class="eyebrow">Thermal print queue</span>
+              <span class="eyebrow">Print log</span>
               <button id="labelSettingsFooter" class="chip amber">LABEL SETTINGS</button>
             </div>
+            <div id="printLog" class="print-log" role="log" aria-live="polite"></div>
             <div id="printQueue"><div class="mono placeholder" style="padding:14px 16px;">No labels yet</div></div>
             <div class="visually-hidden">
               <button id="printNext" disabled></button>
@@ -437,14 +471,12 @@
               <div id="products"></div>
             </div>
           </div>
-          <div class="panel pad capture">
-            <span class="eyebrow">Live stream</span>
-            <!-- This reports real state: the light is on only while the player is playing. The bars
-                 were fixed inline percentages — a frozen equaliser that read as live telemetry. -->
-            <span class="sig off" id="sigVideo"><i></i>VIDEO</span>
-          </div>
+          <!-- The "Live stream" VIDEO light was removed (live-ui build, owner decision 8). -->
         </div>
       </div>
+
+      <!-- ============ CHAT SCREEN (lane C, chatDesk.ts): Questions + Wishlist ============ -->
+      <div id="chatScreen" class="chat-screen"></div>
 
       <!-- ============ CONNECT SCREEN (shown until this computer is connected) ============ -->
       <div id="connectScreen">
@@ -474,9 +506,18 @@
       <!-- ============ SETTINGS SCREEN ============ -->
       <div id="settingsScreen">
         <span class="screen-title">Settings</span>
+        <!-- lane F (designer.ts): the tab buttons — Label designer / Printer & app -->
+        <div id="settingsTabs" class="set-tabs" role="tablist"></div>
         <div class="body sf-scroll" style="flex:1;min-height:0;overflow-y:auto;">
+          <!-- lane F: the label designer (canvas, layers, properties). Hidden until lane F shows it. -->
+          <div id="designerTab" class="designer-tab" role="tabpanel" hidden></div>
+          <!-- "Printer & app": the existing cards, unchanged. Lane F toggles this against #designerTab. -->
+          <div id="appTab" role="tabpanel">
           <div class="set-grid">
             <div class="set-col">
+
+              <!-- lane A (shell.ts): the Text size card (A− / A+ / Reset) -->
+              <div id="textSizeSlot"></div>
 
               <div class="modal-box set-card">
                 <h3>Printer</h3>
@@ -608,9 +649,14 @@
               </div>
             </div>
           </div>
+          </div><!-- /#appTab -->
         </div>
       </div>
     </div>
+    <!-- lane F (designer.ts): the "Text from the title" drawer. Lane F moves the Label layout card's
+         regex tools (presetSel, sampleTitle, sampleBuyer, advPattern…) in here; their ids stay. -->
+    <div id="titleDrawerScrim" class="title-drawer-scrim" hidden></div>
+    <div id="titleDrawer" class="title-drawer" role="dialog" aria-modal="true" aria-label="Text from the title" hidden></div>
     <!-- Static/demo mock data — runs ONLY when opened without the Electron
          preload (window.ttLive undefined). The live app is unaffected. -->
     <script>
