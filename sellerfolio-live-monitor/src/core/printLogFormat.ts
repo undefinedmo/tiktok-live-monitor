@@ -17,6 +17,8 @@ export const PRINT_LOG_FAILED_CAP = 50
 export interface PrintLogLabel {
   itemNumber?: string
   buyer?: string
+  /** The QR payload (core/labelCode). Only read to recognise the designer's sample label. */
+  code?: string
 }
 
 export interface PrintLogInput {
@@ -118,4 +120,40 @@ export function failedCount(list: readonly PrintLogEntry[]): number {
 /** "1 failed", "3 failed" — the head chip. */
 export function failedChipText(n: number): string {
   return `${n} failed`
+}
+
+// ── Print last [F14] ─────────────────────────────────────────────────────────
+//
+// Print last is the recovery button during a show: #81 jams or errors, the host presses F14,
+// and #81 must come out. So "last" is the last label we TRIED to print — set on every result,
+// ok or failed — never "the last one that printed OK" (that reprinted #80 and left #81 with no
+// label). Test / sample tags are not lots and never become "last": a mid-show "Print test tag"
+// must not turn F14 into a "#141 Sarah D." sample.
+
+/**
+ * The QR code on the designer's sample label (renderer/designer.ts sampleLabelData():
+ * labelCode('1732451642461557731')). The sample's title and buyer are editable by the
+ * operator, so they cannot identify it; this code is fixed. A test pins the two together.
+ */
+export const SAMPLE_LABEL_CODE = 'SF1:T:1732451642461557731'
+
+/** True for a designer / Settings test tag (the sample sale), which Print last must ignore. */
+export function isSampleLabel(d: PrintLogLabel | undefined): boolean {
+  return !!d && d.code === SAMPLE_LABEL_CODE
+}
+
+/**
+ * What Print last holds after a print result: the result's label (a copy) whether it printed
+ * or failed, unless it is a sample/test tag, which leaves `prev` untouched.
+ */
+export function nextPrintLast<T extends PrintLogLabel>(prev: T | undefined, r: { data: T; ok: boolean }): T | undefined {
+  if (!r || !r.data || isSampleLabel(r.data)) return prev
+  return { ...r.data }
+}
+
+/** The button text: "Print last #81", "Print last" when nothing (or no lot number) is held. */
+export function printLastText(d: PrintLogLabel | undefined): string {
+  const num = String(d?.itemNumber ?? '').trim().replace(/^#/, '')
+  if (!num) return 'Print last'
+  return `Print last #${num.length > 8 ? num.slice(0, 7) + '…' : num}`
 }

@@ -1,17 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import {
   PRINT_LOG_CAP,
+  SAMPLE_LABEL_CODE,
   clockTime,
   errorText,
   failedChipText,
   failedCount,
+  isSampleLabel,
   labelName,
+  nextPrintLast,
+  printLastText,
   printLogText,
   pushEntry,
   spoolText,
   toEntry,
   type PrintLogEntry,
 } from '../printLogFormat'
+import { labelCode } from '../labelCode'
 
 // Built from local components, so the assertion holds in any time zone.
 const local = (h: number, m: number, s: number) => new Date(2026, 10, 5, h, m, s).getTime()
@@ -123,5 +128,51 @@ describe('failed count', () => {
   it('counts failures and labels the chip', () => {
     expect(failedCount([{ seq: 1, at: 0, ok: false, time: '', text: '' }, { seq: 2, at: 0, ok: true, time: '', text: '' }])).toBe(1)
     expect(failedChipText(3)).toBe('3 failed')
+  })
+})
+
+describe('Print last [F14] — the last ATTEMPTED sale label', () => {
+  const sample = { itemNumber: '141', buyer: 'Sarah D.', code: SAMPLE_LABEL_CODE }
+
+  it('the sample code is the labelCode of the designer sample sku', () => {
+    expect(SAMPLE_LABEL_CODE).toBe(labelCode('1732451642461557731'))
+  })
+
+  it('ok #80 then FAILED #81 → Print last is #81 (the one with no label), not #80', () => {
+    let last = nextPrintLast(undefined, { data: { itemNumber: '80', buyer: 'Jo' }, ok: true })
+    last = nextPrintLast(last, { data: { itemNumber: '81', buyer: 'Ann' }, ok: false })
+    expect(last).toEqual({ itemNumber: '81', buyer: 'Ann' })
+    expect(printLastText(last)).toBe('Print last #81')
+  })
+
+  it('a failed first print is still held', () => {
+    expect(nextPrintLast(undefined, { data: { itemNumber: '5' }, ok: false })).toEqual({ itemNumber: '5' })
+  })
+
+  it('a test/sample print never replaces it, ok or failed', () => {
+    const real = { itemNumber: '81', buyer: 'Ann', code: 'SF1:T:999' }
+    expect(nextPrintLast(real, { data: sample, ok: true })).toBe(real)
+    expect(nextPrintLast(real, { data: sample, ok: false })).toBe(real)
+    expect(nextPrintLast(undefined, { data: sample, ok: true })).toBeUndefined()
+  })
+
+  it('a sample with an edited title/buyer is still recognised by its code', () => {
+    expect(isSampleLabel({ itemNumber: '81', buyer: 'Ann', code: SAMPLE_LABEL_CODE })).toBe(true)
+    expect(isSampleLabel({ itemNumber: '141', buyer: 'Sarah D.' })).toBe(false)
+    expect(isSampleLabel(undefined)).toBe(false)
+  })
+
+  it('holds a copy, not the caller\'s object', () => {
+    const d = { itemNumber: '7' }
+    const last = nextPrintLast(undefined, { data: d, ok: true })
+    d.itemNumber = '8'
+    expect(last?.itemNumber).toBe('7')
+  })
+
+  it('button text', () => {
+    expect(printLastText(undefined)).toBe('Print last')
+    expect(printLastText({ itemNumber: '' })).toBe('Print last')
+    expect(printLastText({ itemNumber: '#81' })).toBe('Print last #81')
+    expect(printLastText({ itemNumber: '1234567890' })).toBe('Print last #1234567…')
   })
 })

@@ -6,11 +6,14 @@
 // renderer.ts calls initShell() once and onScreen() from showScreen(); lane C calls setChatBadge().
 //
 // Nothing here is on the print path. Print last calls renderer.ts printLabel (via deps.print) with
-// the last label lane E saw print OK — it never registers in the print guard and needs no arming:
+// the last SALE label lane E saw an attempt for — ok OR failed, so a failed #81 is what F14
+// recovers; sample/test tags never count (core/printLogFormat nextPrintLast). The button shows
+// the lot ("Print last #81"). It never registers in the print guard and needs no arming:
 // reprinting a tag cannot start anything on TikTok.
 
 import type { LabelData } from '../electron/label'
-import { lastPrintedLabel } from './printLog'
+import { onPrintLastChange, printLastLabel } from './printLog'
+import { printLastText } from '../core/printLogFormat'
 import { TEXT_DEFAULT, badgeText, canGrow, canShrink, factorToPct, isBigText, pctToFactor, stepText } from '../core/shellControls'
 
 export type Screen = 'monitor' | 'chat' | 'settings'
@@ -47,6 +50,8 @@ export function initShell(d: ShellDeps): void {
 
   byId<HTMLButtonElement>('printLastBtn')?.addEventListener('click', () => printLast())
   try { window.controlAPI?.onKey((key) => { if (key === 'F14') printLast() }) } catch { /* no bridge: the button still works */ }
+  onPrintLastChange(() => paintPrintLast())
+  paintPrintLast()
 
   byId('textSmaller')?.addEventListener('click', () => void setText(stepText(textPct, -1)))
   byId('textBigger')?.addEventListener('click', () => void setText(stepText(textPct, 1)))
@@ -102,9 +107,19 @@ function printLast(): void {
   if (now - lastPrintAt < PRINT_LAST_GAP_MS) return
   lastPrintAt = now
   let data: LabelData | undefined
-  try { data = lastPrintedLabel() } catch { data = undefined }
+  try { data = printLastLabel() } catch { data = undefined }
   if (!data || !deps) { flashPrintLast('Nothing printed yet'); return }
   deps.print({ ...data })
+}
+
+/** "Print last #81" on the button (left alone while a flash message is showing). */
+function paintPrintLast(): void {
+  const btn = byId('printLastBtn'), text = byId('printLastText')
+  let data: ReturnType<typeof printLastLabel>
+  try { data = printLastLabel() } catch { data = undefined }
+  const label = printLastText(data)
+  if (text && !flashTimer) text.textContent = label
+  if (btn) btn.title = data ? `Reprint ${label.slice('Print last '.length) || 'the last label'} (F14)` : 'Reprint the last label (F14)'
 }
 
 function flashPrintLast(msg: string): void {
@@ -113,7 +128,7 @@ function flashPrintLast(msg: string): void {
   text.textContent = msg
   btn.classList.add('sh-flash')
   if (flashTimer) clearTimeout(flashTimer)
-  flashTimer = setTimeout(() => { text.textContent = 'Print last'; btn.classList.remove('sh-flash'); flashTimer = null }, 1600)
+  flashTimer = setTimeout(() => { flashTimer = null; btn.classList.remove('sh-flash'); paintPrintLast() }, 1600)
 }
 
 // ── Text size ────────────────────────────────────────────────────────────────

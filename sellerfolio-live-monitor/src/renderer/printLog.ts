@@ -1,7 +1,8 @@
 // LANE E — the Print log panel that replaced the Thermal print queue: one line per finished job,
 // newest first, "HH:MM:SS  #80 tag sent in 50 ms" (spoolMs from main's print-label reply),
-// failures in red with the error on hover. Also remembers the last label that printed OK, for
-// Print last [F14] (lane A reads lastPrintedLabel()).
+// failures in red with the error on hover. Also remembers the last SALE label we tried to print
+// — ok or failed, never a sample/test tag (core/printLogFormat nextPrintLast) — for
+// Print last [F14] (lane A reads printLastLabel() and repaints on onPrintLastChange()).
 //
 // Observe only: renderer.ts calls onPrintResult() AFTER each print attempt, inside a try/catch.
 // Nothing here runs on, awaits on, or changes the print path.
@@ -12,7 +13,7 @@
 // renderQueue() inside the lane E fence in renderer.ts (it owns the facts they need).
 
 import type { LabelData } from '../electron/label'
-import { failedChipText, failedCount, pushEntry, toEntry, type PrintLogEntry } from '../core/printLogFormat'
+import { failedChipText, failedCount, nextPrintLast, pushEntry, toEntry, type PrintLogEntry } from '../core/printLogFormat'
 
 export interface PrintResult {
   data: LabelData
@@ -27,7 +28,8 @@ export interface PrintResult {
 let entries: PrintLogEntry[] = []
 let seq = 0
 let failedOnly = false
-let lastOk: LabelData | undefined
+let last: LabelData | undefined
+const lastListeners: Array<(d: LabelData | undefined) => void> = []
 
 let logEl: HTMLElement | null = null
 let failedBtn: HTMLButtonElement | null = null
@@ -45,7 +47,11 @@ export function initPrintLog(): void {
 
 /** Called by renderer.ts printLabel() after EVERY print attempt (auto, manual, sample, reprint). */
 export function onPrintResult(r: PrintResult): void {
-  if (r.ok) lastOk = { ...r.data }
+  const before = last
+  last = nextPrintLast(last, r)
+  if (last !== before) {
+    for (const fn of lastListeners) { try { fn(last ? { ...last } : undefined) } catch { /* UI only */ } }
+  }
   const entry = toEntry(r, ++seq)
   entries = pushEntry(entries, entry)
   // Common case: add just the new line, so the log's live region announces one line, not all.
@@ -61,9 +67,24 @@ export function onPrintResult(r: PrintResult): void {
   render()
 }
 
-/** The last label that printed successfully this session, for Print last [F14]. A copy. */
-export function lastPrintedLabel(): LabelData | undefined {
-  return lastOk ? { ...lastOk } : undefined
+/**
+ * The label Print last [F14] reprints: the last sale label this session tried to print, whether
+ * it printed or failed (so a failed #81 is what F14 recovers), never a sample/test tag. A copy.
+ */
+export function printLastLabel(): LabelData | undefined {
+  return last ? { ...last } : undefined
+}
+
+/** Called with a copy of the new Print last label whenever it changes (lane A's button text). */
+export function onPrintLastChange(fn: (d: LabelData | undefined) => void): void {
+  lastListeners.push(fn)
+}
+
+/** Tests only. */
+export function _resetPrintLogForTests(): void {
+  entries = []; seq = 0; failedOnly = false; last = undefined
+  lastListeners.length = 0
+  logEl = null; failedBtn = null
 }
 
 function renderHead(): void {
