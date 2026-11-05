@@ -11,14 +11,20 @@ export type ConnState =
 
 export type Verdict = 'ok' | 'revoked' | 'other_machine' | 'offline' | 'bad'
 
+/** An sfc_ token is the Chrome extension's, which every shop already has — the likeliest wrong paste. Say
+ *  what it is, and the exact button that makes the right one, rather than a settings path to hunt through. */
+export const TOKEN_IS_EXTENSIONS =
+  "That's the Chrome extension's token (sfc_…). This app needs its own computer token (sfm_…): in SellerFolio open " +
+  'Settings → Capture devices, scroll to Live Monitor, name this computer and click Connect a computer.'
+
 export function parseConnectToken(input: string): { token: string } | { error: string } {
   const t = (input ?? '').trim()
   if (!t) return { error: 'Paste the token from SellerFolio.' }
   if (t.startsWith('sfc_')) {
-    return { error: 'This is an extension token. Make a computer token in SellerFolio → Settings → Capture devices.' }
+    return { error: TOKEN_IS_EXTENSIONS }
   }
   if (t.startsWith('sfm_') && t.slice(4).trim().length > 0) return { token: t }
-  return { error: "That doesn't look like a SellerFolio computer token." }
+  return { error: "That isn't a computer token. Computer tokens start with sfm_ — make one with the steps above." }
 }
 
 export function whoamiVerdict(status: number | 'network', body: unknown): Verdict {
@@ -148,8 +154,8 @@ export function uploadPlan(a: { state: ConnState; want: string | null; applied: 
 /** Why a pasted token did not connect. */
 export function connectErrorText(v: Verdict): string {
   if (v === 'offline') return "Can't reach SellerFolio. Check the internet connection and try again."
-  if (v === 'revoked') return "SellerFolio didn't accept this token. Make a new one in SellerFolio → Settings → Capture devices."
-  if (v === 'other_machine') return 'This token is already used on another computer. Make a new one for this computer in SellerFolio.'
+  if (v === 'revoked') return "SellerFolio didn't accept this token — it was revoked or mistyped. Make a new one: Settings → Capture devices → Live Monitor → Connect a computer."
+  if (v === 'other_machine') return 'This token is already used on another computer — each computer needs its own. Make a new one: Settings → Capture devices → Live Monitor → Connect a computer.'
   return "Couldn't check the token. Try again."
 }
 

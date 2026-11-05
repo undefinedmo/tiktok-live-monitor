@@ -450,7 +450,14 @@
       <div id="connectScreen">
         <div class="modal-box set-card" style="width:460px;max-width:100%;margin:0;">
           <h3>Connect this computer to SellerFolio</h3>
-          <div class="set-note"><p>In SellerFolio, go to Settings &rarr; Capture devices &rarr; Live Monitor, click <b>Connect a computer</b>, and paste the token here. A token works on one computer only.</p></div>
+          <div class="set-note">
+            <ol style="margin:0;padding-left:18px;line-height:1.6;">
+              <li><button type="button" id="cnOpen" class="qbtn" style="flex:none;padding:2px 10px;">Open SellerFolio settings</button> &mdash; it opens <b>Capture devices</b>.</li>
+              <li>Scroll to <b>Live Monitor</b> (below the Chrome extension), type a name for this computer, and click <b>Connect a computer</b>.</li>
+              <li>Copy the token it shows (it starts with <span class="mono">sfm_</span>) and paste it below.</li>
+            </ol>
+            <p style="margin-top:8px;">Not the Chrome extension&rsquo;s token (<span class="mono">sfc_</span>) &mdash; each computer gets its own.</p>
+          </div>
           <div id="cnBanner" class="conn-note" style="display:none;"></div>
           <div class="field" style="margin-top:12px;">
             <label class="f-lbl" for="cnToken">Computer token</label>

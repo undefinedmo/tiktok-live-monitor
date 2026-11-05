@@ -50,6 +50,7 @@ declare global {
       connect: (token: string) => Promise<SfSyncView & { ok: boolean; error?: string }>
       disconnect: () => Promise<SfSyncView>
       openFolder: () => Promise<{ ok: boolean }>
+      openSettings?: () => Promise<{ ok: boolean }>
       onState: (cb: (s: SfSyncView) => void) => void
     }
   }
@@ -1360,6 +1361,7 @@ function setupSfSync(): void {
   }
   go?.addEventListener('click', submit)
   tok?.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit() })
+  document.getElementById('cnOpen')?.addEventListener('click', () => void api.openSettings?.())
   document.getElementById('sfFolder')?.addEventListener('click', () => void api.openFolder())
   document.getElementById('sfOff')?.addEventListener('click', () => sfShowConfirm(true))
   document.getElementById('sfOffNo')?.addEventListener('click', () => sfShowConfirm(false))

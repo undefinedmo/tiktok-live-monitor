@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('sfSyncAPI', {
   connect: (token: string) => ipcRenderer.invoke('sf-connect:connect', token),
   disconnect: () => ipcRenderer.invoke('sf-connect:disconnect'),
   openFolder: () => ipcRenderer.invoke('sf-sync:open-folder'),
+  openSettings: () => ipcRenderer.invoke('sf-connect:open-settings'),
   onState: (cb: (s: unknown) => void) => ipcRenderer.on('sf-sync-state', (_e, s) => cb(s)),
 })
 

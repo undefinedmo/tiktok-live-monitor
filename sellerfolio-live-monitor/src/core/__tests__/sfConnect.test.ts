@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  TOKEN_IS_EXTENSIONS,
   parseConnectToken, whoamiVerdict, nextState, canRunMonitor, suggestErrorText, type ConnState,
   savedTokenKind, startState, rememberedAfter, shouldCreateMonitor, uploadPlan, connectErrorText, readSuggestion,
   connectScreen,
@@ -14,12 +15,15 @@ describe('parseConnectToken', () => {
     expect(parseConnectToken('')).toEqual({ error: 'Paste the token from SellerFolio.' })
   })
   it('rejects an extension token', () => {
-    expect(parseConnectToken('sfc_abc')).toEqual({
-      error: 'This is an extension token. Make a computer token in SellerFolio → Settings → Capture devices.',
-    })
+    const r = parseConnectToken('sfc_abc')
+    expect(r).toEqual({ error: TOKEN_IS_EXTENSIONS })
+    // Names what was pasted, what is wanted, and the exact button — not just a settings path.
+    expect(TOKEN_IS_EXTENSIONS).toMatch(/Chrome extension/)
+    expect(TOKEN_IS_EXTENSIONS).toMatch(/sfm_/)
+    expect(TOKEN_IS_EXTENSIONS).toMatch(/Connect a computer/)
   })
   it('rejects anything else, including a bare prefix', () => {
-    const e = { error: "That doesn't look like a SellerFolio computer token." }
+    const e = { error: "That isn't a computer token. Computer tokens start with sfm_ — make one with the steps above." }
     expect(parseConnectToken('hello')).toEqual(e)
     expect(parseConnectToken('sfm_')).toEqual(e)
     expect(parseConnectToken(' sfm_  ')).toEqual(e)
@@ -262,8 +266,8 @@ describe('uploadPlan', () => {
 describe('connectErrorText', () => {
   it('says what went wrong in plain English', () => {
     expect(connectErrorText('offline')).toBe("Can't reach SellerFolio. Check the internet connection and try again.")
-    expect(connectErrorText('revoked')).toBe("SellerFolio didn't accept this token. Make a new one in SellerFolio → Settings → Capture devices.")
-    expect(connectErrorText('other_machine')).toBe('This token is already used on another computer. Make a new one for this computer in SellerFolio.')
+    expect(connectErrorText('revoked')).toBe("SellerFolio didn't accept this token — it was revoked or mistyped. Make a new one: Settings → Capture devices → Live Monitor → Connect a computer.")
+    expect(connectErrorText('other_machine')).toBe('This token is already used on another computer — each computer needs its own. Make a new one: Settings → Capture devices → Live Monitor → Connect a computer.')
     expect(connectErrorText('bad')).toBe("Couldn't check the token. Try again.")
   })
 })

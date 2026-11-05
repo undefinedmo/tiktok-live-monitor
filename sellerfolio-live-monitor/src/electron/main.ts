@@ -867,6 +867,15 @@ ipcMain.handle('sf-connect:connect', async (_e, input: unknown) => {
   setConn(next)
   return { ...syncView(), ok: true }
 })
+// The connect screen's "Open SellerFolio settings": the Capture devices tab of the shop's own
+// SellerFolio, in the default browser. Only an http(s) base URL is ever opened.
+ipcMain.handle('sf-connect:open-settings', async () => {
+  let url: URL
+  try { url = new URL('/settings#capture', sf.baseUrl || DEFAULT_SF_URL) } catch { return { ok: false } }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return { ok: false }
+  await shell.openExternal(url.toString())
+  return { ok: true }
+})
 // Only forgets the token here (and the shop/label with it); HQ is not told — Revoke is done there.
 // A monitor already running is left open, as for a revoke.
 ipcMain.handle('sf-connect:disconnect', () => {
