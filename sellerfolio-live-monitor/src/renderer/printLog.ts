@@ -1,13 +1,18 @@
-// LANE E — the Print log panel that replaces the Thermal print queue: one line per finished job,
-// newest first, "HH:MM:SS #80 tag sent in 50 ms" (spoolMs from main's print-label reply), failures
-// in red. Also remembers the last label that printed OK, for Print last (lane A reads it).
+// LANE E — the Print log panel that replaced the Thermal print queue: one line per finished job,
+// newest first, "HH:MM:SS  #80 tag sent in 50 ms" (spoolMs from main's print-label reply),
+// failures in red with the error on hover. Also remembers the last label that printed OK, for
+// Print last [F14] (lane A reads lastPrintedLabel()).
 //
-// Lane E MOVES the queue (printQueue / renderQueue in renderer.ts, inside the "lane E" fences)
-// out and removes the legacy #printQueue from index.html.
-// Fills: index.html #printLog; CSS block "lane E".
-// SCAFFOLD STUB: no-ops; lastPrintedLabel() is always undefined.
+// Observe only: renderer.ts calls onPrintResult() AFTER each print attempt, inside a try/catch.
+// Nothing here runs on, awaits on, or changes the print path.
+//
+// Failures stay visible: the cap (core/printLogFormat — 200 lines) evicts good lines before
+// failures, the head shows an "N failed" chip, and clicking it filters the log to failures only.
+// The head's in-flight count ("N printing…") and the "Set printer" chip are kept current by
+// renderQueue() inside the lane E fence in renderer.ts (it owns the facts they need).
 
 import type { LabelData } from '../electron/label'
+import { failedChipText, failedCount, pushEntry, toEntry, type PrintLogEntry } from '../core/printLogFormat'
 
 export interface PrintResult {
   data: LabelData
@@ -19,15 +24,89 @@ export interface PrintResult {
   at: number
 }
 
+let entries: PrintLogEntry[] = []
+let seq = 0
+let failedOnly = false
+let lastOk: LabelData | undefined
+
+let logEl: HTMLElement | null = null
+let failedBtn: HTMLButtonElement | null = null
+
 /** Called once by renderer.ts at startup. */
-export function initPrintLog(): void {}
+export function initPrintLog(): void {
+  logEl = document.getElementById('printLog')
+  failedBtn = document.getElementById('printLogFailed') as HTMLButtonElement | null
+  failedBtn?.addEventListener('click', () => {
+    failedOnly = !failedOnly
+    render()
+  })
+  render()
+}
 
 /** Called by renderer.ts printLabel() after EVERY print attempt (auto, manual, sample, reprint). */
 export function onPrintResult(r: PrintResult): void {
-  void r
+  if (r.ok) lastOk = { ...r.data }
+  const entry = toEntry(r, ++seq)
+  entries = pushEntry(entries, entry)
+  // Common case: add just the new line, so the log's live region announces one line, not all.
+  if (!failedOnly && logEl && logEl.querySelector('.plog-line')) {
+    logEl.prepend(lineFor(entry))
+    const keep = new Set(entries.map((e) => String(e.seq)))
+    for (const row of Array.from(logEl.querySelectorAll<HTMLElement>('.plog-line'))) {
+      if (!keep.has(row.dataset.seq ?? '')) row.remove()
+    }
+    renderHead()
+    return
+  }
+  render()
 }
 
-/** The last label that printed successfully this session, for Print last [F14]. */
+/** The last label that printed successfully this session, for Print last [F14]. A copy. */
 export function lastPrintedLabel(): LabelData | undefined {
-  return undefined
+  return lastOk ? { ...lastOk } : undefined
+}
+
+function renderHead(): void {
+  const failed = failedCount(entries)
+  if (failed === 0) failedOnly = false
+
+  if (failedBtn) {
+    failedBtn.hidden = failed === 0
+    failedBtn.textContent = failedChipText(failed)
+    failedBtn.setAttribute('aria-pressed', failedOnly ? 'true' : 'false')
+    failedBtn.title = failedOnly ? 'Showing failed tags only. Click to show all.' : 'Show only the tags that failed to print'
+  }
+}
+
+function lineFor(e: PrintLogEntry): HTMLElement {
+  const row = document.createElement('div')
+  row.className = e.ok ? 'plog-line' : 'plog-line bad'
+  row.dataset.seq = String(e.seq)
+  const t = document.createElement('span')
+  t.className = 'plog-t'
+  t.textContent = e.time
+  const msg = document.createElement('span')
+  msg.textContent = e.text
+  row.append(t, msg)
+  if (e.error) {
+    row.title = e.error
+    row.setAttribute('aria-label', `${e.time} ${e.text}: ${e.error}`)
+  }
+  return row
+}
+
+function render(): void {
+  renderHead()
+  if (!logEl) return
+  const shown = failedOnly ? entries.filter((e) => !e.ok) : entries
+  if (!shown.length) {
+    const empty = document.createElement('div')
+    empty.className = 'plog-empty'
+    empty.textContent = 'No labels yet'
+    logEl.replaceChildren(empty)
+    return
+  }
+  const frag = document.createDocumentFragment()
+  for (const e of shown) frag.appendChild(lineFor(e))
+  logEl.replaceChildren(frag)
 }
