@@ -14,7 +14,7 @@
 
 import type { ChatMessage } from '../core/types'
 import type { StoreChat } from '../core/storeIndex'
-import { ChatDeskModel, REPLY_MAX, lineId, isQuestion, wishOf, type DeskQuestion, type DeskWish } from '../core/chatIntent'
+import { ChatDeskModel, OwnEchoFilter, REPLY_MAX, lineId, isQuestion, wishOf, type ChatAuthor, type DeskQuestion, type DeskWish } from '../core/chatIntent'
 import { setChatBadge } from './shell'
 
 /** Rows kept in the All chat DOM. Older lines stay searchable. */
@@ -59,8 +59,8 @@ let model = new ChatDeskModel()
 let lines: Line[] = []
 let seen = new Set<string>()
 let show = ''
-/** Text we posted → when. The webcast echoes it back; that echo is hidden once. */
-const pendingSent = new Map<string, number>()
+/** Replies we posted. The webcast echoes each back from the host account; that echo is hidden once. */
+const echoes = new OwnEchoFilter(ECHO_MS)
 
 let mode: 'all' | 'questions' = 'all'
 let query = ''
@@ -100,12 +100,12 @@ export function onChat(items: ChatMessage[]): void {
   adoptShow()
   const fresh: Line[] = []
   const now = Date.now()
-  for (const [t, at] of pendingSent) if (now - at > ECHO_MS) pendingSent.delete(t)
   for (const m of items ?? []) {
     if (!m || typeof m.text !== 'string') continue
     const text = m.text.trim()
-    // Our own approved reply coming back: the card already says "Posted as Host".
-    if (pendingSent.has(text)) { pendingSent.delete(text); continue }
+    // Our own approved reply coming back (same text AND from the host): the card already says
+    // "Posted as Host". A viewer typing the same words is NOT hidden (core/chatIntent OwnEchoFilter).
+    if (echoes.isEcho({ text, userId: m.userId, handle: m.handle, nickname: m.nickname }, now)) continue
     const id = lineId(m)
     if (seen.has(id)) continue
     seen.add(id)
@@ -126,6 +126,14 @@ export function onChat(items: ChatMessage[]): void {
     if (focusIn(screen)) deskDirty = true
     else renderDesk()
   }
+}
+
+/**
+ * The host account (the room owner), when the app knows it: its user id and/or @handle. Without it
+ * the host is learned from the first echo of a reply we post (see OwnEchoFilter).
+ */
+export function setChatHost(host: ChatAuthor | null | undefined): void {
+  echoes.setHost(host)
 }
 
 /** Called by renderer.ts showScreen() when the Chat screen becomes visible. */
@@ -443,14 +451,14 @@ async function approve(q: DeskQuestion): Promise<void> {
   const text = model.beginSend(q)
   if (!text) return
   repaint(q)
-  pendingSent.set(text, Date.now()) // the echo can arrive before the post's answer
+  echoes.sent(text, Date.now()) // the echo can arrive before the post's answer
   let r: { ok: boolean; error?: string }
   if (!window.chatAPI) r = { ok: false, error: 'chat is not available in this window' }
   else {
     try { r = await window.chatAPI.send(text) }
     catch (e) { r = { ok: false, error: e instanceof Error ? e.message : String(e) } }
   }
-  if (!r?.ok) pendingSent.delete(text)
+  if (!r?.ok) echoes.failed(text)
   model.sendResult(q, text, r)
   repaint(q)
 }

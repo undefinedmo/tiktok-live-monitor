@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isQuestion, wishOf, chatIntent, suggestReply, REPLY_MAX, REPLY_RULES, ChatDeskModel, lineId } from '../chatIntent'
+import { isQuestion, wishOf, chatIntent, suggestReply, REPLY_MAX, REPLY_RULES, ChatDeskModel, lineId, OwnEchoFilter, sameAuthor } from '../chatIntent'
 
 describe('isQuestion', () => {
   it('a trailing ? (spaces allowed)', () => {
@@ -208,5 +208,59 @@ describe('ChatDeskModel', () => {
     if (qs[1]?.kind === 'question') m.skip(qs[1].q)
     m.ingest(line('is it 4?', 4))
     expect(m.questions.map((q) => q.text)).toEqual(['is it 1?', 'is it 3?', 'is it 4?'])
+  })
+})
+
+describe('OwnEchoFilter (our own reply coming back)', () => {
+  const host = { userId: '111', handle: 'luxeshop', nickname: 'LuxeSense' }
+  const viewer = { userId: '222', handle: 'amy', nickname: 'Amy' }
+
+  it('a viewer typing the same text is never hidden once the host is known', () => {
+    const f = new OwnEchoFilter(20_000)
+    f.setHost({ userId: '111' })
+    f.sent('Yes!', 0)
+    expect(f.isEcho({ ...viewer, text: 'Yes!' }, 1_000)).toBe(false)
+    expect(f.isEcho({ ...host, text: 'Yes!' }, 2_000)).toBe(true)
+    // hidden once: the host saying it again later is shown
+    expect(f.isEcho({ ...host, text: 'Yes!' }, 3_000)).toBe(false)
+  })
+
+  it('learns the host from the first echo, then requires that author', () => {
+    const f = new OwnEchoFilter(20_000)
+    f.sent('We ship in 2 days', 0)
+    expect(f.isEcho({ ...host, text: ' We ship in 2 days ' }, 500)).toBe(true)
+    expect(f.hostAuthor()).toEqual({ userId: '111', handle: 'luxeshop', nickname: 'LuxeSense' })
+    f.sent('Yes!', 10_000)
+    expect(f.isEcho({ ...viewer, text: 'Yes!' }, 10_500)).toBe(false)
+    expect(f.isEcho({ ...host, text: 'Yes!' }, 11_000)).toBe(true)
+  })
+
+  it('setHost overrides a learned host', () => {
+    const f = new OwnEchoFilter(20_000)
+    f.sent('ok', 0)
+    expect(f.isEcho({ ...viewer, text: 'ok' }, 1)).toBe(true) // the blind spot before any host is known
+    f.setHost({ handle: 'LuxeShop' })
+    f.sent('ok', 2)
+    expect(f.isEcho({ ...viewer, text: 'ok' }, 3)).toBe(false)
+    expect(f.isEcho({ ...host, text: 'ok' }, 4)).toBe(true)
+  })
+
+  it('text that we did not post, an expired post and a failed post are not echoes', () => {
+    const f = new OwnEchoFilter(20_000)
+    f.setHost(host)
+    expect(f.isEcho({ ...host, text: 'hello' }, 0)).toBe(false)
+    f.sent('late', 0)
+    expect(f.isEcho({ ...host, text: 'late' }, 20_001)).toBe(false)
+    f.sent('nope', 0)
+    f.failed('nope')
+    expect(f.isEcho({ ...host, text: 'nope' }, 1)).toBe(false)
+  })
+
+  it('sameAuthor compares the strongest shared field', () => {
+    expect(sameAuthor({ userId: '1', handle: 'a' }, { userId: '1', handle: 'b' })).toBe(true)
+    expect(sameAuthor({ userId: '1' }, { userId: '2', handle: 'x' })).toBe(false)
+    expect(sameAuthor({ handle: 'Amy' }, { userId: '9', handle: 'amy' })).toBe(true)
+    expect(sameAuthor({ nickname: 'Amy' }, { nickname: 'amy ' })).toBe(true)
+    expect(sameAuthor({}, { nickname: 'amy' })).toBe(false)
   })
 })

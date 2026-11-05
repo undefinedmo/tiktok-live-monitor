@@ -155,6 +155,29 @@ describe('buyer history (main)', () => {
     expect(h.bh.state().failures).toBe(0)
   })
 
+  it('a new id during backoff does not pull the retry in early', async () => {
+    h.setReply(() => 'throw')
+    h.bh.lookup(['a'])
+    await h.advance(BATCH_DELAY_MS)
+    expect(h.calls).toHaveLength(1) //            failed: retry due in 5 s
+    await h.advance(1_000)
+    h.bh.lookup(['b']) //                          would schedule a 300 ms batch
+    await h.advance(BATCH_DELAY_MS)
+    expect(h.calls).toHaveLength(1)
+    await h.advance(3_699)
+    expect(h.calls).toHaveLength(1)
+    await h.advance(1) //                          5 s after the failure
+    expect(h.calls).toHaveLength(2)
+    expect(h.calls[1]!.body.buyerIds).toEqual(['a', 'b'])
+    // second failure: 10 s; a new id 1 s in still waits the full 10 s
+    await h.advance(1_000)
+    h.bh.lookup(['c'])
+    await h.advance(8_999)
+    expect(h.calls).toHaveLength(2)
+    await h.advance(1)
+    expect(h.calls).toHaveLength(3)
+  })
+
   it('400 → those ids are not asked again this show', async () => {
     h.setReply(() => ({ status: 400 }))
     h.bh.lookup(['a'])

@@ -239,3 +239,72 @@ function trim<T>(list: T[], cap: number, settled: (x: T) => boolean): void {
     list.splice(i >= 0 ? i : 0, 1)
   }
 }
+
+// ── our own reply's echo ─────────────────────────────────────────────────────
+
+/** Who wrote a chat line, as far as the webcast tells us (types.ts ChatMessage fits). */
+export interface ChatAuthor {
+  userId?: string
+  handle?: string
+  nickname?: string
+}
+
+/** Same person? Compared on the strongest field both sides carry: user id, then @handle, then nickname. */
+export function sameAuthor(a: ChatAuthor, b: ChatAuthor): boolean {
+  const norm = (s: string | undefined): string => String(s ?? '').trim().toLowerCase()
+  if (norm(a.userId) && norm(b.userId)) return norm(a.userId) === norm(b.userId)
+  if (norm(a.handle) && norm(b.handle)) return norm(a.handle) === norm(b.handle)
+  if (norm(a.nickname) && norm(b.nickname)) return norm(a.nickname) === norm(b.nickname)
+  return false
+}
+
+/**
+ * Hides the webcast echo of a reply the host just posted (the question card already shows it) —
+ * and ONLY that echo: a viewer who happens to type the same "Yes!" must still be shown and
+ * classified. A line is an echo when its text is one we posted within the window AND it is from
+ * the host account.
+ *
+ * Who the host is: setHost() when the app knows it (the room owner's user id / @handle). Until
+ * then the host is LEARNED from the first echo (the first line carrying the text we just posted);
+ * from then on a match must also come from that same author. The one blind spot is that very
+ * first echo: a viewer typing the identical text in the same ~20 s before our own echo lands
+ * would be taken for the host. setHost() closes it.
+ */
+export class OwnEchoFilter {
+  private readonly pending = new Map<string, number>()
+  private host: ChatAuthor | null = null
+
+  constructor(private readonly windowMs = 20_000) {}
+
+  /** The authoritative host identity (from the room). Overrides anything learned. */
+  setHost(a: ChatAuthor | null | undefined): void {
+    if (a && (a.userId || a.handle || a.nickname)) this.host = { userId: a.userId, handle: a.handle, nickname: a.nickname }
+  }
+
+  /** Who we currently treat as the host (tests / diagnostics). */
+  hostAuthor(): ChatAuthor | null {
+    return this.host ? { ...this.host } : null
+  }
+
+  /** A reply is about to be posted (call BEFORE the post: the echo can beat the post's answer). */
+  sent(text: string, now: number): void {
+    const t = text.trim()
+    if (t) this.pending.set(t, now)
+  }
+
+  /** The post failed: no echo is coming. */
+  failed(text: string): void {
+    this.pending.delete(text.trim())
+  }
+
+  /** True when this line is our own reply coming back (hide it, once). */
+  isEcho(m: ChatAuthor & { text: string }, now: number): boolean {
+    for (const [t, at] of this.pending) if (now - at > this.windowMs) this.pending.delete(t)
+    const text = String(m.text ?? '').trim()
+    if (!text || !this.pending.has(text)) return false
+    if (!this.host) this.host = { userId: m.userId, handle: m.handle, nickname: m.nickname }
+    else if (!sameAuthor(this.host, m)) return false
+    this.pending.delete(text)
+    return true
+  }
+}

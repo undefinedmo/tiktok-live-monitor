@@ -88,6 +88,34 @@ describe('buyer history (renderer)', () => {
     expect(lookups).toEqual([['z'], ['z']])
   })
 
+  it('a new room (the top bar) drops every cached count and asks main again', async () => {
+    let roomText = 'room1'
+    g.document = { createElement: () => new FakeEl(), getElementById: (id: string) => (id === 'room' ? { textContent: roomText } : null) }
+    const cb = vi.fn()
+    onCountsChanged(cb)
+    answer = (ids) => Object.fromEntries(ids.map((id) => [id, 4]))
+    requestCounts(['a'])
+    await tick(); await tick()
+    expect(pastOrdersOf('a')).toBe(4)
+    expect(cb).toHaveBeenCalledTimes(1)
+    requestCounts(['a']) // known: not asked again in the same room
+    await tick()
+    expect(lookups).toEqual([['a']])
+
+    roomText = '—' // between shows: not a room, keep what we have
+    expect(pastOrdersOf('a')).toBe(4)
+
+    roomText = 'room2'
+    expect(badgeFor('a')).toBeNull() // stale count gone at once
+    await tick()
+    expect(cb).toHaveBeenCalledTimes(2) // listeners repaint (deferred, not inside the painter)
+    answer = (ids) => Object.fromEntries(ids.map((id) => [id, 7]))
+    requestCounts(['a'])
+    await tick(); await tick()
+    expect(lookups).toEqual([['a'], ['a']])
+    expect(pastOrdersOf('a')).toBe(7)
+  })
+
   it('survives a missing bridge and a failing lookup', async () => {
     g.buyerAPI = { lookup: async () => { throw new Error('x') }, onCounts: () => {} }
     expect(() => requestCounts(['q'])).not.toThrow()

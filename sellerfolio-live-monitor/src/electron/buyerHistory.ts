@@ -74,6 +74,7 @@ export function createBuyerHistory(d: BuyerHistoryDeps, env: BuyerHistoryEnv): B
   let timer: unknown = null
   let timerDue = 0
   let failures = 0
+  let retryAt = 0 //                      while failures > 0: no request before this (the backoff)
   let pausedUntil = 0
   let pauseKey = '' //                    url+auth the pause applies to; a new token/url lifts it
   let quietLogged = false
@@ -108,9 +109,12 @@ export function createBuyerHistory(d: BuyerHistoryDeps, env: BuyerHistoryEnv): B
   }
 
   function schedule(delayMs: number): void {
-    const due = Math.max(env.now() + delayMs, pausedUntil)
+    // While retrying, nothing (e.g. a new id's 300 ms batch delay) may pull the request in ahead of
+    // the backoff: the later due time wins.
+    const backoff = failures > 0 ? retryAt : 0
+    const due = Math.max(env.now() + delayMs, pausedUntil, backoff)
     if (timer !== null) {
-      if (timerDue <= due) return
+      if (timerDue <= due && timerDue >= backoff) return
       try { env.clearTimeout(timer) } catch { /* ignore */ }
     }
     timerDue = due
@@ -132,6 +136,7 @@ export function createBuyerHistory(d: BuyerHistoryDeps, env: BuyerHistoryEnv): B
     if (!t) { pending.clear(); return } //   not connected: nothing to do; the renderer asks again later
     if (pauseKey && pauseKey !== t.key) { pausedUntil = 0; pauseKey = '' }
     if (env.now() < pausedUntil) { schedule(0); return }
+    if (failures > 0 && env.now() < retryAt) { schedule(0); return }
 
     const [batch = []] = batchBuyerIds([...pending], new Set([...counts.keys(), ...skip, ...inFlight]), BUYER_HISTORY_MAX_IDS)
     for (const id of batch) pending.delete(id)
@@ -205,6 +210,7 @@ export function createBuyerHistory(d: BuyerHistoryDeps, env: BuyerHistoryEnv): B
     pending.clear()
     for (const id of [...batch, ...rest].slice(0, MAX_PENDING)) pending.add(id)
     if (failures === 1 || failures % 10 === 0) log(`lookup failed (${status === 'network' ? 'network' : `HTTP ${status}`}), try ${failures}; retrying in ${Math.round(backoffMs(failures) / 1000)} s`)
+    retryAt = env.now() + backoffMs(failures)
     schedule(backoffMs(failures))
   }
 

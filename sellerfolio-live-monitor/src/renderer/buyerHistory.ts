@@ -20,6 +20,9 @@ const listeners: (() => void)[] = []
 let queued: string[] = []
 let flushQueued = false
 let inited = false
+/** The room the cache belongs to ('' until the top bar names one). Counts are per show. */
+let room = ''
+let notifyQueued = false
 
 function bridge(): BuyerBridge | undefined {
   try { return (globalThis as { buyerAPI?: BuyerBridge }).buyerAPI } catch { return undefined }
@@ -27,6 +30,27 @@ function bridge(): BuyerBridge | undefined {
 
 function notify(): void {
   for (const cb of listeners) { try { cb() } catch { /* a listener's bug is not ours to surface */ } }
+}
+
+/**
+ * Counts are "orders before THIS show started", so a new room makes every cached count stale. The
+ * room is the one the top bar names (#room, set by renderer.ts on every 'room' event) — the same
+ * signal chatDesk keys its show on. Main resets its own cache on the next lookup, which the
+ * cleared ids now trigger.
+ */
+function syncRoom(): void {
+  let r = ''
+  try {
+    const doc = (globalThis as { document?: { getElementById?: (id: string) => { textContent: string | null } | null } }).document
+    r = String(doc?.getElementById?.('room')?.textContent ?? '').trim()
+  } catch { return }
+  if (!r || r === '—' || r === '-' || r === room) return
+  room = r
+  if (known.size === 0 && askedAt.size === 0) return
+  const had = known.size > 0
+  known.clear(); askedAt.clear()
+  // Repaint later, not from inside the painter that called badgeFor().
+  if (had && !notifyQueued) { notifyQueued = true; queueMicrotask(() => { notifyQueued = false; notify() }) }
 }
 
 /** Merge counts into the cache; true when anything changed. */
@@ -74,6 +98,7 @@ function flush(): void {
 /** Ask for these buyers' counts (deduped, batched in main). Fire-and-forget; never throws. */
 export function requestCounts(ttuids: readonly (string | undefined)[]): void {
   try {
+    syncRoom()
     const now = Date.now()
     for (const id of ttuids) {
       if (!isBuyerId(id) || known.has(id)) continue
@@ -88,6 +113,7 @@ export function requestCounts(ttuids: readonly (string | undefined)[]): void {
 
 /** The past-order count for a buyer, if known. */
 export function pastOrdersOf(ttuid: string | undefined): number | undefined {
+  try { syncRoom() } catch { /* never */ }
   return ttuid ? known.get(ttuid) : undefined
 }
 
@@ -115,5 +141,5 @@ export function onCountsChanged(cb: () => void): void {
 
 /** Tests only: forget everything. */
 export function _resetForTests(): void {
-  known.clear(); askedAt.clear(); listeners.length = 0; queued = []; flushQueued = false; inited = false
+  known.clear(); askedAt.clear(); listeners.length = 0; queued = []; flushQueued = false; inited = false; room = ''; notifyQueued = false
 }
