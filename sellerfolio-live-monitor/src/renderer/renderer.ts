@@ -16,18 +16,11 @@ import { initPrintLog, onPrintResult } from './printLog' // lane E
 import { initDesigner } from './designer' // lane F
 
 // ┌── lane F: label template types (moves to designer.ts) ─────────────────────
-interface LabelData { itemNumber: string; buyer?: string; productName?: string; price?: string; title?: string; code?: string }
-type LabelField = 'itemNumber' | 'custom' | 'buyer' | 'productName' | 'price'
-interface LabelTemplate {
-  labelSize: '1x1' | '1.5x1.5' | '2x1' | '2x2' | '2.25x1.25'
-  itemNumber: boolean
-  buyer: boolean
-  productName: boolean
-  price: boolean
-  custom: { enabled: boolean; regex: string; flags: string }
-  scale?: Partial<Record<LabelField, number>>
-  qr?: boolean
-}
+// The print path's own types (the template may carry the designer's `layout`). The template
+// itself lives in designer.ts; `labelTemplate` is its live export, read by printLabel.
+type LabelData = import('../electron/label').LabelData
+type LabelTemplate = import('../electron/label').LabelTemplate
+import { labelTemplate, setupDesigner, refreshPrinterButtons } from './designer' // lane F (live binding)
 // └── end lane F ────────────────────────────────────────────────────────────────
 declare global {
   interface Window {
@@ -105,16 +98,7 @@ function ago(ms: number): string {
 }
 
 // ┌── lane F: the saved label template (moves to designer.ts; printLabel reads labelTemplate) ──
-const DEFAULT_TEMPLATE: LabelTemplate = {
-  labelSize: '2x1', itemNumber: true, buyer: true, productName: true, price: false,
-  custom: { enabled: false, regex: '', flags: '' },
-  scale: { itemNumber: 1, custom: 1, buyer: 1, productName: 1, price: 1 },
-  qr: false, // off until chosen — see electron/label.ts DEFAULT_TEMPLATE
-}
-let labelTemplate: LabelTemplate = (() => {
-  try { return { ...DEFAULT_TEMPLATE, ...JSON.parse(localStorage.getItem('tt-label-template') || '{}') } } catch { return DEFAULT_TEMPLATE }
-})()
-const saveTemplate = () => localStorage.setItem('tt-label-template', JSON.stringify(labelTemplate))
+// Moved: designer.ts loads 'tt-label-template' and exports `labelTemplate` (imported above).
 // └── end lane F ────────────────────────────────────────────────────────────────
 
 // ── state ───────────────────────────────────────────────────────────────────
@@ -179,9 +163,7 @@ let allSales: Sale[] = []
 // the gavel instead of 2-6s later.
 const provisionalSales: Sale[] = []
 const PROV_TTL_MS = 90000
-let currentTopSet = new Set<string>()
-let feedPage = 0
-let feedSize = Number(localStorage.getItem('tt-feed-size')) || 25
+let currentTopSet = new Set<string>() // written by the sales handler; no longer read (the WHALE tag is gone)
 
 const provKeyOf = (s: Sale) => printKey((s.skuDesc ?? '').replace(/^#/, ''), s.buyer.username || s.buyer.handle)
 
@@ -196,154 +178,23 @@ function feedRows(): Sale[] {
   return [...provisionalSales, ...allSales]
 }
 
-function updateFeedNav(totalRows: number, totalPages: number) {
-  $('feedPage').textContent = `${totalRows ? feedPage + 1 : 0}/${totalPages}`
-  ;($('feedPrev') as HTMLButtonElement).disabled = feedPage <= 0
-  ;($('feedNext') as HTMLButtonElement).disabled = feedPage >= totalPages - 1
-}
-
-function renderFeed() {
-  const feed = $('bidFeed')
-  feed.replaceChildren()
-  const rows = feedRows()
-  if (!rows.length) { feed.appendChild(el('div', 'mono', 'Waiting for sales…')); updateFeedNav(0, 1); return }
-  const totalPages = Math.max(1, Math.ceil(rows.length / feedSize))
-  feedPage = Math.max(0, Math.min(feedPage, totalPages - 1))
-  const start = feedPage * feedSize
-  const page = rows.slice(start, start + feedSize)
-  const topSet = currentTopSet
-  page.forEach((s, idx) => {
-    const i = start + idx
-    const failed = s.paymentStatus === 'failed'
-    const provisional = s.orderId.startsWith('prov:')
-    const row = el('div', 'bidrow' + (i === 0 ? ' fresh' : '') + (failed ? ' failed' : ''))
-    const who = el('div', 'bidwho')
-    who.appendChild(el('div', 'bidname', s.buyer.username || s.buyer.handle || '—'))
-    const sub = el('div', 'bidsub')
-    if (topSet.has(s.buyer.ttuid || s.buyer.username)) sub.appendChild(el('span', 'tag whale', 'WHALE'))
-    if (failed) sub.appendChild(el('span', 'tag failed', 'FAILED'))
-    else if (provisional) sub.appendChild(el('span', 'tag pending', 'CLOSED'))
-    else if (s.paymentStatus === 'pending') {
-      // show the real deadline when TikTok gave us one, so the room can see which
-      // pending wins are about to lapse rather than just that they are unpaid
-      const left = payLeft(s)
-      const tag = el('span', 'tag pending', left === undefined ? 'PENDING' : left > 0 ? `PENDING ${fmtLeft(left)}` : 'EXPIRED')
-      if (left !== undefined) tag.title = `Payment due by ${new Date(s.paymentExpiresAt!).toLocaleTimeString()}`
-      sub.appendChild(tag)
-    }
-    sub.appendChild(txt(`${s.skuDesc ? s.skuDesc + ' · ' : ''}${s.productName}`))
-    who.appendChild(sub)
-    row.appendChild(who)
-    const right = el('div', 'bidright')
-    right.appendChild(el('div', 'bidprice' + (failed ? ' failed' : ''), s.price.formatted))
-    right.appendChild(el('div', 'bidtime', ago(s.createdAt)))
-    row.appendChild(right)
-    const pb = el('button', 'printmini', '🖨')
-    pb.addEventListener('click', () => printSale(s))
-    row.appendChild(pb)
-    feed.appendChild(row)
-  })
-  updateFeedNav(rows.length, totalPages)
-}
-
-function setupFeed() {
-  const sizeSel = $('feedSize') as HTMLSelectElement
-  sizeSel.value = String(feedSize)
-  sizeSel.addEventListener('change', () => { feedSize = Number(sizeSel.value) || 25; feedPage = 0; localStorage.setItem('tt-feed-size', String(feedSize)); renderFeed() })
-  $('feedPrev').addEventListener('click', () => { feedPage = Math.max(0, feedPage - 1); renderFeed() })
-  $('feedNext').addEventListener('click', () => { feedPage += 1; renderFeed() })
-}
-// └── end lane B (feed) ─────────────────────────────────────────────────────────
+// The feed itself (last 10 + "Search all sales", past-order badges) lives in salesView.ts; these
+// stay as one-line delegates because the sales handler, the 1 s pending tick and onAuctionClosed
+// call them by name. The import sits here, not in the imports block (ES imports hoist).
+import { bindSalesState, renderSalesFeed, renderPaymentIssues, renderTopBuyers } from './salesView'
+bindSalesState({ feedRows: () => feedRows(), allSales: () => allSales, failedSales: () => failedSales })
+function renderFeed() { renderSalesFeed() }
+/** The old pager is gone (the feed shows the last 10; search finds the rest). Kept for its call site. */
+function setupFeed() {}
+// └── end lane B (feed)─────────────────────────────────────────────────────────
 
 // ┌── lane C: live chat column (appendChat / appendOwnChat / setupChatInput move to chatDesk.ts)
-// ── live chat (decoded comments) ────────────────────────────────────────────
-const chatSeen = new Set<string>()
-// Chat-name hues, picked to hold 4.5:1 on the white chat column (the old set was tuned for a
-// dark background and washed out on light). The first is the app accent.
-const NAME_COLORS = ['#0a58f0', '#be185d', '#0a6b34', '#9a4708', '#6d28d9', '#0e7490']
-function nameColor(n: string): string {
-  let h = 0
-  for (let i = 0; i < n.length; i++) h = (h * 31 + n.charCodeAt(i)) >>> 0
-  return NAME_COLORS[h % NAME_COLORS.length]!
-}
-// Text we just posted ourselves → timestamp. We render an optimistic "You" row
-// immediately on send, then suppress the webcast echo of the same text so it
-// isn't shown twice (the echo carries the streamer's real nickname + a later ts).
-const pendingSent = new Map<string, number>()
-
-function appendChat(items: ChatMessage[]) {
-  const list = $('chatList')
-  let added = false
-  for (const m of items) {
-    const sentAt = pendingSent.get(m.text)
-    if (sentAt !== undefined && Date.now() - sentAt < 20000) { pendingSent.delete(m.text); continue }
-    const key = `${m.ts}|${m.nickname}|${m.text}`
-    if (chatSeen.has(key)) continue
-    chatSeen.add(key)
-    if (!added && list.querySelector('.mono')) list.replaceChildren() // clear placeholder
-    added = true
-    const row = el('div', 'chatrow')
-    const nm = el('span', 'chatname', m.nickname)
-    nm.style.color = nameColor(m.nickname)
-    row.appendChild(nm)
-    row.appendChild(el('span', 'chattext', ' ' + m.text))
-    list.appendChild(row)
-  }
-  if (!added) return
-  while (list.childElementCount > 80) list.firstElementChild?.remove()
-  if (chatSeen.size > 600) chatSeen.clear()
-  list.scrollTop = list.scrollHeight
-}
-
-// Render our own outgoing message immediately (optimistic), styled as "You".
-function appendOwnChat(text: string) {
-  const list = $('chatList')
-  if (list.querySelector('.mono')) list.replaceChildren() // clear placeholder
-  const row = el('div', 'chatrow')
-  const nm = el('span', 'chatname', 'You')
-  nm.style.color = 'var(--accent-2)'
-  row.appendChild(nm)
-  row.appendChild(el('span', 'chattext', ' ' + text))
-  list.appendChild(row)
-  while (list.childElementCount > 80) list.firstElementChild?.remove()
-  list.scrollTop = list.scrollHeight
-}
-
-// ── send-to-chat (streamer posts into the live) ──────────────────────────────
-function setupChatInput() {
-  const input = document.getElementById('chatInput') as HTMLInputElement | null
-  const btn = document.getElementById('chatSend') as HTMLButtonElement | null
-  if (!input || !btn) return
-  if (!window.chatAPI) { input.disabled = true; btn.disabled = true; input.placeholder = 'Chat unavailable'; return }
-  let sending = false
-  const send = async () => {
-    const text = input.value.trim()
-    if (!text || sending) return
-    sending = true
-    btn.disabled = true
-    input.value = ''
-    try {
-      const r = await window.chatAPI!.send(text)
-      if (r?.ok) {
-        pendingSent.set(text, Date.now()) // suppress the webcast echo of our own message
-        appendOwnChat(text)
-      } else {
-        input.value = text // restore so the user can retry
-        input.placeholder = r?.error ? `Failed: ${r.error}`.slice(0, 60) : 'Send failed — retry'
-      }
-    } catch {
-      input.value = text
-      input.placeholder = 'Send failed — retry'
-    } finally {
-      sending = false
-      btn.disabled = false
-      input.focus()
-    }
-  }
-  btn.addEventListener('click', () => void send())
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void send() } })
-}
-setupChatInput()
+// The chat column now lives in chatDesk.ts: rows, name colours, the echo of an approved Host reply,
+// questions and wishes are all drawn by onChat(), which the 'chat' case calls right after this.
+// appendChat stays as a no-op so that call site is unchanged. The free-text composer
+// (setupChatInput / appendOwnChat) was already dead — index.html has no #chatInput — and is gone:
+// the only way to post is Approve on a question card.
+function appendChat(items: ChatMessage[]) { void items }
 // └── end lane C ────────────────────────────────────────────────────────────────
 
 // ┌── lane B: top buyers (renderTopBuyer moves to salesView.ts) ────────────────
@@ -352,34 +203,8 @@ setupChatInput()
 // by spend desc and recomputed each sales poll — so this updates as sales land, and
 // ranks 2-8 visibly move even when the #1 whale is stable (the single-name version
 // looked "stuck" precisely because it only ever showed #1).
-const TOP_BUYERS_SHOWN = 8
-function renderTopBuyer(buyers: BuyerAgg[]) {
-  const list = $('topBuyersList')
-  list.replaceChildren()
-  $('topBuyersCount').textContent = buyers.length ? `${buyers.length} buyer${buyers.length === 1 ? '' : 's'}` : ''
-  if (!buyers.length) {
-    const empty = el('div', 'mono', 'No sales yet')
-    empty.style.cssText = 'font-size:11px;color:var(--ink-4);'
-    list.appendChild(empty)
-    return
-  }
-  buyers.slice(0, TOP_BUYERS_SHOWN).forEach((b, i) => {
-    const rank = i + 1
-    const lead = rank === 1
-    const row = el('div')
-    row.style.cssText = 'display:flex;align-items:center;gap:9px;'
-    const rk = el('div', 'mono', String(rank))
-    rk.style.cssText = `width:15px;text-align:center;font-size:11px;font-weight:${lead ? '700' : '400'};color:${lead ? 'var(--accent)' : 'var(--ink-4)'};`
-    const name = el('div', '', '@' + (b.handle ?? (b.username || '—')))
-    name.style.cssText = `flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;font-weight:${lead ? '600' : '400'};color:${lead ? 'var(--ink)' : 'var(--ink-2)'};`
-    const spend = el('div', 'mono', `$${(b.totalCents / 100).toFixed(0)}`)
-    spend.style.cssText = 'font-size:12.5px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;'
-    const items = el('div', 'mono', `·${b.itemCount}`)
-    items.style.cssText = 'width:26px;text-align:right;font-size:11px;color:var(--ink-4);'
-    row.append(rk, name, spend, items)
-    list.appendChild(row)
-  })
-}
+// (Now in salesView.ts renderTopBuyers, with the past-order badge; this delegate keeps the name.)
+function renderTopBuyer(buyers: BuyerAgg[]) { renderTopBuyers(buyers) }
 // └── end lane B (top buyers) ───────────────────────────────────────────────────
 
 // ── products ────────────────────────────────────────────────────────────────
@@ -495,42 +320,10 @@ function fmtLeft(ms: number): string {
 
 // ┌── lane B: payment issues (renderFailed moves to salesView.ts; source becomes storeAPI.failedPayments)
 // ── failed / expired payments ───────────────────────────────────────────────
+// failedSales is ev.failedPayments (the sales handler writes it). The panel — live failures and
+// lapsed deadlines, plus the store's failures this show — is salesView.ts renderPaymentIssues.
 let failedSales: Sale[] = []
-function renderFailed() {
-  const panel = document.getElementById('failedPanel')
-  const list = document.getElementById('failedList')
-  const count = document.getElementById('failedCount')
-  if (!panel || !list) return
-  // Expired-but-not-yet-flipped rows belong here too: auction_result can take a while to
-  // move order_status to 2, and a lapsed deadline is already a decision the room can act on.
-  const expired = allSales.filter((s) => s.paymentStatus === 'pending' && s.paymentExpiresAt && s.paymentExpiresAt <= Date.now())
-  const rows = [...failedSales, ...expired.filter((e) => !failedSales.some((f) => f.orderId === e.orderId))]
-    .sort((a, b) => b.createdAt - a.createdAt)
-  panel.style.display = rows.length ? '' : 'none'
-  if (count) count.textContent = String(rows.length)
-  list.replaceChildren()
-  for (const s of rows.slice(0, 40)) {
-    const row = el('div', 'bidrow failed')
-    const who = el('div', 'bidwho')
-    who.appendChild(el('div', 'bidname', s.buyer.username || s.buyer.handle || '—'))
-    const sub = el('div', 'bidsub')
-    sub.appendChild(el('span', 'tag failed', s.paymentStatus === 'failed' ? 'FAILED' : 'EXPIRED'))
-    sub.appendChild(txt(`${s.skuDesc ? s.skuDesc + ' · ' : ''}${s.productName}`))
-    who.appendChild(sub)
-    row.appendChild(who)
-    const right = el('div', 'bidright')
-    right.appendChild(el('div', 'bidprice failed', s.price.formatted))
-    right.appendChild(el('div', 'bidtime', ago(s.createdAt)))
-    row.appendChild(right)
-    // the label already printed at the gavel — reprinting is the common recovery when the
-    // item comes back off the pack bench and gets relisted
-    const pb = el('button', 'printmini', '🖨')
-    pb.title = 'Reprint this label'
-    pb.addEventListener('click', () => printSale(s))
-    row.appendChild(pb)
-    list.appendChild(row)
-  }
-}
+function renderFailed() { renderPaymentIssues() }
 // └── end lane B (payment issues) ───────────────────────────────────────────────
 
 // ── session elapsed ─────────────────────────────────────────────────────────
@@ -590,31 +383,19 @@ let selectedPrinter = ''
 let autoPrint = false
 let feedWinsSeen = 0 // "won" feed rows observed this session (lets you confirm the observer catches wins even before flipping to feed mode)
 let lastPrintedNumber: number | null = null
-// ┌── lane E: the legacy print queue (printQueue + renderQueue go away; the Print log replaces them)
+// ┌── lane E: the Print log head state (the finished jobs are drawn by printLog.ts)
+// printLabel() still pushes each job here (bounded at 30) so the head can count in-flight prints;
+// the list itself is no longer drawn — the Print log replaced the Thermal print queue.
 const printQueue: { label: string; status: 'printing' | 'printed' | 'error' }[] = []
 
 function renderQueue() {
-  const q = $('printQueue')
-  q.replaceChildren()
-  // The header badge reflects real state, not a hardcoded count: in-flight prints,
-  // else a nudge to pick a printer, else the settings affordance.
+  // Head state that needs renderer-local facts: in-flight prints, and a nudge when no printer is
+  // chosen (the chip opens Settings; lane F wires its click).
   const printing = printQueue.filter((i) => i.status === 'printing').length
+  const meta = document.getElementById('printLogMeta')
+  if (meta) meta.textContent = printing > 0 ? `${printing} printing…` : 'Newest first'
   const badge = document.getElementById('labelSettingsFooter')
-  if (badge) badge.textContent = printing > 0 ? `${printing} PRINTING` : selectedPrinter ? 'LABEL SETTINGS' : 'SET PRINTER'
-  if (!printQueue.length) { q.appendChild(el('div', 'mono', 'No labels yet')); q.firstElementChild!.setAttribute('style', 'padding:14px 16px;color:var(--ink-4);font-size:11px;'); return }
-  for (const item of printQueue.slice(0, 8)) {
-    const row = el('div', 'qrow')
-    const icon = item.status === 'printed' ? '✓' : item.status === 'error' ? '✗' : '…'
-    const color = item.status === 'printed' ? 'var(--gain)' : item.status === 'error' ? 'var(--loss)' : 'var(--flag)'
-    const who = el('div', 'bidwho')
-    who.appendChild(el('div', 'bidname', item.label))
-    who.appendChild(el('div', 'bidsub', item.status))
-    row.appendChild(who)
-    const st = el('div', 'mono', icon)
-    st.style.cssText = `font-size:16px;color:${color};`
-    row.appendChild(st)
-    q.appendChild(row)
-  }
+  if (badge) badge.hidden = !!selectedPrinter
 }
 // └── end lane E ────────────────────────────────────────────────────────────────
 
@@ -911,316 +692,17 @@ window.updateAPI?.onReady((info) => {
 
 // ┌── lane F: label settings — preview, sample, per-field sizes, saved patterns, setupSettings
 //     (moves to designer.ts; the regex tools move into #titleDrawer) ───────────────
-// ── label print preview ──────────────────────────────────────────────────────
-// Renders the REAL print HTML (labelHtml) for a representative sale, scaled up, so the
-// user sees exactly how the thermal label will print as they change the template.
-// The sample is editable so you can paste a REAL listing title and see, in one place,
-// what the custom regex pulls out of it and how the label physically prints. Persisted,
-// because the title you want to test against is usually the one you tested last time.
-const DEFAULT_SAMPLE_TITLE = '#141 Bin A - Alo Yoga and More, No Cancels'
-const DEFAULT_SAMPLE_BUYER = 'Sarah D.'
-let sampleTitle = localStorage.getItem('tt-sample-title') ?? DEFAULT_SAMPLE_TITLE
-let sampleBuyer = localStorage.getItem('tt-sample-buyer') ?? DEFAULT_SAMPLE_BUYER
-
-/** Build the preview's LabelData the same way a real sale does: the lot number is parsed
- *  out of the title, and the product name is what remains once the "#NN " prefix is gone. */
-function sampleLabelData(): LabelData {
-  const title = sampleTitle.trim()
-  return {
-    itemNumber: parseItemNumber(title),
-    buyer: sampleBuyer.trim(),
-    // '#' optional so this strips exactly what parseItemNumber consumed — otherwise a
-    // title like "141 - Plain" prints the lot number twice
-    productName: title.replace(/^\s*#?\s*\d+\s*[-–—]?\s*/, '').trim() || title,
-    price: '$82.00',
-    title,
-    code: labelCode('1732451642461557731'), // a real sku_id shape, so the preview QR is full size
-  }
-}
-function renderLabelPreview() {
-  const ifr = document.getElementById('labelPreview') as HTMLIFrameElement | null
-  if (!ifr) return
-  const size = LABEL_SIZES[labelTemplate.labelSize] ?? LABEL_SIZES['2x1']
-  const scale = 2.4
-  const wPx = Math.round(size.widthIn * 96), hPx = Math.round(size.heightIn * 96)
-  ifr.style.width = wPx + 'px'; ifr.style.height = hPx + 'px'
-  ifr.style.transformOrigin = 'top left'; ifr.style.transform = `scale(${scale})`
-  const wrap = document.getElementById('labelPreviewWrap')
-  if (wrap) { wrap.style.width = Math.round(wPx * scale) + 'px'; wrap.style.height = Math.round(hPx * scale) + 'px' }
-  ifr.srcdoc = labelHtml(sampleLabelData(), labelTemplate)
-  const sz = document.getElementById('labelPreviewSize'); if (sz) sz.textContent = `${size.widthIn}″ × ${size.heightIn}″`
-}
-
-// "Print sample" — sends the preview's sample label to the selected printer (a test print).
+// Moved to designer.ts: the label designer, the sample sale, the regex tools and presets. These
+// two names stay because code outside this fence calls them.
 function updateSampleBtn() {
-  // Two doors to the same test print: beside the preview, and beside the printer it tests.
-  for (const id of ['printSample', 'printTest']) {
-    const b = document.getElementById(id) as HTMLButtonElement | null
-    if (!b) continue
-    b.disabled = !selectedPrinter
-    b.title = selectedPrinter ? `Print a test label to ${selectedPrinter}` : 'Select a printer first'
-  }
+  refreshPrinterButtons()
 }
-
-// ── per-field text size (−/+ multipliers, applied by labelHtml + the preview) ──
-const SCALE_FIELDS: LabelField[] = ['itemNumber', 'custom', 'buyer', 'productName', 'price']
-const scaleOf = (f: LabelField): number => labelTemplate.scale?.[f] ?? 1
-// Show the size that actually prints (pt), not the multiplier: "100%" told you nothing
-// about how big the text is, and the same 100% is 40pt for the item number and 6.5pt for
-// the product name. The multiplier is still what's stored — it's just in the tooltip now.
-function updateScaleLabels() {
-  for (const f of SCALE_FIELDS) {
-    const lbl = document.getElementById('sz-' + f)
-    if (!lbl) continue
-    const base = basePt(f, labelTemplate.labelSize)
-    lbl.textContent = +(base * scaleOf(f)).toFixed(1) + 'pt'
-    lbl.title = `${Math.round(scaleOf(f) * 100)}% of the ${base}pt default for this label size`
-  }
-}
-function applyScale(f: LabelField, delta: number) {
-  const next = Math.min(3, Math.max(0.4, +(scaleOf(f) + delta).toFixed(2)))
-  labelTemplate.scale = { ...(labelTemplate.scale ?? {}), [f]: next }
-  saveTemplate(); updateScaleLabels(); renderLabelPreview()
-}
-
-// ── saved regex patterns ────────────────────────────────────────────────────
-// There is no database behind any of this — the whole label template lives in this
-// window's localStorage (see saveTemplate). That already persisted the ONE active regex
-// across restarts, but a seller runs different tag schemes on different shows (NWT/RETURN
-// on a returns pallet, Bin A/B on a sorted one) and had to retype the pattern each time.
-// Presets are the same storage, just a named list, so switching is one dropdown.
-interface RegexPreset { name: string; regex: string; flags: string }
-const PRESETS_KEY = 'tt-regex-presets'
-const SEED_PRESETS: RegexPreset[] = [
-  { name: 'NWT / RETURN', regex: '\\b(NWT|RETURN)S?\\b', flags: 'i' },
-  { name: 'Bin A / Bin B', regex: '\\b(Bin\\s+[A-Z])\\b', flags: 'i' },
-  { name: 'Lot number', regex: '(#\\d+)', flags: '' },
-]
-function loadPresets(): RegexPreset[] {
-  try {
-    const raw = localStorage.getItem(PRESETS_KEY)
-    if (!raw) return [...SEED_PRESETS] // first run: start with the patterns we know work
-    const list = JSON.parse(raw) as RegexPreset[]
-    return Array.isArray(list) ? list.filter((p) => p && typeof p.name === 'string' && typeof p.regex === 'string') : [...SEED_PRESETS]
-  } catch { return [...SEED_PRESETS] }
-}
-const savePresets = (list: RegexPreset[]) => localStorage.setItem(PRESETS_KEY, JSON.stringify(list))
-let regexPresets: RegexPreset[] = loadPresets()
-
-// ── label settings modal ────────────────────────────────────────────────────
 function setupSettings() {
-  const inp = (id: string) => document.getElementById(id) as HTMLInputElement
-  const sel = (id: string) => document.getElementById(id) as HTMLSelectElement
-  sel('setSize').value = labelTemplate.labelSize
-  inp('setItemNumber').checked = labelTemplate.itemNumber
-  inp('setBuyer').checked = labelTemplate.buyer
-  inp('setProductName').checked = labelTemplate.productName
-  inp('setPrice').checked = labelTemplate.price
-  inp('setQr').checked = !!labelTemplate.qr
-  inp('setCustom').checked = labelTemplate.custom.enabled
-  inp('setRegex').value = labelTemplate.custom.regex
-  inp('setFlags').value = labelTemplate.custom.flags
-  // Extraction preview runs the SAME extractCustom the printer path uses, against whatever
-  // title is currently in the box — so "(no match)" here means "(no match)" on the label.
-  const preview = () => {
-    const out = document.getElementById('extractPreview')!
-    if (!labelTemplate.custom.regex) { out.textContent = '—'; return }
-    try {
-      new RegExp(labelTemplate.custom.regex, labelTemplate.custom.flags) // throws on a bad pattern
-      const v = extractCustom(sampleTitle, labelTemplate.custom.regex, labelTemplate.custom.flags)
-      out.textContent = v || '(no match)'
-    } catch { out.textContent = '(invalid regex)' }
-  }
-  // Which print path this sample would take. Emoji / non-Latin in a buyer name can't be
-  // drawn by ZPL's built-in font, so those labels fall back to the ~1s HTML render — worth
-  // seeing while you are editing the sample rather than discovering it mid-show.
-  const pathHint = () => {
-    const hint = document.getElementById('samplePathHint')
-    if (!hint) return
-    const slow = labelNeedsHtml(sampleLabelData(), labelTemplate)
-    hint.textContent = slow ? '⚠ falls back to slow HTML path' : ''
-    hint.title = slow ? 'This label has glyphs ZPL cannot draw, so it prints via the slower HTML path.' : ''
-  }
-  const sampleInputs = () => {
-    const t = inp('sampleTitle')
-    const b = inp('sampleBuyer')
-    t.value = sampleTitle
-    b.value = sampleBuyer
-    const onEdit = () => {
-      sampleTitle = t.value
-      sampleBuyer = b.value
-      localStorage.setItem('tt-sample-title', sampleTitle)
-      localStorage.setItem('tt-sample-buyer', sampleBuyer)
-      preview(); renderLabelPreview(); pathHint()
-    }
-    t.addEventListener('input', onEdit)
-    b.addEventListener('input', onEdit)
-  }
-  sampleInputs()
-
-  // ── AI help for the extraction pattern ──────────────────────────────────────
-  // The suggestion is shown, never applied. It is run through the SAME extractCustom the printer
-  // uses, against the operator's own sample title, so what is on screen is what would print.
-  const regexAI = () => {
-    const ask = document.getElementById('rxAsk') as HTMLButtonElement | null
-    const want = inp('rxWant')
-    const box = document.getElementById('rxResult')
-    const state = document.getElementById('rxState')
-    if (!ask || !box || !state) return
-    let proposed: { regex: string; flags: string } | null = null
-
-    const say = (msg: string, bad = false) => {
-      state.textContent = msg
-      state.className = 'state ' + (bad ? 'bad-text' : 'muted')
-    }
-    if (!window.recapAPI?.suggestRegex) {
-      ask.disabled = true
-      say('Connect this computer to SellerFolio to use suggestions.')
-    }
-    document.getElementById('rxDismiss')?.addEventListener('click', () => { box.hidden = true; proposed = null })
-    document.getElementById('rxUse')?.addEventListener('click', () => {
-      if (!proposed) return
-      inp('setRegex').value = proposed.regex
-      inp('setFlags').value = proposed.flags
-      inp('setCustom').checked = true          // a pattern nobody prints is not what they asked for
-      box.hidden = true
-      proposed = null
-      apply()
-      say('Pattern applied.')
-    })
-    ask.addEventListener('click', async () => {
-      const title = sampleTitle.trim()
-      if (!title) return say('Paste a sample listing title above first.', true)
-      if (!want.value.trim()) return say('Describe what should print.', true)
-      ask.disabled = true
-      say('Asking…')
-      try {
-        const r = await window.recapAPI!.suggestRegex!({ title, want: want.value.trim() })
-        if (r.error || !r.regex) return say(r.error ?? 'No pattern came back.', true)
-        // Compile it before it is ever shown as usable — a malformed pattern must not reach the field.
-        try { new RegExp(r.regex, r.flags ?? '') } catch (e) {
-          return say('The suggested pattern was not valid: ' + (e as Error).message, true)
-        }
-        const prints = extractCustom(title, r.regex, r.flags ?? '')
-        proposed = { regex: r.regex, flags: r.flags ?? '' }
-        document.getElementById('rxPattern')!.textContent = r.regex + (r.flags ? '  /' + r.flags : '')
-        const printsEl = document.getElementById('rxPrints')!
-        printsEl.textContent = prints || 'nothing'
-        printsEl.style.color = prints ? 'var(--ink)' : 'var(--loss)'
-        document.getElementById('rxExplain')!.textContent = r.explain ?? ''
-        box.hidden = false
-        // Offering a pattern that extracts nothing from the operator's own title would be offering
-        // a label that prints blank, so say so rather than letting the empty result pass as a result.
-        say(prints ? '' : 'That pattern finds nothing in your sample title — try describing it differently.', !prints)
-      } catch (e) {
-        say((e as Error).message, true)
-      } finally {
-        ask.disabled = false
-      }
-    })
-  }
-  regexAI()
-  const apply = () => {
-    labelTemplate = {
-      labelSize: sel('setSize').value as LabelTemplate['labelSize'],
-      itemNumber: inp('setItemNumber').checked, buyer: inp('setBuyer').checked,
-      productName: inp('setProductName').checked, price: inp('setPrice').checked,
-      qr: inp('setQr').checked,
-      custom: { enabled: inp('setCustom').checked, regex: inp('setRegex').value, flags: inp('setFlags').value },
-      scale: labelTemplate.scale, // carry the per-field sizes over — rebuilding without
-      // them reset every field to 1× whenever any checkbox/size/regex changed
-    }
-    // the item number's 1× default is per label size, so the pt readout can move here too
-    saveTemplate(); preview(); renderLabelPreview(); updateScaleLabels(); pathHint()
-  }
-  for (const id of ['setSize', 'setItemNumber', 'setBuyer', 'setProductName', 'setPrice', 'setQr', 'setCustom', 'setRegex', 'setFlags']) {
-    document.getElementById(id)?.addEventListener('input', apply)
-    document.getElementById(id)?.addEventListener('change', apply)
-  }
-  document.querySelectorAll<HTMLButtonElement>('.sizestep button').forEach((b) => {
-    b.addEventListener('click', () => applyScale(b.dataset.size as LabelField, Number(b.dataset.d) * 0.1))
+  setupDesigner({
+    print: (data) => printLabel(data), // manual: never registers the lot in the print guard
+    printer: () => selectedPrinter,
+    openSettings: () => showScreen('settings'),
   })
-
-  // ── saved patterns ────────────────────────────────────────────────────────
-  const presetSel = sel('presetSel')
-  const presetName = inp('presetName')
-  const presetDelete = document.getElementById('presetDelete') as HTMLButtonElement
-  // Mark the dropdown when the box matches a saved pattern, so it reads as "you are on
-  // this preset" rather than leaving a stale name selected next to an edited regex.
-  const syncPresetSel = () => {
-    const regex = inp('setRegex').value
-    const hit = regexPresets.find((p) => p.regex === regex && p.flags === inp('setFlags').value)
-    presetSel.value = hit ? hit.name : ''
-    presetDelete.disabled = !hit
-    // The first option doubles as the "nothing chosen" line, so it has to say WHY nothing is
-    // chosen: a hand-written pattern is in use, or there is simply no choice made yet.
-    const first = presetSel.options[0]
-    const custom = !hit && regex.trim() !== ''
-    if (first) first.textContent = custom ? 'A custom pattern (see Advanced)' : regexPresets.length ? 'Choose what to print…' : 'No saved patterns — add one under Advanced'
-    // A custom pattern lives under Advanced; open it so the thing in use is never hidden.
-    const adv = document.getElementById('advPattern') as HTMLDetailsElement | null
-    if (adv && custom) adv.open = true
-  }
-  const renderPresets = () => {
-    presetSel.replaceChildren()
-    const none = document.createElement('option')
-    none.value = ''
-    none.textContent = 'Choose what to print…' // refined by syncPresetSel below
-    presetSel.appendChild(none)
-    for (const p of regexPresets) {
-      const o = document.createElement('option')
-      o.value = p.name
-      o.textContent = p.name
-      o.title = `/${p.regex}/${p.flags}`
-      presetSel.appendChild(o)
-    }
-    syncPresetSel()
-  }
-  presetSel.addEventListener('change', () => {
-    const p = regexPresets.find((x) => x.name === presetSel.value)
-    if (!p) { presetDelete.disabled = true; return }
-    inp('setRegex').value = p.regex
-    inp('setFlags').value = p.flags
-    inp('setCustom').checked = true // picking a pattern implies you want it printed
-    presetName.value = p.name
-    apply()
-    presetDelete.disabled = false
-  })
-  document.getElementById('presetSave')?.addEventListener('click', () => {
-    const regex = inp('setRegex').value.trim()
-    if (!regex) return
-    // Default the name to the pattern itself rather than refusing — Electron has no
-    // window.prompt, and a nameless save that silently does nothing is worse.
-    const name = (presetName.value.trim() || regex).slice(0, 40)
-    const flags = inp('setFlags').value.trim()
-    const at = regexPresets.findIndex((p) => p.name.toLowerCase() === name.toLowerCase())
-    if (at >= 0) regexPresets[at] = { name, regex, flags } // same name overwrites, no duplicates
-    else regexPresets.push({ name, regex, flags })
-    savePresets(regexPresets)
-    renderPresets()
-    presetSel.value = name
-    presetDelete.disabled = false
-  })
-  presetDelete.addEventListener('click', () => {
-    const name = presetSel.value
-    if (!name) return
-    regexPresets = regexPresets.filter((p) => p.name !== name)
-    savePresets(regexPresets)
-    presetName.value = ''
-    renderPresets()
-  })
-  for (const id of ['setRegex', 'setFlags']) document.getElementById(id)?.addEventListener('input', syncPresetSel)
-  renderPresets()
-  document.getElementById('printSample')?.addEventListener('click', () => void printLabel(sampleLabelData()))
-  document.getElementById('printTest')?.addEventListener('click', () => void printLabel(sampleLabelData()))
-  updateScaleLabels()
-  updateSampleBtn()
-  preview()
-  renderLabelPreview()
-  pathHint()
-  const open = () => showScreen('settings')
-  document.getElementById('labelSettings')?.addEventListener('click', open)
-  document.getElementById('labelSettingsFooter')?.addEventListener('click', open)
 }
 // └── end lane F ────────────────────────────────────────────────────────────────
 setupSettings()

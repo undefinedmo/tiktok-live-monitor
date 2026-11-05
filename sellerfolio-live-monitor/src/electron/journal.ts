@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path'
 import * as nodeFs from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { buildJournalLine, journalFileName } from '../core/journalLine'
-import { emptyStoreResult, type StoreQuery, type StoreResult } from '../core/storeIndex'
+import { emptyStoreResult, type ResultOf, type StoreQuery, type StoreResult } from '../core/storeIndex'
 
 interface Context { room?: string; session?: string; sessionName?: string }
 
@@ -202,7 +202,10 @@ export function flushJournal(timeoutMs = 1500): Promise<boolean> {
  * never rejects: no worker, a timeout or a dead worker all resolve to an empty result of the
  * right kind.
  */
-export function queryStore(query: StoreQuery, timeoutMs = 1500): Promise<StoreResult> {
+export function queryStore<Q extends StoreQuery>(query: Q, timeoutMs = 1500): Promise<ResultOf<Q>> {
+  return queryStoreAny(query, timeoutMs) as Promise<ResultOf<Q>>
+}
+function queryStoreAny(query: StoreQuery, timeoutMs: number): Promise<StoreResult> {
   const w = worker
   if (!w) return Promise.resolve(emptyStoreResult(query))
   return new Promise<StoreResult>((resolve) => {

@@ -11,7 +11,7 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSyn
 import { dirname, join } from 'node:path'
 import { JournalWriter } from '../core/journalWriter'
 import { backoffMs, batchBody, orderJournalFiles, takeLines, verdictFor } from '../core/journalSync'
-import { StoreIndex, emptyStoreResult, type StoreQuery, type StoreResult } from '../core/storeIndex'
+import { StoreIndex, emptyStoreResult, roomOfJournalFile, type StoreQuery, type StoreResult } from '../core/storeIndex'
 
 const FLUSH_MS = 250 // the most a crash can lose
 const FLUSH_AT = 200 // ...or sooner, in a burst
@@ -136,9 +136,44 @@ async function tick(): Promise<void> {
 
 // ── lane B: the show store ────────────────────────────────────────────────────
 // An in-memory index of this show's journal (core/storeIndex.ts), answering the searches the
-// viewer runs. Fed every record as it is queued, so a query never waits on the disk.
-// SCAFFOLD STUB: StoreIndex ingests nothing and answers empty.
+// viewer runs. Fed every record as it is queued, so a query never waits on the disk. When the
+// first record for a room arrives (app start, or a new show), the index is rebuilt from that
+// room's files already on disk — HERE, in the worker, never on main or the renderer — so a
+// restart mid-show still finds every earlier sale and chat line.
 const store = new StoreIndex()
+/** The most of one journal file read back at a rebuild; a bigger file contributes its newest part. */
+const REBUILD_MAX_BYTES = 64 * 1024 * 1024
+let storeRoom = ''
+
+function readTail(file: string): string {
+  const size = statSync(file).size
+  if (size <= REBUILD_MAX_BYTES) return readFileSync(file, 'utf8')
+  const buf = Buffer.allocUnsafe(REBUILD_MAX_BYTES)
+  const fd = openSync(file, 'r')
+  let n = 0
+  try { n = readSync(fd, buf, 0, REBUILD_MAX_BYTES, size - REBUILD_MAX_BYTES) } finally { closeSync(fd) }
+  const text = buf.subarray(0, n).toString('utf8')
+  return text.slice(text.indexOf('\n') + 1) // the first line is cut mid-way
+}
+
+/** A record for `file` is about to be queued: if it is a new room's, rebuild the index from disk. */
+function storeFollow(file: string): void {
+  const room = roomOfJournalFile(file)
+  if (!room || room === storeRoom) return
+  storeRoom = room
+  try {
+    flush() // what the writer still holds goes to disk first, so the read-back is complete
+    store.reset(room)
+    const dir = dirname(file)
+    // Sales file first, then chat (orderJournalFiles' order): ingest is idempotent either way.
+    for (const name of [`show-${room}.jsonl`, `show-${room}.chat.jsonl`]) {
+      const f = join(dir, name)
+      if (existsSync(f)) store.ingestText(readTail(f))
+    }
+  } catch (e) {
+    parentPort?.postMessage({ kind: 'error', message: `show store rebuild failed: ${String((e as Error)?.message ?? e)}` })
+  }
+}
 
 type Msg =
   | { kind: 'rec'; file: string; line: string }
@@ -149,6 +184,7 @@ type Msg =
 
 parentPort?.on('message', (m: Msg) => {
   if (m.kind === 'rec') {
+    storeFollow(m.file) // lane B: a new room's first record rebuilds the store from disk (never throws)
     writer.add(m.file, m.line)
     try { store.ingest(m.line) } catch { /* the store is best-effort; the journal write is not */ }
     if (writer.size >= FLUSH_AT) flush()

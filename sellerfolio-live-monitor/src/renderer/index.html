@@ -323,16 +323,186 @@
       /* Each lane appends ONLY inside its own block below. Shared classes stay above. */
 
       /* lane A — shell: #navRail, #topControls, #textSizeSlot */
+      #navRail.rail{width:76px;gap:4px;padding:8px 6px;}
+      .sh-nav{position:relative;width:64px;min-height:58px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;border-radius:8px;background:none;font:600 11px var(--ui);color:var(--ink-3);cursor:pointer;}
+      .sh-nav:hover{background:var(--panel-hover);}
+      .sh-nav.on{background:var(--accent-tint);color:var(--accent-2);}
+      .sh-nav:disabled{opacity:.4;cursor:default;background:none;}
+      .sh-nav:focus-visible,.sh-arm:focus-visible,.sh-last:focus-visible,.sh-btn:focus-visible,.sh-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+      .sh-nav svg{width:22px;height:22px;}
+      .sh-count{position:absolute;top:4px;right:9px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--loss);color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;}
+      .sh-count[hidden]{display:none;}
+      .top-controls{display:flex;align-items:center;gap:8px;flex:none;}
+      .top-controls[hidden]{display:none;}
+      .sh-arm{display:flex;align-items:center;gap:8px;height:36px;padding:0 11px;border:1px solid var(--line-strong);border-radius:8px;background:var(--panel);font:600 12.5px var(--ui);color:var(--ink);cursor:pointer;white-space:nowrap;flex:none;}
+      .sh-knob{width:30px;height:18px;border-radius:9px;background:var(--ink-4);position:relative;flex:none;}
+      .sh-knob i{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .12s ease;}
+      .sh-arm.on{border-color:var(--gain);}.sh-arm.on .sh-knob{background:var(--gain);}.sh-arm.on .sh-knob i{left:14px;}
+      .sh-runwrap{display:inline-flex;flex:none;cursor:not-allowed;}
+      .sh-run{display:flex;align-items:center;gap:8px;height:36px;padding:0 12px;border:0;border-radius:8px;background:var(--accent);color:#fff;font:700 13px var(--ui);cursor:pointer;white-space:nowrap;}
+      .sh-run:hover{background:var(--accent-2);}
+      .sh-run:disabled{background:var(--panel-3);color:var(--ink-3);cursor:not-allowed;pointer-events:none;}
+      .sh-last{display:flex;align-items:center;gap:8px;height:36px;padding:0 12px;border:1px solid var(--line-strong);border-radius:8px;background:var(--panel);color:var(--ink);font:700 13px var(--ui);cursor:pointer;white-space:nowrap;flex:none;}
+      .sh-last:hover{background:var(--panel-hover);}
+      .sh-last.sh-flash{border-color:var(--flag);color:var(--flag);}
+      .sh-key{font-family:var(--mono);font-size:10.5px;font-weight:500;padding:1px 5px;border:1px solid currentColor;border-radius:4px;}
+      .topbar{min-width:0;flex-wrap:nowrap;}
+      #liveMeters{flex:none;}
+      .topmeter{white-space:nowrap;}
+      .sh-textrow{display:flex;align-items:center;gap:10px;margin-top:10px;}
+      .sh-btn{min-height:36px;padding:0 12px;border:1px solid var(--line-strong);border-radius:6px;background:var(--panel);font:600 13px var(--ui);color:var(--ink);cursor:pointer;}
+      .sh-btn:hover{background:var(--panel-hover);}
+      .sh-btn:disabled{background:var(--panel-3);border-color:var(--line);color:var(--ink-3);cursor:not-allowed;}
+      .sh-a{min-width:48px;min-height:40px;font-size:15px;}
+      .sh-pct{min-width:48px;text-align:center;font-family:var(--mono);font-weight:600;}
+      .sh-link{background:none;border:0;padding:2px;font:600 12px var(--ui);color:var(--accent-2);cursor:pointer;text-decoration:underline;}
+      /* Text size 120% and up: the top bar sheds the live pill and the Room meter; columns tighten. */
+      body.sh-big #livePill{display:none !important;}
+      body.sh-big #liveMeters .topmeter:first-child{display:none;}
+      body.sh-big #statsGrid{grid-template-columns:minmax(0,.75fr) minmax(0,1.5fr) minmax(0,.8fr);gap:8px;}
+      body.sh-big #statsGrid > *{min-width:0;padding-left:12px;padding-right:10px;}
+      body.sh-big .video-col{flex:0 1 300px;min-width:240px;padding:12px;}
+      body.sh-big .chat-col{min-width:240px;}
+      body.sh-big .rightpanel{min-width:0;padding:12px;}
+      @media (prefers-reduced-motion:reduce){.sh-knob i{transition:none;}}
 
       /* lane B — sales view: #feedSearch, feed rows, past-order badges on sale rows */
+      #feedSearch{flex:none;padding:8px 12px;border-bottom:1px solid var(--line);}
+      #feedSearch:empty{display:none;}
+      .feed-search-in{width:100%;min-height:36px;padding:0 10px;border:1px solid var(--line-strong);border-radius:6px;font:400 13.5px var(--ui);background:var(--panel);color:var(--ink);box-sizing:border-box;outline:none;}
+      .feed-search-in:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-tint);}
+      .feed-note{margin-top:6px;font-size:12px;color:var(--ink-3);}
+      .feed-note:empty{display:none;}
+      #bidFeed .placeholder{padding:18px 16px;}
+      #topBuyersList .tag{flex:none;margin-right:0;}
 
       /* lane C — chat: #chatTools, question cards, #askingPanel, #chatScreen */
+      #chatTools{flex:none;display:flex;flex-direction:column;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);}
+      .cd-in{width:100%;min-height:36px;padding:0 10px;border:1px solid var(--line-strong);border-radius:6px;font:400 13.5px var(--ui);background:var(--panel);color:var(--ink);box-sizing:border-box;}
+      .cd-in:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-tint);}
+      .cd-in:disabled{background:var(--panel-3);color:var(--ink-3);}
+      .cd-kinds{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px;padding:3px;border-radius:8px;background:var(--panel-2);}
+      .cd-kind{min-height:32px;border:0;border-radius:6px;background:none;font:600 12.5px var(--ui);color:var(--ink-2);cursor:pointer;}
+      .cd-kind.on{background:var(--panel);color:var(--ink);box-shadow:0 0 0 1px var(--line);}
+      .cd-kindn{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--flag-bg);color:var(--flag);font-size:11px;}
+      .cd-hint{flex:none;font-size:11.5px;color:var(--ink-3);text-align:center;}
+      .cd-hint.live{color:var(--accent-2);font-weight:600;}
+      #chatList .chatrow.cd-q{display:flex;flex-direction:column;gap:7px;padding:9px 10px;margin:0 -6px;border-radius:8px;border:1px solid #bcd2ff;background:var(--accent-tint);}
+      #chatList .chatrow.cd-q.need{background:var(--flag-bg);border-color:#e6c48f;}
+      #chatList .chatrow.cd-q.done{background:var(--gain-bg);border-color:#b5dfc4;}
+      #chatList .chatrow.cd-q.skip{background:var(--panel-2);border-color:var(--line);}
+      .cd-reply{display:flex;gap:6px;}
+      .cd-reply .cd-in{flex:1 1 0;min-width:0;}
+      .cd-btn{flex:none;min-height:36px;padding:0 12px;border:1px solid var(--line-strong);border-radius:6px;background:var(--panel);font:600 13px var(--ui);color:var(--ink);cursor:pointer;}
+      .cd-btn:hover{background:var(--panel-hover);}
+      .cd-btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+      .cd-btn.primary:hover{background:var(--accent-2);}
+      .cd-btn.on{background:var(--gain-bg);border-color:#b5dfc4;color:var(--gain);}
+      .cd-btn:disabled,.cd-btn.primary:disabled{background:var(--panel-3);border-color:var(--line);color:var(--ink-3);cursor:not-allowed;}
+      .cd-sub{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--ink-3);}
+      .cd-err{color:var(--loss);font-weight:600;}
+      .cd-link{background:none;border:0;padding:2px;font:600 12px var(--ui);color:var(--accent-2);cursor:pointer;text-decoration:underline;}
+      .cd-link:disabled{color:var(--ink-4);cursor:not-allowed;}
+      .cd-wish{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:99px;background:var(--accent-tint);color:var(--accent-2);font-size:11px;font-weight:600;}
+      .cd-host{font-size:13px;color:var(--ink-2);}
+      .cd-host b{color:var(--gain);}
+      #askingPanel[hidden]{display:none;}
+      .cd-rows{padding:8px 16px 12px;}
+      .cd-row{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:30px;font-size:13.5px;}
+      .cd-item{min-width:0;overflow-wrap:anywhere;}
+      .cd-tag{flex:none;padding:2px 8px;border-radius:99px;background:var(--panel-2);font-size:12px;font-weight:600;color:var(--ink-2);}
+      .cd-tag.cd-st.ready{background:var(--accent-tint);color:var(--accent-2);}
+      .cd-tag.cd-st.need{background:var(--flag-bg);color:var(--flag);}
+      .cd-tag.cd-st.done{background:var(--gain-bg);color:var(--gain);}
+      .cd-more{padding-top:4px;font-size:12px;color:var(--ink-3);}
+      #chatScreen{flex-wrap:wrap;align-content:flex-start;align-items:flex-start;gap:12px;padding:16px;overflow:auto;background:var(--canvas);}
+      #chatScreen .cd-questions{flex:1.5 1 420px;min-width:0;}
+      #chatScreen .cd-wishlist{flex:.8 1 300px;min-width:0;}
+      .cd-pad{padding:12px 16px;color:var(--ink-3);font-size:13px;}
+      .cd-q2{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:7px;}
+      .cd-q2:last-child{border-bottom:0;}
+      .cd-q2 .cd-sub b{color:var(--ink);font-size:13px;}
+      .cd-qtext{font-size:13.5px;color:var(--ink);}
+      .cd-q2 small{color:var(--ink-3);font-size:12px;}
+      .cd-q2 .cd-item{font-size:13.5px;color:var(--ink);}
+      .cd-q2.fulfilled .cd-item{color:var(--ink-3);text-decoration:line-through;}
 
       /* lane D — buyer history: .tag variants for the past-order badge (NEW / count) */
+      .tag.buyer-new{color:#fff;background:var(--gain);border-color:var(--gain);font-size:10px;font-weight:700;}
+      .tag.buyer-ord{min-width:20px;box-sizing:border-box;text-align:center;color:var(--ink-2);background:var(--panel-2);border-color:var(--line-strong);font-size:10px;letter-spacing:0;}
+      #topBuyersList .tag.buyer-new,#topBuyersList .tag.buyer-ord{flex:none;margin-right:auto;}
 
       /* lane E — print log: #printLogPanel, #printLog */
+      #printLogPanel [hidden]{display:none!important;}
+      #printLog{padding:10px 16px 12px;font-family:var(--mono);font-size:12px;color:var(--ink-2);display:flex;flex-direction:column;gap:3px;max-height:112px;overflow:auto;}
+      #printLog .plog-line{display:flex;gap:2ch;white-space:nowrap;}
+      #printLog .plog-line>span:last-child{overflow:hidden;text-overflow:ellipsis;min-width:0;}
+      #printLog .plog-t{color:var(--ink-4);flex:none;}
+      #printLog .plog-line.bad{color:var(--loss);font-weight:600;cursor:help;}
+      #printLog .plog-line.bad .plog-t{color:var(--loss);}
+      #printLog .plog-empty{font-size:11px;color:var(--ink-4);}
+      #printLogFailed[aria-pressed="true"]{box-shadow:inset 0 0 0 1px var(--loss);}
 
       /* lane F — settings tabs + label designer: #settingsTabs, #designerTab, #titleDrawer */
+      /* The Preview card is gone (the designer canvas is the preview), so Printer & app is one column. */
+      #appTab .set-grid{grid-template-columns:minmax(0,720px);}
+      .set-tabs{display:flex;gap:2px;flex:none;padding:3px;border-radius:8px;background:var(--panel-2);align-self:flex-start;}
+      .set-tabs:empty{display:none;}
+      .lf-tab{min-height:36px;padding:0 16px;border:0;border-radius:6px;background:none;font:600 13px var(--ui);color:var(--ink-2);cursor:pointer;}
+      .lf-tab.on{background:var(--panel);color:var(--ink);box-shadow:0 0 0 1px var(--line);}
+      .lf-tab:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+      #designerTab:not([hidden]){display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,340px);gap:12px;align-items:start;}
+      @media (max-width:1000px){ #designerTab:not([hidden]){grid-template-columns:minmax(0,1fr);} }
+      .lf-col{display:flex;flex-direction:column;gap:12px;min-width:0;}
+      .lf-mode{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border:1px solid #bcd2ff;border-radius:10px;background:var(--accent-tint);font-size:13px;}
+      .lf-mode.std{background:var(--panel-2);border-color:var(--line);}
+      .lf-mode .lf-btn{flex:none;}
+      .lf-in{width:100%;min-height:36px;padding:0 10px;border:1px solid var(--line-strong);border-radius:6px;font:400 13.5px var(--ui);background:var(--panel);color:var(--ink);box-sizing:border-box;}
+      .lf-in:disabled{background:var(--panel-3);color:var(--ink-3);cursor:not-allowed;}
+      .lf-in:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-tint);}
+      .lf-btn{min-height:36px;padding:0 12px;border:1px solid var(--line-strong);border-radius:6px;background:var(--panel);font:600 13px var(--ui);color:var(--ink);cursor:pointer;white-space:nowrap;}
+      .lf-btn:hover{background:var(--panel-hover);}
+      .lf-btn:disabled{background:var(--panel-3);border-color:var(--line);color:var(--ink-3);cursor:not-allowed;}
+      .lf-btn:focus-visible,.lf-toggle:focus-visible,.lf-layer:focus-visible,.lf-link:focus-visible,.lf-x:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+      .lf-link{background:none;border:0;padding:2px;font:600 12px var(--ui);color:var(--accent-2);cursor:pointer;text-decoration:underline;}
+      .lf-sub{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--ink-3);}
+      .lf-tag{padding:2px 8px;border-radius:99px;background:var(--panel-2);font-size:12px;font-weight:600;color:var(--ink-2);white-space:nowrap;}
+      .lf-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+      .lf-tools select{width:auto;min-width:140px;}
+      .lf-canvas{display:flex;justify-content:center;align-items:center;min-height:420px;padding:24px;background-color:var(--panel-3);background-image:radial-gradient(var(--line-strong) 1px,transparent 1px);background-size:20px 20px;overflow:auto;}
+      .lf-stage{position:relative;flex:none;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.25);overflow:hidden;}
+      .lf-paper{position:absolute;left:0;top:0;transform-origin:0 0;background:#fff;color:#000;overflow:hidden;pointer-events:none;}
+      .lf-hits{position:absolute;inset:0;}
+      .lf-hit{position:absolute;margin:0;padding:0;border:0;background:none;outline:1px dashed var(--line-strong);cursor:grab;touch-action:none;}
+      .lf-hit:active{cursor:grabbing;}
+      .lf-hit.sel{outline:2px solid var(--accent);}
+      .lf-hit:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+      .lf-hit.empty{display:flex;align-items:center;justify-content:center;background:var(--panel-3);color:var(--ink-3);font:600 10px var(--ui);}
+      .lf-canvasfoot{padding:10px 16px;flex-wrap:wrap;}
+      .lf-footright{display:flex;align-items:center;gap:8px;}
+      .lf-pad{padding:12px 16px;display:flex;flex-direction:column;gap:10px;}
+      .lf-layer{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:40px;padding:0 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);font:400 13.5px var(--ui);color:var(--ink);cursor:pointer;}
+      .lf-layer + .lf-layer{margin-top:-4px;}
+      .lf-layer small{font-size:11px;color:var(--ink-3);}
+      .lf-layer.on{border-color:var(--accent);background:var(--accent-tint);}
+      .lf-f{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;color:var(--ink-2);}
+      .lf-toggles{display:flex;flex-wrap:wrap;gap:6px;}
+      .lf-toggle{min-height:34px;padding:0 10px;border:1px solid var(--line-strong);border-radius:6px;background:var(--panel);font:600 12px var(--ui);color:var(--ink);cursor:pointer;}
+      .lf-toggle.on{background:var(--accent-tint);border-color:var(--accent);color:var(--accent-2);}
+      .lf-toggle:disabled{background:var(--panel-3);border-color:var(--line);color:var(--ink-3);cursor:not-allowed;}
+      .lf-warn{padding:7px 9px;border-radius:6px;background:var(--flag-bg);color:var(--flag);font-size:12px;font-weight:600;}
+      /* "Text from the title" drawer */
+      .title-drawer-scrim{position:fixed;inset:0;z-index:20;background:rgba(12,12,16,.35);opacity:0;pointer-events:none;transition:opacity .18s ease;}
+      .title-drawer-scrim.show{opacity:1;pointer-events:auto;}
+      .title-drawer{position:fixed;top:0;right:0;bottom:0;z-index:21;width:min(480px,92vw);display:flex;flex-direction:column;background:var(--panel);border-left:1px solid var(--line);box-shadow:-12px 0 32px rgba(0,0,0,.14);overflow-y:auto;transform:translateX(102%);visibility:hidden;transition:transform .2s ease,visibility .2s;}
+      .title-drawer.show{transform:none;visibility:visible;transition:transform .2s ease;}
+      .lf-drawerhead{position:sticky;top:0;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;background:var(--panel);border-bottom:1px solid var(--line);}
+      .lf-drawerhead h3{margin:0;font-size:16px;}
+      .lf-x{flex:none;width:36px;height:36px;display:flex;align-items:center;justify-content:center;border:0;border-radius:8px;background:none;font:400 16px var(--ui);color:var(--ink-2);cursor:pointer;}
+      .lf-x:hover{background:var(--panel-2);color:var(--ink);}
+      .title-drawer .lf-drawerbody{width:auto;max-width:none;margin:0;border:0;border-radius:0;box-shadow:none;}
+      .lf-drawernote{margin:0 0 4px;font-size:12px;}
+      @media (prefers-reduced-motion:reduce){ .title-drawer-scrim,.title-drawer{transition:none;} }
 
     </style>
   </head>
@@ -341,7 +511,12 @@
       <div class="brand"><img src="./sf-logo.png" alt="SellerFolio" /><span>SellerFolio Live</span></div>
       <div class="livepill" id="livePill"><span id="status">connecting…</span><span class="sep">&middot;</span><span id="sessionName">—</span></div>
       <!-- lane A (shell.ts): Arm switch, disabled "Run next" ("Coming soon"), Print last [F14] -->
-      <div id="topControls" class="top-controls"></div>
+      <div id="topControls" class="top-controls">
+        <button type="button" id="armBtn" class="sh-arm" aria-pressed="false"><span class="sh-knob"><i></i></span><span id="armText">Arm buttons</span></button>
+        <span class="sh-runwrap" title="Coming soon — needs TikTok's start-auction call"><button type="button" id="runNextBtn" class="sh-run" disabled aria-describedby="runNextWhy"><span>Run next lot</span><span class="sh-key">F13</span></button></span>
+        <span id="runNextWhy" class="visually-hidden">Coming soon — needs TikTok's start-auction call</span>
+        <button type="button" id="printLastBtn" class="sh-last" title="Reprint the last label that printed"><span id="printLastText">Print last</span><span class="sh-key">F14</span></button>
+      </div>
       <div style="flex:1;"></div>
       <div id="liveMeters" class="topmeters">
         <div class="topmeter">Room<b id="room">—</b></div>
@@ -362,10 +537,9 @@
       <!-- lane A (shell.ts) owns the rail: Show / Chat / Settings with the Chat badge. The two legacy
            icons below keep working until it does; renderer.ts tolerates their removal. -->
       <nav id="navRail" class="rail" aria-label="Screens">
-        <div class="navicon active" id="navMonitor" title="Live Monitor"><div class="navgrid"><i></i><i></i><i></i><i></i></div></div>
-        <div style="flex:1;"></div>
-        <div class="navicon" id="navSettings2" title="Label settings">⚙</div>
-        <div style="height:8px;"></div>
+        <button type="button" class="sh-nav on" id="navShow" data-screen="monitor" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>Show</button>
+        <button type="button" class="sh-nav" id="navChat" data-screen="chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"></path></svg>Chat<span class="sh-count" id="navChatBadge" hidden></span></button>
+        <button type="button" class="sh-nav" id="navSettings" data-screen="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"></path><circle cx="16" cy="7" r="2"></circle><circle cx="8" cy="17" r="2"></circle></svg>Settings</button>
       </nav>
 
       <div id="monitorScreen" class="monitor">
@@ -405,11 +579,9 @@
             <div id="chatList" class="sf-scroll">
               <span class="mono placeholder">waiting for comments...</span>
             </div>
-            <!-- The composer is gone on purpose: we cannot post to the stream, and an input that
-                 does nothing is worse than no input. Pulling buyer questions out of chat before
-                 they scroll away is separate work. -->
-            <!-- lane C rewrites this note ("Replies post as Host after approval.") -->
-            <p class="chat-note" id="chatNote">Reading only. Replies don&rsquo;t reach the stream.</p>
+            <!-- No free-text composer: the only way to post is Approve on a question card, which
+                 posts as Host through chatAPI.send (chatDesk.ts). -->
+            <p class="chat-note" id="chatNote">Replies post as Host after approval.</p>
           </div>
         </div>
 
@@ -451,16 +623,20 @@
           <!-- "Current auction item" was deleted: it showed name, bid, bid count and ends-in, every
                one of which the lot overlay on the video already shows, and the overlay adds the high
                bidder besides. The overlay is also always visible, where this column scrolls. -->
-          <!-- lane E (printLog.ts): the Print log replaces the Thermal print queue. #printLog takes the
-               lines; the legacy #printQueue below stays (and keeps showing) until lane E removes it
-               together with renderQueue() in renderer.ts. -->
+          <!-- lane E (printLog.ts): the Print log replaced the Thermal print queue. printLog.ts draws
+               #printLog and the "N failed" chip; renderQueue() (lane E fence in renderer.ts) keeps
+               #printLogMeta ("N printing…") and the "Set printer" chip (#labelSettingsFooter, shown
+               only while no printer is chosen; it opens Settings). -->
           <div class="panel" id="printLogPanel">
             <div class="panel-head">
               <span class="eyebrow">Print log</span>
-              <button id="labelSettingsFooter" class="chip amber">LABEL SETTINGS</button>
+              <span class="meta">
+                <span id="printLogMeta">Newest first</span>
+                <button id="printLogFailed" type="button" class="chip bad" aria-pressed="false" hidden></button>
+                <button id="labelSettingsFooter" type="button" class="chip amber" hidden>Set printer</button>
+              </span>
             </div>
-            <div id="printLog" class="print-log" role="log" aria-live="polite"></div>
-            <div id="printQueue"><div class="mono placeholder" style="padding:14px 16px;">No labels yet</div></div>
+            <div id="printLog" class="print-log" role="log" aria-live="polite"><div class="plog-empty">No labels yet</div></div>
             <div class="visually-hidden">
               <button id="printNext" disabled></button>
               <input id="customNum" />
@@ -517,7 +693,17 @@
             <div class="set-col">
 
               <!-- lane A (shell.ts): the Text size card (A− / A+ / Reset) -->
-              <div id="textSizeSlot"></div>
+              <div id="textSizeSlot">
+                <div class="modal-box set-card">
+                  <h3>Text size</h3>
+                  <div class="sh-textrow">
+                    <button type="button" id="textSmaller" class="sh-btn sh-a" aria-label="Smaller text">A−</button>
+                    <span id="textPct" class="sh-pct" role="status">100%</span>
+                    <button type="button" id="textBigger" class="sh-btn sh-a" aria-label="Larger text">A+</button>
+                    <button type="button" id="textReset" class="sh-link">Reset</button>
+                  </div>
+                </div>
+              </div>
 
               <div class="modal-box set-card">
                 <h3>Printer</h3>
@@ -533,81 +719,14 @@
                   </div>
                   <div id="printerState" class="state muted">&mdash;</div>
                 </div>
-                <label class="check"><input type="checkbox" id="rawZpl" /> Fast printing (raw ZPL) &mdash; ~20&times; faster spool</label>
-                <div class="preview" style="margin-top:2px;">Sends ZPL straight to the printer, skipping the slow render. Only for ZPL-capable label printers (e.g. Arkscan 2054A). Names with emoji auto-fall-back to normal printing.</div>
+                <!-- lane F: the switch stays as the raw-ZPL state (setupPrinting / labelAPI.setRawZpl); the Label
+                     designer's banner is the one place to change it. -->
+                <input type="checkbox" id="rawZpl" hidden />
+                <div class="preview" style="margin-top:10px;">Fast printing (raw ZPL) is switched in the <button type="button" id="openDesignerTab" class="lf-link">Label designer</button>. Only for ZPL-capable label printers (e.g. Arkscan 2054A).</div>
                 <div class="set-note" style="margin-top:12px;">
                   <p>A label prints from whichever reports the sale first: the auction closing on screen (about 1.5 seconds after the timer) or TikTok&rsquo;s order record (about 3 seconds). The second report is ignored, so each item gets one label.</p>
                   <div id="feedWinsSeen" class="ok-text" style="margin-top:7px;font-size:11px;"></div>
                 </div>
-              </div>
-
-              <div class="modal-box set-card">
-                <h3>Label layout</h3>
-                <label>Label size
-                  <select id="setSize">
-                    <option value="1x1">1 &times; 1 in</option>
-                    <option value="1.5x1.5">1.5 &times; 1.5 in</option>
-                    <option value="2x1">2 &times; 1 in</option>
-                    <option value="2x2">2 &times; 2 in</option>
-                    <option value="2.25x1.25">2.25 &times; 1.25 in</option>
-                  </select>
-                </label>
-                <div class="fields">
-                  <div class="field-row"><label><input type="checkbox" id="setItemNumber" /> Item number (#)</label><span class="sizestep"><button type="button" data-size="itemNumber" data-d="-1">&minus;</button><b id="sz-itemNumber">&mdash;</b><button type="button" data-size="itemNumber" data-d="1">+</button></span></div>
-                  <div class="field-row"><label><input type="checkbox" id="setBuyer" /> Buyer</label><span class="sizestep"><button type="button" data-size="buyer" data-d="-1">&minus;</button><b id="sz-buyer">&mdash;</b><button type="button" data-size="buyer" data-d="1">+</button></span></div>
-                  <div class="field-row"><label><input type="checkbox" id="setProductName" /> Product name (full)</label><span class="sizestep"><button type="button" data-size="productName" data-d="-1">&minus;</button><b id="sz-productName">&mdash;</b><button type="button" data-size="productName" data-d="1">+</button></span></div>
-                  <div class="field-row"><label><input type="checkbox" id="setPrice" /> Price</label><span class="sizestep"><button type="button" data-size="price" data-d="-1">&minus;</button><b id="sz-price">&mdash;</b><button type="button" data-size="price" data-d="1">+</button></span></div>
-                  <div class="field-row"><label title="SF1:T:&lt;sku_id&gt; — scanned at the pack station to match the item to its order. Printed only on sale labels (not manual Next/Custom/Range)."><input type="checkbox" id="setQr" /> QR code (pack station)</label></div>
-                  <div class="field-row"><label><input type="checkbox" id="setCustom" /> Text from the title <span class="muted">(for example, the bin)</span></label><span class="sizestep"><button type="button" data-size="custom" data-d="-1">&minus;</button><b id="sz-custom">&mdash;</b><button type="button" data-size="custom" data-d="1">+</button></span></div>
-                </div>
-                <div class="field" style="margin-top:10px;">
-                  <label class="f-lbl" for="presetSel">What to pull from the title</label>
-                  <select id="presetSel" style="width:100%;">
-                    <option value="">Choose what to print&hellip;</option>
-                  </select>
-                </div>
-                <div class="preview" style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
-                  <span style="flex:none;">Try a title:</span>
-                  <input id="sampleTitle" class="ai-edit" style="flex:1 1 260px;max-width:none;" spellcheck="false" placeholder="paste a real listing title&hellip;" />
-                  <span style="flex:none;">&rarr; prints <b id="extractPreview">&mdash;</b></span>
-                </div>
-                <div class="preview" style="display:flex;align-items:center;gap:7px;margin-top:6px;">
-                  <span style="flex:none;">Try a buyer:</span>
-                  <input id="sampleBuyer" class="ai-edit" style="flex:1 1 160px;max-width:220px;" spellcheck="false" placeholder="buyer name&hellip;" />
-                  <span id="samplePathHint" class="muted" style="flex:none;"></span>
-                </div>
-                <details class="adv" id="advPattern">
-                  <summary>Advanced: edit or save a pattern</summary>
-                  <p class="muted">A regular expression, matched against the listing title. Whatever the first pair of brackets captures is what prints.</p>
-                  <!-- Say what you want in plain words and let the model write the pattern. The
-                       suggestion is never applied on its own: it is run against the sample title
-                       above and the extracted text is shown first, because a pattern that installs
-                       itself prints the wrong thing on every label of the next show and nothing
-                       looks broken. -->
-                  <div class="rxai">
-                    <input type="text" id="rxWant" placeholder="Describe what should print, e.g. the bin letter" spellcheck="false" />
-                    <button type="button" id="rxAsk" class="qbtn" style="flex:none;">Suggest pattern</button>
-                  </div>
-                  <div id="rxResult" class="rxresult" hidden>
-                    <div class="rxline"><span class="k">Pattern</span><code id="rxPattern"></code></div>
-                    <div class="rxline"><span class="k">Prints</span><b id="rxPrints"></b></div>
-                    <div id="rxExplain" class="muted"></div>
-                    <div class="rxacts">
-                      <button type="button" id="rxDismiss" class="qbtn sm">Dismiss</button>
-                      <button type="button" id="rxUse" class="qbtn sm print">Use this</button>
-                    </div>
-                  </div>
-                  <div id="rxState" class="state muted"></div>
-                  <div class="custom-row">
-                    <input type="text" id="setRegex" placeholder="pattern, e.g. (Bin [A-Z])" spellcheck="false" />
-                    <input type="text" id="setFlags" placeholder="flags" title="Pattern flags — i ignores upper/lower case" spellcheck="false" />
-                  </div>
-                  <div class="custom-row" style="margin-top:6px;">
-                    <input type="text" id="presetName" placeholder="name to save it as&hellip;" style="flex:1 1 180px;" />
-                    <button type="button" id="presetSave" class="chip amber" style="flex:none;">Save pattern</button>
-                    <button type="button" id="presetDelete" class="chip" style="flex:none;" disabled>Delete</button>
-                  </div>
-                </details>
               </div>
 
               <div class="modal-box set-card">
@@ -636,18 +755,6 @@
               </div>
 
             </div>
-            <div class="set-side">
-              <div class="modal-box set-card" style="margin-bottom:0;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;">
-                  <h3 style="margin:0;">Preview <span id="labelPreviewSize" class="muted" style="font-weight:400;margin-left:4px;"></span></h3>
-                  <button id="printSample" class="chip amber" type="button" style="flex:none;" disabled>Print sample</button>
-                </div>
-                <div id="labelPreviewWrap">
-                  <iframe id="labelPreview" title="label preview" scrolling="no"></iframe>
-                </div>
-                <p class="muted" style="margin:10px 0 0;font-size:12px;">Exactly how this label prints.</p>
-              </div>
-            </div>
           </div>
           </div><!-- /#appTab -->
         </div>
@@ -656,7 +763,63 @@
     <!-- lane F (designer.ts): the "Text from the title" drawer. Lane F moves the Label layout card's
          regex tools (presetSel, sampleTitle, sampleBuyer, advPattern…) in here; their ids stay. -->
     <div id="titleDrawerScrim" class="title-drawer-scrim" hidden></div>
-    <div id="titleDrawer" class="title-drawer" role="dialog" aria-modal="true" aria-label="Text from the title" hidden></div>
+    <div id="titleDrawer" class="title-drawer" role="dialog" aria-modal="true" aria-labelledby="titleDrawerTitle" hidden>
+      <div class="lf-drawerhead">
+        <h3 id="titleDrawerTitle">Text from the title</h3>
+        <button type="button" id="titleDrawerClose" class="lf-x" aria-label="Close" title="Close">&#10005;</button>
+      </div>
+      <div class="modal-box set-card lf-drawerbody">
+        <p class="muted lf-drawernote">Every &ldquo;Regex on title&rdquo; layer prints what this pattern pulls from the listing title.</p>
+        <div class="field" style="margin-top:10px;">
+          <label class="f-lbl" for="presetSel">What to pull from the title</label>
+          <select id="presetSel" style="width:100%;">
+            <option value="">Choose what to print&hellip;</option>
+          </select>
+        </div>
+        <div class="preview" style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
+          <span style="flex:none;">Try a title:</span>
+          <input id="sampleTitle" class="ai-edit" style="flex:1 1 260px;max-width:none;" spellcheck="false" placeholder="paste a real listing title&hellip;" />
+          <span style="flex:none;">&rarr; prints <b id="extractPreview">&mdash;</b></span>
+        </div>
+        <div class="preview" style="display:flex;align-items:center;gap:7px;margin-top:6px;">
+          <span style="flex:none;">Try a buyer:</span>
+          <input id="sampleBuyer" class="ai-edit" style="flex:1 1 160px;max-width:220px;" spellcheck="false" placeholder="buyer name&hellip;" />
+          <span id="samplePathHint" class="muted" style="flex:none;"></span>
+        </div>
+        <details class="adv" id="advPattern">
+          <summary>Advanced: edit or save a pattern</summary>
+          <p class="muted">A regular expression, matched against the listing title. Whatever the first pair of brackets captures is what prints.</p>
+          <!-- Say what you want in plain words and let the model write the pattern. The
+               suggestion is never applied on its own: it is run against the sample title
+               above and the extracted text is shown first, because a pattern that installs
+               itself prints the wrong thing on every label of the next show and nothing
+               looks broken. -->
+          <div class="rxai">
+            <input type="text" id="rxWant" placeholder="Describe what should print, e.g. the bin letter" spellcheck="false" />
+            <button type="button" id="rxAsk" class="qbtn" style="flex:none;">Suggest pattern</button>
+          </div>
+          <div id="rxResult" class="rxresult" hidden>
+            <div class="rxline"><span class="k">Pattern</span><code id="rxPattern"></code></div>
+            <div class="rxline"><span class="k">Prints</span><b id="rxPrints"></b></div>
+            <div id="rxExplain" class="muted"></div>
+            <div class="rxacts">
+              <button type="button" id="rxDismiss" class="qbtn sm">Dismiss</button>
+              <button type="button" id="rxUse" class="qbtn sm print">Use this</button>
+            </div>
+          </div>
+          <div id="rxState" class="state muted"></div>
+          <div class="custom-row">
+            <input type="text" id="setRegex" placeholder="pattern, e.g. (Bin [A-Z])" spellcheck="false" />
+            <input type="text" id="setFlags" placeholder="flags" title="Pattern flags — i ignores upper/lower case" spellcheck="false" />
+          </div>
+          <div class="custom-row" style="margin-top:6px;">
+            <input type="text" id="presetName" placeholder="name to save it as&hellip;" style="flex:1 1 180px;" />
+            <button type="button" id="presetSave" class="chip amber" style="flex:none;">Save pattern</button>
+            <button type="button" id="presetDelete" class="chip" style="flex:none;" disabled>Delete</button>
+          </div>
+        </details>
+      </div>
+    </div>
     <!-- Static/demo mock data — runs ONLY when opened without the Electron
          preload (window.ttLive undefined). The live app is unaffected. -->
     <script>

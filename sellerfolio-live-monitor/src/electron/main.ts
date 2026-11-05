@@ -91,6 +91,8 @@ async function tiktokLoggedIn(): Promise<boolean> {
 // Once the WS stream yields room_id + session_id, tell the preload to start
 // polling the roster + sale-history REST endpoints itself.
 let pollRoomId: string | undefined
+/** The current room's go-live (ms), from the room event's create_timestamp; undefined until seen. */
+let roomStartedAtMs: number | undefined
 let pollSessionId: string | undefined
 let pollSent = false
 let lastSalePollNow = 0 // debounce WS-sale-triggered immediate polls
@@ -415,7 +417,11 @@ ipcMain.on('tt-ws-frame', (_e, msg: { url?: string; data?: Uint8Array }) => {
   try { payload = JSON.parse(buf.toString('utf8')) } catch { return }
   for (const ev of feed.ingest(payload, Date.now())) {
     if (ev.kind === 'room') {
+      if (ev.roomId !== pollRoomId) roomStartedAtMs = undefined
       pollRoomId = ev.roomId
+      // create_timestamp is unix SECONDS (types.ts RoomEvent) — the actual go-live. The past-order
+      // badges count orders placed BEFORE it, so opening the app mid-show doesn't count tonight's.
+      if (ev.createdAt && ev.createdAt > 0) roomStartedAtMs = ev.createdAt * 1000
       if (!connected) {
         connected = true
         send({ kind: 'status', status: 'connected', detail: `room ${ev.roomId}` })
@@ -901,6 +907,7 @@ registerBuyerHistoryIpc({
   url: () => sfUrl(sf.baseUrl, BUYER_HISTORY_PATH),
   headers: () => (savedTokenKind(sf.token) === 'computer' ? sfHeaders(sf.token) : null),
   show: () => pollRoomId,
+  showStartedAtMs: () => roomStartedAtMs,
   send: viewerSend,
   log: flog,
 })
