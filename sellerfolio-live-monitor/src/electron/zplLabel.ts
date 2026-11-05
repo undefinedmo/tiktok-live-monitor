@@ -7,39 +7,15 @@
 // non-Latin glyphs (common in buyer display names) can't be drawn, so callers use
 // labelNeedsHtml() to fall back to the HTML path for those labels (hybrid).
 
-import { LABEL_SIZES, DEFAULT_TEMPLATE, basePt, parseItemNumber, extractCustom, qrBeside, qrSizeIn, qrHidesProduct, QR_GAP_IN, wantsQr, type LabelData, type LabelTemplate, type LabelScale } from './label'
+import { LABEL_SIZES, DEFAULT_TEMPLATE, basePt, parseItemNumber, extractCustom, qrBeside, qrSizeIn, qrHidesProduct, QR_GAP_IN, wantsQr, templateLayout, templateRegex, type LabelData, type LabelTemplate, type LabelScale } from './label'
 import { qrModules, QR_ECC, QR_QUIET } from '../core/labelCode'
+import { layoutZpl, layoutNeedsHtml, hasNonZplText, toZplText, strippedAway, zplTextWidth } from '../core/labelLayout'
+
+// Moved to core/labelLayout (the designer's ZPL renderer shares them); same code, re-exported.
+export { hasNonZplText, toZplText }
 
 const DPI = 203 // Arkscan 2054A (and most direct-thermal label printers) are 203 dpi
 const PT_TO_DOTS = DPI / 72 // pt → dots at 203 dpi (matches the HTML path's pt sizes)
-
-/** True if any character can't be rendered by ZPL's built-in font (emoji, CJK, symbols,
- *  anything above Latin-1). */
-export function hasNonZplText(s: string | undefined): boolean {
-  if (!s) return false
-  for (const ch of s) if (ch.codePointAt(0)! > 0xff) return true
-  return false
-}
-
-/**
- * Drop the characters ZPL font 0 cannot draw, keeping the rest.
- *
- * Emoji are extremely common in TikTok display names — "Mercy💕", "Anabelle🌷",
- * "Lisa Marie ⭐️" were 4 of 12 consecutive winners in one show. Treating a single emoji as
- * grounds to abandon ZPL sent a THIRD of all labels down the HTML path: 5x slower (~1030ms
- * vs ~200ms) and rendered by a completely different engine, so a third of the labels in a
- * run did not match the other two thirds. Stripping the glyph keeps the name legible, the
- * label consistent, and the fast path intact — "Mercy💕" prints as "Mercy".
- */
-export function toZplText(s: string | undefined): string {
-  if (!s) return ''
-  let out = ''
-  for (const ch of s) if (ch.codePointAt(0)! <= 0xff) out += ch
-  return out.replace(/\s+/g, ' ').trim()
-}
-
-/** A field that is non-empty but strips to nothing — the whole value was unrenderable. */
-const strippedAway = (s: string | undefined): boolean => !!s && s.trim().length > 0 && toZplText(s).length === 0
 
 /**
  * Whether this label must use the HTML path — now only when stripping would erase a
@@ -47,6 +23,8 @@ const strippedAway = (s: string | undefined): boolean => !!s && s.trim().length 
  * some Latin content left keeps the ZPL path with the un-drawable characters removed.
  */
 export function labelNeedsHtml(data: LabelData, template: LabelTemplate = DEFAULT_TEMPLATE): boolean {
+  const layout = templateLayout(template)
+  if (layout) return layoutNeedsHtml(layout, data, templateRegex(template))
   if (template.buyer && strippedAway(data.buyer)) return true
   if (template.productName && strippedAway(data.productName)) return true
   if (template.custom.enabled && strippedAway(extractCustom(data.title ?? data.productName, template.custom.regex, template.custom.flags))) return true
@@ -59,20 +37,12 @@ export function labelNeedsHtml(data: LabelData, template: LabelTemplate = DEFAUL
 const esc = (s: string) => s.replace(/([\^~\\])/g, '\\$1')
 
 // ZPL's scalable font 0 (CG Triumvirate Bold Condensed) is PROPORTIONAL, and in
-// `^A0N,height,width` the width parameter *scales* the natural glyph advances — it does
-// not set a fixed character cell. So width must equal height to draw the face at its
-// natural aspect; anything less squeezes every glyph horizontally.
-//
-// Glyph advance as a fraction of the font height at that natural aspect. Triumvirate Bold
-// Condensed is already a condensed face, so most glyphs sit near half the height; digits
-// are tabular (all the same width, so '1' is NOT narrow). Used ONLY to measure a line —
-// we center by an explicit ^FO x-offset rather than ^FB justification, because ZPL
-// *emulators* (e.g. the Arkscan/4BARCODE) frequently ignore ^FB's centering flag and
-// would leave every line left-aligned. Explicit x works everywhere.
-const NARROW = new Set([...".,:;'`!|iIlj()[]{}/\\-"])
-const WIDE = new Set([...'mwMW@%'])
-const advance = (ch: string) => (ch === ' ' ? 0.26 : NARROW.has(ch) ? 0.28 : WIDE.has(ch) ? 0.78 : 0.52)
-const textWidth = (s: string, h: number) => Math.max(1, Math.round([...s].reduce((a, c) => a + advance(c), 0) * h))
+// `^A0N,height,width` the width parameter *scales* the natural glyph advances — so width must
+// equal height to draw the face at its natural aspect. Lines are measured with zplTextWidth
+// (core/labelLayout: per-glyph advances as a fraction of the height) and centred by an
+// explicit ^FO x-offset rather than ^FB justification, because ZPL *emulators* (e.g. the
+// Arkscan/4BARCODE) frequently ignore ^FB's centering flag. Explicit x works everywhere.
+const textWidth = zplTextWidth
 
 // Fraction of the label width text may occupy. Square stock (equal w/h) is treated as a
 // die-cut ROUND label, so keep a tighter margin off the curved edge; rectangular gets more.
@@ -91,6 +61,8 @@ function qrGeometry(code: string, sizeIn: number): { mag: number; box: number } 
 
 /** Build the ZPL for one label. Field order + sizing mirror labelHtml() in label.ts. */
 export function labelZpl(data: LabelData, template: LabelTemplate = DEFAULT_TEMPLATE): string {
+  const layout = templateLayout(template)
+  if (layout) return layoutZpl(layout, data, templateRegex(template))
   const size = LABEL_SIZES[template.labelSize] ?? LABEL_SIZES['2x1']
   const W = Math.round(size.widthIn * DPI)
   const H = Math.round(size.heightIn * DPI)

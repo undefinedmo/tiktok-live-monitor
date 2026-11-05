@@ -3,6 +3,10 @@
 // short bit from the title (e.g. /(Bin [A-Z])/ on "#141 Bin A - Alo Yoga…" → "Bin A").
 
 import { qrModules, QR_QUIET } from '../core/labelCode'
+import { normalizeLayout, layoutHtml, parseItemNumber, extractCustom, type LabelLayout, type RegexSpec } from '../core/labelLayout'
+
+// Moved to core/labelLayout (the designer's renderers use them too); same code, re-exported here.
+export { parseItemNumber, extractCustom }
 
 export interface LabelData {
   itemNumber: string
@@ -23,7 +27,7 @@ export interface LabelScale {
 }
 
 export interface LabelTemplate {
-  labelSize: '1x1' | '1.5x1.5' | '2x1' | '2x2' | '2.25x1.25'
+  labelSize: '1x1' | '1.5x1.5' | '2x1' | '2x2' | '2.25x1.25' | '4x6'
   itemNumber: boolean
   buyer: boolean
   productName: boolean
@@ -31,7 +35,19 @@ export interface LabelTemplate {
   custom: { enabled: boolean; regex: string; flags?: string }
   scale?: LabelScale // per-field text-size multipliers; absent/undefined ⇒ 1×
   qr?: boolean // print the pack-station QR (when the label has a code); absent ⇒ off
+  /** The label designer's free layout (core/labelLayout). When present it is what prints, on
+   *  both paths; the fixed fields above then only supply custom.regex/flags (the "Text from the
+   *  title" pattern every regex layer prints). labelSize is kept equal to layout.size so main's
+   *  page size matches. Absent ⇒ the fixed template, exactly as before the designer. */
+  layout?: LabelLayout
 }
+
+/** The saved layout of a template, validated; null ⇒ print the fixed template. */
+export function templateLayout(template: LabelTemplate): LabelLayout | null {
+  return template.layout ? normalizeLayout(template.layout) : null
+}
+/** The pattern regex layers print. */
+export const templateRegex = (template: LabelTemplate): RegexSpec => ({ regex: template.custom?.regex ?? '', flags: template.custom?.flags ?? '' })
 
 export const DEFAULT_TEMPLATE: LabelTemplate = {
   labelSize: '2x1',
@@ -52,6 +68,7 @@ export const LABEL_SIZES = {
   '2x1': { widthIn: 2, heightIn: 1, widthMicrons: 50800, heightMicrons: 25400, num: 32 },
   '2x2': { widthIn: 2, heightIn: 2, widthMicrons: 50800, heightMicrons: 50800, num: 40 },
   '2.25x1.25': { widthIn: 2.25, heightIn: 1.25, widthMicrons: 57150, heightMicrons: 31750, num: 36 },
+  '4x6': { widthIn: 4, heightIn: 6, widthMicrons: 101600, heightMicrons: 152400, num: 72 },
 } as const
 
 /** Each field's default ("1×") point size. The item number's default lives on the label
@@ -106,32 +123,12 @@ function qrSvg(code: string): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${v} ${v}" shape-rendering="crispEdges"><rect width="${v}" height="${v}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`
 }
 
-/** Item number from a sku_desc ("#34") / title; strips the leading '#'. */
-export function parseItemNumber(skuDescOrTitle: string | undefined): string {
-  const s = (skuDescOrTitle ?? '').trim()
-  const hash = s.match(/#\s*(\d+)/)
-  if (hash) return hash[1]!
-  const lead = s.match(/^(\d+)/)
-  if (lead) return lead[1]!
-  return s.replace(/^#/, '')
-}
-
-/** Apply a user regex to the title; returns capture group 1 (or the whole
- *  match), or '' if no match / invalid regex. */
-export function extractCustom(title: string | undefined, regex: string, flags = ''): string {
-  if (!title || !regex) return ''
-  try {
-    const m = title.match(new RegExp(regex, flags))
-    return m ? (m[1] ?? m[0]) : ''
-  } catch {
-    return ''
-  }
-}
-
 const esc = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] ?? c)
 
 export function labelHtml(data: LabelData, template: LabelTemplate = DEFAULT_TEMPLATE): string {
+  const layout = templateLayout(template)
+  if (layout) return layoutHtml(layout, data, templateRegex(template))
   const size = LABEL_SIZES[template.labelSize] ?? LABEL_SIZES['2x1']
   const sc = template.scale ?? {}
   // each field's point size = its default × the field's multiplier (1× when unset)
