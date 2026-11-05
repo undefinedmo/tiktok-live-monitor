@@ -7,12 +7,12 @@
 //   invoke 'store:search-chat'     ({ text, limit? }) → StoreResult (kind 'chat')
 //   invoke 'store:failed-payments' ({ limit? })       → StoreResult (kind 'failed')
 //
-// SCAFFOLD STUB: wired end to end, but the worker's StoreIndex answers empty.
+// The text is capped here (a search box, not a document) before it crosses to the worker.
 
 import { ipcMain } from 'electron'
 import { queryStore } from './journal'
 
-const text = (a: unknown): string => (a && typeof (a as { text?: unknown }).text === 'string' ? (a as { text: string }).text : '')
+const text = (a: unknown): string => (a && typeof (a as { text?: unknown }).text === 'string' ? (a as { text: string }).text.slice(0, 200) : '')
 const limit = (a: unknown): number | undefined => {
   const n = (a as { limit?: unknown } | undefined)?.limit
   return typeof n === 'number' && Number.isFinite(n) ? n : undefined
