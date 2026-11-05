@@ -14,7 +14,7 @@
 
 import type { ChatMessage } from '../core/types'
 import type { StoreChat } from '../core/storeIndex'
-import { ChatDeskModel, OwnEchoFilter, REPLY_MAX, lineId, isQuestion, wishOf, type ChatAuthor, type DeskQuestion, type DeskWish } from '../core/chatIntent'
+import { ChatDeskModel, OwnEchoFilter, REPLY_MAX, lineId, mentionOf, replyRoom, isQuestion, wishOf, type ChatAuthor, type DeskQuestion, type DeskWish } from '../core/chatIntent'
 import { setChatBadge } from './shell'
 
 /** Rows kept in the All chat DOM. Older lines stay searchable. */
@@ -371,7 +371,7 @@ function cardClass(q: DeskQuestion): string {
 
 function replyLabel(q: DeskQuestion): string {
   if (!q.reply.trim()) return 'Needs your reply'
-  return `${q.suggested ? 'Suggested reply' : 'Your reply'}, ${q.reply.length} of ${REPLY_MAX}`
+  return `${q.suggested ? 'Suggested reply' : 'Your reply'}, ${q.reply.length} of ${replyRoom(q)}`
 }
 
 /** The card in the chat column (cached per question so a repaint keeps its place in the list). */
@@ -408,8 +408,11 @@ function paintRow(q: DeskQuestion, row: HTMLElement): void {
 function replyEditor(q: DeskQuestion, approveText: string, card: HTMLElement): HTMLElement[] {
   const sending = q.state === 'sending'
   const line = el('div', 'cd-reply')
+  // The @buyer mention is added when posting (withMention); shown here so the host sees what goes out.
+  const mention = el('span', 'cd-mention', mentionOf(q))
+  mention.title = 'Added to the start of your reply'
   const input = el('input', 'cd-in')
-  input.maxLength = REPLY_MAX
+  input.maxLength = replyRoom(q)
   input.value = q.reply
   input.placeholder = 'Write a reply'
   input.setAttribute('aria-label', `Reply to ${q.buyer}`)
@@ -433,6 +436,7 @@ function replyEditor(q: DeskQuestion, approveText: string, card: HTMLElement): H
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); void approve(q) } })
   ok.addEventListener('click', () => void approve(q))
   skip.addEventListener('click', () => { model.skip(q); repaint(q) })
+  if (mention.textContent) line.append(mention)
   line.append(input, ok)
   sub.append(label, skip)
   return [line, sub]

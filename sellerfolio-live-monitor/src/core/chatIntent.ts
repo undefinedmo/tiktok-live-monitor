@@ -123,6 +123,32 @@ export interface DeskLine {
   ts: number
 }
 
+/**
+ * Approved replies start with `@buyer` (owner, 2026-11-05) — the way the moderators already answer,
+ * so a busy chat shows who the answer is for. The @handle when known (unique, what TikTok links),
+ * else the display nickname. A reply that already starts with an @mention is left alone.
+ */
+export function mentionOf(q: Pick<DeskQuestion, 'buyer' | 'handle'>): string {
+  const h = (q.handle ?? '').trim().replace(/^@+/, '')
+  if (h) return `@${h}`
+  const n = (q.buyer ?? '').trim()
+  return n ? `@${n}` : ''
+}
+
+/** Room left in the reply box once the mention and its space are added (never below 20). */
+export function replyRoom(q: Pick<DeskQuestion, 'buyer' | 'handle'>): number {
+  const m = mentionOf(q)
+  return Math.max(20, REPLY_MAX - (m ? m.length + 1 : 0))
+}
+
+/** The exact text posted: `@buyer reply`, ≤ REPLY_MAX. */
+export function withMention(q: Pick<DeskQuestion, 'buyer' | 'handle'>, reply: string): string {
+  const r = reply.trim()
+  if (!r || r.startsWith('@')) return r.slice(0, REPLY_MAX)
+  const m = mentionOf(q)
+  return (m ? `${m} ${r}` : r).slice(0, REPLY_MAX)
+}
+
 /** A stable id for a chat line: TikTok's msgId when present, else its content. */
 export function lineId(m: DeskLine): string {
   return m.msgId ? `m:${m.msgId}` : `k:${m.ts}|${m.nickname}|${m.text}`
@@ -181,7 +207,7 @@ export class ChatDeskModel {
 
   /** The host edited the reply box. Clamped to REPLY_MAX. */
   setReply(q: DeskQuestion, text: string): void {
-    q.reply = String(text ?? '').slice(0, REPLY_MAX)
+    q.reply = String(text ?? '').slice(0, replyRoom(q))
     q.suggested = false
   }
 
@@ -191,7 +217,8 @@ export class ChatDeskModel {
    */
   beginSend(q: DeskQuestion): string | null {
     if (q.state !== 'open') return null
-    const text = q.reply.trim().slice(0, REPLY_MAX)
+    if (!q.reply.trim()) return null
+    const text = withMention(q, q.reply)
     if (!text) return null
     q.state = 'sending'
     q.error = undefined

@@ -1,5 +1,21 @@
 import { describe, it, expect } from 'vitest'
-import { isQuestion, wishOf, chatIntent, suggestReply, REPLY_MAX, REPLY_RULES, ChatDeskModel, lineId, OwnEchoFilter, sameAuthor } from '../chatIntent'
+import { isQuestion, wishOf, chatIntent, suggestReply, REPLY_MAX, REPLY_RULES, ChatDeskModel, lineId, OwnEchoFilter, sameAuthor, mentionOf, withMention, replyRoom } from '../chatIntent'
+
+describe('@buyer mention on approved replies (owner, 2026-11-05)', () => {
+  it('prefers the @handle, falls back to the nickname, and leaves a reply that already mentions someone', () => {
+    expect(mentionOf({ buyer: 'Liz B', handle: '@lizb' })).toBe('@lizb')
+    expect(mentionOf({ buyer: 'Liz B' })).toBe('@Liz B')
+    expect(withMention({ buyer: 'Liz', handle: 'lizb' }, ' Yes, true to size ')).toBe('@lizb Yes, true to size')
+    expect(withMention({ buyer: 'Liz', handle: 'lizb' }, '@other thanks')).toBe('@other thanks')
+    expect(replyRoom({ buyer: 'Liz', handle: 'lizb' })).toBe(REPLY_MAX - 6)
+    expect(withMention({ buyer: 'Liz', handle: 'lizb' }, 'x'.repeat(200)).length).toBe(REPLY_MAX)
+  })
+  it('Approve posts the mention + reply', () => {
+    const m = new ChatDeskModel()
+    const q = { id: 'q1', buyer: 'Liz', handle: 'lizb', text: 'size?', ts: 1, reply: 'True to size', suggested: true, state: 'open' as const }
+    expect(m.beginSend(q)).toBe('@lizb True to size')
+  })
+})
 
 describe('isQuestion', () => {
   it('a trailing ? (spaces allowed)', () => {
@@ -141,9 +157,11 @@ describe('ChatDeskModel', () => {
     if (r?.kind !== 'question') throw new Error('no question')
     const q = r.q
     m.setReply(q, '  ' + 'x'.repeat(150))
-    expect(q.reply.length).toBe(REPLY_MAX)
+    const mention = mentionOf(q)
+    expect(q.reply.length).toBe(replyRoom(q)) // the box leaves room for "@buyer "
     const text = m.beginSend(q)
-    expect(text).toBe('x'.repeat(98)) // the leading spaces counted against the 100, then trimmed
+    expect(text!.startsWith(`${mention} x`)).toBe(true)
+    expect(text!.length).toBeLessThanOrEqual(REPLY_MAX) // mention + reply never exceed TikTok's 100
     expect(q.state).toBe('sending')
     expect(m.beginSend(q)).toBeNull() // a double click does not post twice
     expect(m.openCount()).toBe(1) // still waiting while it sends
