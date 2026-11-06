@@ -11,10 +11,10 @@ export interface BankAnswer {
   examples: string[]
 }
 
-const STOP = new Set(['the', 'and', 'for', 'are', 'you', 'your', 'this', 'that', 'with', 'what', 'have', 'does', 'can', 'how', 'will', 'its', 'there', 'they', 'from', 'about', 'please'])
+const STOP = new Set(['the', 'and', 'for', 'are', 'you', 'your', 'this', 'that', 'with', 'what', 'have', 'has', 'does', 'can', 'how', 'will', 'its', 'there', 'they', 'from', 'about', 'please', 'pls', 'when', 'much', 'any', 'get', 'just', 'not', 'did', 'still', 'available', 'order', 'item'])
 
 function tokens(s: string): string[] {
-  return (String(s ?? '').toLowerCase().match(/[a-z0-9']+/g) ?? []).filter((t) => t.length > 2 && !STOP.has(t))
+  return (String(s ?? '').toLowerCase().match(/[a-z0-9']+/g) ?? []).filter((t) => t.length > 1 && !STOP.has(t))
 }
 
 function hasWord(haystack: string, needle: string): boolean {
@@ -67,7 +67,7 @@ export function matchAnswer(question: string, lotTitle: string | null, bank: Ban
       for (const t of new Set(tokens(ex))) if (qTokens.has(t)) n++
       if (n > overlap) overlap = n
     }
-    score += overlap
+    if (overlap >= 2) score += 1 //   a shared example needs 2+ meaningful words to count
     if (score < 1) continue
     if (score > bestScore || (score === bestScore && a.brand && best && !best.brand)) { best = a; bestScore = score }
   }

@@ -74,17 +74,27 @@ export const REPLY_RULES: ReadonlyArray<{ name: string; test: RegExp; reply: str
   { name: 'condition', test: /\b(condition|nwt|new with tags|used|pre-?owned|flaws?|damaged?)\b/i, reply: "Condition is on each listing. Ask about a lot and we'll show it up close!" },
 ]
 
+/** `s` cut to at most `max` chars, at a word boundary when it has to be cut. */
+function fitWords(s: string, max: number): string {
+  const t = s.trim()
+  if (t.length <= max) return t
+  const cut = t.slice(0, max)
+  if (/\s/.test(t.charAt(max))) return cut.trimEnd()
+  const i = cut.search(/\s+\S*$/)
+  return (i > 0 ? cut.slice(0, i) : cut).trimEnd()
+}
+
 /**
  * The suggested reply for a question from REPLY_RULES, or null when no rule matches (the card
  * then says "Needs your reply"). The result is at most REPLY_MAX characters.
  */
-export function suggestReply(text: string, ctx?: { lotTitle?: string | null; bank?: BankAnswer[] }): string | null {
+export function suggestReply(text: string, ctx?: { lotTitle?: string | null; bank?: BankAnswer[]; room?: number }): string | null {
   const t = stripMention(text)
   if (!t) return null
   if (ctx?.bank?.length) {
     try {
       const hit = matchAnswer(t, ctx.lotTitle ?? null, ctx.bank)
-      if (hit) return hit.answer.slice(0, REPLY_MAX)
+      if (hit) return fitWords(hit.answer, Math.min(REPLY_MAX, ctx.room ?? REPLY_MAX))
     } catch { /* a bad bank never costs the local rule */ }
   }
   for (const r of REPLY_RULES) if (r.test.test(t)) return r.reply.slice(0, REPLY_MAX)
@@ -178,7 +188,7 @@ export class ChatDeskModel {
   constructor(private readonly cap = 2000) {}
 
   /** Classify a line and record it. Returns what it became, or null (not a question/wish, or seen). */
-  ingest(m: DeskLine, ctx?: { lotTitle?: string | null; bank?: BankAnswer[] }): { kind: 'question'; q: DeskQuestion } | { kind: 'wish'; w: DeskWish } | null {
+  ingest(m: DeskLine, ctx?: { lotTitle?: string | null; bank?: BankAnswer[]; room?: number }): { kind: 'question'; q: DeskQuestion } | { kind: 'wish'; w: DeskWish } | null {
     const id = lineId(m)
     if (this.seen.has(id)) return null
     const intent = chatIntent(m.text)
@@ -194,7 +204,7 @@ export class ChatDeskModel {
       trim(this.wishes, this.cap, (x) => x.fulfilled)
       return { kind: 'wish', w }
     }
-    const reply = suggestReply(m.text, ctx) ?? ''
+    const reply = suggestReply(m.text, { ...ctx, room: replyRoom({ buyer, handle: m.handle }) }) ?? ''
     const q: DeskQuestion = { id, buyer, handle: m.handle, text: String(m.text).trim(), ts: m.ts, reply, suggested: !!reply, state: 'open' }
     this.questions.push(q)
     trim(this.questions, this.cap, (x) => x.state === 'posted' || x.state === 'skipped')

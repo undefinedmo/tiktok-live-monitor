@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { matchAnswer, parseBank, type BankAnswer } from '../answerBank'
-import { suggestReply } from '../chatIntent'
+import { suggestReply, ChatDeskModel, withMention, REPLY_MAX } from '../chatIntent'
 
 const shop = (id: string, keywords: string[], answer: string, examples: string[] = []): BankAnswer => ({ id, topic: id, brand: null, keywords, answer, examples })
 const SHIP = shop('ship', ['ship', 'shipping'], 'We ship within 2 business days.')
@@ -37,6 +37,31 @@ describe('suggestReply with a bank', () => {
   it('falls back to the rule without a bank', () => {
     expect(suggestReply('when do you ship?')).toMatch(/ships together/)
     expect(suggestReply('when do you ship?', { bank: [] })).toMatch(/ships together/)
+  })
+})
+
+describe('tighter matching', () => {
+  it('one shared example word is not enough', () => {
+    const a = shop('arr', [], 'Orders arrive in 5 days.', ['when will my order arrive'])
+    expect(matchAnswer('when do you ship?', null, [a])).toBeNull()
+  })
+  it('a keyword answer still wins', () => {
+    const a = shop('arr', [], 'Orders arrive in 5 days.', ['when will my order arrive'])
+    expect(matchAnswer('when do you ship?', null, [a, SHIP])?.id).toBe('ship')
+  })
+})
+
+describe('long bank answers', () => {
+  it('are cut at a word so the posted text fits 100 with the mention', () => {
+    const long = 'We ship every order within two business days of purchase and always send tracking by chat. Thanks!'.slice(0, 95)
+    const m = new ChatDeskModel()
+    const r = m.ingest({ nickname: 'somebuyer', text: 'when do you ship?', ts: 1 }, { bank: [shop('s', ['ship'], long)] })
+    if (r?.kind !== 'question') throw new Error('expected a question')
+    const posted = withMention(r.q, r.q.reply)
+    expect(posted.length).toBeLessThanOrEqual(REPLY_MAX)
+    expect(posted).toBe(`@somebuyer ${r.q.reply}`)
+    expect(long.startsWith(r.q.reply)).toBe(true)
+    expect(long.charAt(r.q.reply.length)).toBe(' ')
   })
 })
 
