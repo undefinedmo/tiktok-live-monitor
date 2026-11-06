@@ -14,6 +14,8 @@
 
 import type { ChatMessage } from '../core/types'
 import type { StoreChat } from '../core/storeIndex'
+import type { BankAnswer } from '../core/answerBank'
+import { parseBank } from '../core/answerBank'
 import { ChatDeskModel, OwnEchoFilter, REPLY_MAX, lineId, mentionOf, replyRoom, isQuestion, wishOf, type ChatAuthor, type DeskQuestion, type DeskWish } from '../core/chatIntent'
 import { setChatBadge } from './shell'
 
@@ -56,6 +58,27 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
 
 // ── state (one show) ─────────────────────────────────────────────────────────
 let model = new ChatDeskModel()
+/** The shop's approved answers from hq (electron/answerBank.ts); empty until the first poll lands. */
+let bank: BankAnswer[] = []
+
+/** The lot on air, read from the Show screen's title; null while it says "Waiting…". */
+function currentLotTitle(): string | null {
+  try {
+    const t = document.getElementById('lotName')?.textContent?.trim() ?? ''
+    return t && !/^waiting/i.test(t) ? t : null
+  } catch { return null }
+}
+
+/** Fetch the bank once and follow changes. Best effort: chat works the same without it. */
+function initAnswerBank(): void {
+  try {
+    const api = (globalThis as { answersAPI?: { get: () => Promise<unknown>; onChange: (cb: (v: unknown) => void) => void } }).answersAPI
+    if (!api) return
+    const take = (v: unknown): void => { try { bank = parseBank({ answers: v }) } catch { /* keep the last bank */ } }
+    api.onChange(take)
+    void api.get().then(take).catch(() => {})
+  } catch (e) { console.error('[live-ui] answersAPI', e) }
+}
 let lines: Line[] = []
 let seen = new Set<string>()
 let show = ''
@@ -93,6 +116,7 @@ export function initChatDesk(): void {
   adoptShow()
   syncCounts()
   paintAsking()
+  initAnswerBank()
 }
 
 /** Called for every 'chat' event (renderer.ts no longer draws the rows itself). */
@@ -110,7 +134,7 @@ export function onChat(items: ChatMessage[]): void {
     if (seen.has(id)) continue
     seen.add(id)
     const line: Line = { id, nickname: String(m.nickname ?? '').trim() || 'Viewer', handle: m.handle, text, ts: m.ts }
-    const r = model.ingest({ msgId: m.msgId, nickname: line.nickname, handle: m.handle, text, ts: m.ts })
+    const r = model.ingest({ msgId: m.msgId, nickname: line.nickname, handle: m.handle, text, ts: m.ts }, { lotTitle: currentLotTitle(), bank })
     if (r?.kind === 'question') line.q = r.q
     else if (r?.kind === 'wish' || wishOf(text) !== null) line.wish = true
     lines.push(line)

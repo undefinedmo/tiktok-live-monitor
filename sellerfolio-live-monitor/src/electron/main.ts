@@ -30,6 +30,7 @@ import { registerControlIpc, attachControlToViewer } from './controlIpc' // lane
 import { registerStoreIpc } from './storeIpc' // lane B
 import { registerBuyerHistoryIpc, BUYER_HISTORY_PATH } from './buyerHistory' // lane D
 import { registerShowStatsIpc } from './showStats' // lane G
+import { registerAnswerBankIpc } from './answerBank' // chat AI answer bank
 
 const DASHBOARD = 'https://shop.tiktok.com/streamer/live/event/dashboard'
 // Set TT_START_URL to log in via Seller Center (https://seller-us.tiktok.com/) —
@@ -922,6 +923,14 @@ registerShowStatsIpc({
   log: flog,
 })
 // └── end lane G
+// The shop's approved chat answers (answerBank.ts) — answers:get · event answers:change. GET-only,
+// every 10 min, never on the print path.
+registerAnswerBankIpc({
+  url: (path) => sfUrl(sf.baseUrl, path),
+  headers: () => (savedTokenKind(sf.token) === 'computer' ? sfHeaders(sf.token) : null),
+  send: viewerSend,
+  log: flog,
+})
 
 // ── Label printing (mirrors the desktop app: webContents.print of HTML) ──────
 const PRINTER_FILE = join(app.getPath('userData'), 'tt-printer.json')

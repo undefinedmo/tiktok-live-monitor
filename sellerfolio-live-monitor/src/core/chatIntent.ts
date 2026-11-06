@@ -3,6 +3,8 @@
 // paints (questions with their reply / approval state, wishes with their fulfilled flag).
 // Pure (no DOM, no Electron, no network): unit-tested in src/core/__tests__/chatIntent.test.ts.
 
+import { matchAnswer, type BankAnswer } from './answerBank'
+
 /** TikTok's cap on a live comment. The reply box and suggestReply() never exceed it. */
 export const REPLY_MAX = 100
 
@@ -76,9 +78,15 @@ export const REPLY_RULES: ReadonlyArray<{ name: string; test: RegExp; reply: str
  * The suggested reply for a question from REPLY_RULES, or null when no rule matches (the card
  * then says "Needs your reply"). The result is at most REPLY_MAX characters.
  */
-export function suggestReply(text: string): string | null {
+export function suggestReply(text: string, ctx?: { lotTitle?: string | null; bank?: BankAnswer[] }): string | null {
   const t = stripMention(text)
   if (!t) return null
+  if (ctx?.bank?.length) {
+    try {
+      const hit = matchAnswer(t, ctx.lotTitle ?? null, ctx.bank)
+      if (hit) return hit.answer.slice(0, REPLY_MAX)
+    } catch { /* a bad bank never costs the local rule */ }
+  }
   for (const r of REPLY_RULES) if (r.test.test(t)) return r.reply.slice(0, REPLY_MAX)
   return null
 }
@@ -170,7 +178,7 @@ export class ChatDeskModel {
   constructor(private readonly cap = 2000) {}
 
   /** Classify a line and record it. Returns what it became, or null (not a question/wish, or seen). */
-  ingest(m: DeskLine): { kind: 'question'; q: DeskQuestion } | { kind: 'wish'; w: DeskWish } | null {
+  ingest(m: DeskLine, ctx?: { lotTitle?: string | null; bank?: BankAnswer[] }): { kind: 'question'; q: DeskQuestion } | { kind: 'wish'; w: DeskWish } | null {
     const id = lineId(m)
     if (this.seen.has(id)) return null
     const intent = chatIntent(m.text)
@@ -186,7 +194,7 @@ export class ChatDeskModel {
       trim(this.wishes, this.cap, (x) => x.fulfilled)
       return { kind: 'wish', w }
     }
-    const reply = suggestReply(m.text) ?? ''
+    const reply = suggestReply(m.text, ctx) ?? ''
     const q: DeskQuestion = { id, buyer, handle: m.handle, text: String(m.text).trim(), ts: m.ts, reply, suggested: !!reply, state: 'open' }
     this.questions.push(q)
     trim(this.questions, this.cap, (x) => x.state === 'posted' || x.state === 'skipped')

@@ -72,3 +72,8 @@ contextBridge.exposeInMainWorld('showAPI', {
   onTimeline: (cb: (v: unknown) => void) => ipcRenderer.on('show:timeline', (_e, v) => cb(v)),
 })
 // └── end lane G
+// electron/answerBank.ts → hq GET /api/desktop/answers (the shop's approved chat answers).
+contextBridge.exposeInMainWorld('answersAPI', {
+  get: () => ipcRenderer.invoke('answers:get'),
+  onChange: (cb: (v: unknown) => void) => ipcRenderer.on('answers:change', (_e, v) => cb(v)),
+})
