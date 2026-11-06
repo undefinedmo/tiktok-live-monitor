@@ -51,6 +51,19 @@ describe('tighter matching', () => {
   })
 })
 
+describe('example overlap needs two real words', () => {
+  const ex = (e: string) => shop('x', [], 'Answer.', [e])
+  it('one shared 3+ letter word is no match', () => {
+    expect(matchAnswer('where is my parcel', null, [ex('parcel never came')])).toBeNull()
+  })
+  it('two shared words match', () => {
+    expect(matchAnswer('my parcel never arrived', null, [ex('parcel never came')])?.id).toBe('x')
+  })
+  it('short filler words never count', () => {
+    expect(matchAnswer('is it real?', null, [ex('is it authentic')])).toBeNull()
+  })
+})
+
 describe('long bank answers', () => {
   it('are cut at a word so the posted text fits 100 with the mention', () => {
     const long = 'We ship every order within two business days of purchase and always send tracking by chat. Thanks!'.slice(0, 95)

@@ -14,7 +14,7 @@ export interface BankAnswer {
 const STOP = new Set(['the', 'and', 'for', 'are', 'you', 'your', 'this', 'that', 'with', 'what', 'have', 'has', 'does', 'can', 'how', 'will', 'its', 'there', 'they', 'from', 'about', 'please', 'pls', 'when', 'much', 'any', 'get', 'just', 'not', 'did', 'still', 'available', 'order', 'item'])
 
 function tokens(s: string): string[] {
-  return (String(s ?? '').toLowerCase().match(/[a-z0-9']+/g) ?? []).filter((t) => t.length > 1 && !STOP.has(t))
+  return (String(s ?? '').toLowerCase().match(/[a-z0-9']+/g) ?? []).filter((t) => t.length > 2 && !STOP.has(t))
 }
 
 function hasWord(haystack: string, needle: string): boolean {
