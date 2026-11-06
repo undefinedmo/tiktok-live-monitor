@@ -49,6 +49,11 @@ contextBridge.exposeInMainWorld('controlAPI', {
   getZoom: () => ipcRenderer.invoke('ctl:zoom-get'),
   setZoom: (factor: number) => ipcRenderer.invoke('ctl:zoom-set', factor),
   onKey: (cb: (key: string) => void) => ipcRenderer.on('ctl:key', (_e, key) => cb(key)),
+  // Hardware buttons (Settings → Clicker & keys). Keys are Electron accelerators, e.g. 'F14'.
+  getHotkeys: () => ipcRenderer.invoke('ctl:hotkeys-get'),
+  addHotkey: (action: string, accel: string) => ipcRenderer.invoke('ctl:hotkeys-add', { action, accel }),
+  removeHotkey: (action: string, accel: string) => ipcRenderer.invoke('ctl:hotkeys-remove', { action, accel }),
+  learnHotkey: (on: boolean) => ipcRenderer.invoke('ctl:hotkeys-learn', on),
 })
 
 // Lane B, electron/storeIpc.ts → journal worker's core/storeIndex.ts.

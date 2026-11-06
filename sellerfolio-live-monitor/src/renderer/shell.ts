@@ -49,7 +49,9 @@ export function initShell(d: ShellDeps): void {
   arm?.addEventListener('click', () => setArmed(!armed))
 
   byId<HTMLButtonElement>('printLastBtn')?.addEventListener('click', () => printLast())
-  try { window.controlAPI?.onKey((key) => { if (key === 'F14') printLast() }) } catch { /* no bridge: the button still works */ }
+  // A hardware button bound to Print last (Settings → Clicker & keys; F14 by default). Main has
+  // already applied the 2-second lockout shared by every clicker.
+  try { window.controlAPI?.onKey((action) => { if (action === 'printLast') printLast() }) } catch { /* no bridge: the button still works */ }
   onPrintLastChange(() => paintPrintLast())
   paintPrintLast()
 

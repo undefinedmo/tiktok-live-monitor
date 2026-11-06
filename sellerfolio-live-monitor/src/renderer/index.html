@@ -257,6 +257,20 @@
       .field-pair{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;}
       .modal-box .f-lbl{display:block;margin:0 0 6px;font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:600;}
       .state{font-size:12px;margin-top:8px;}
+      /* Settings → Clicker & keys (hotkeysCard.ts) */
+      .hk-help{margin:0 0 12px;font-size:12px;line-height:1.45;color:var(--ink-3);}
+      .hk-help:last-child{margin:10px 0 0;}
+      .hk-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 0;border-top:1px solid var(--line);}
+      .hk-row.hk-off{opacity:.55;}
+      .hk-name{display:flex;flex-direction:column;min-width:120px;}
+      .hk-name small{font-size:11.5px;color:var(--ink-3);}
+      .hk-keys{display:flex;gap:6px;flex-wrap:wrap;flex:1;min-width:0;}
+      .hk-key{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 4px 0 9px;border:1px solid var(--line);border-radius:6px;font:500 12px var(--mono);background:var(--panel-2);}
+      .hk-key.local{border-color:var(--accent-2);}
+      .hk-key button{border:0;background:none;cursor:pointer;color:var(--ink-3);font-size:14px;line-height:1;padding:2px 4px;}
+      .hk-key button:hover{color:var(--loss);}
+      .hk-none{font-size:12px;color:var(--ink-3);}
+      .qbtn.hk-listening{border-color:var(--accent-2);color:var(--accent-2);}
       details.adv{margin-top:10px;border-top:1px solid var(--line);padding-top:10px;}
       details.adv summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--ink-3);list-style:none;display:flex;align-items:center;gap:6px;}
       details.adv summary::-webkit-details-marker{display:none;}
@@ -812,6 +826,23 @@
                     <button type="button" id="textReset" class="sh-link">Reset</button>
                   </div>
                 </div>
+              </div>
+
+              <!-- hotkeysCard.ts: hardware buttons (Flic, Stream Deck, any key) bound to Print last -->
+              <div class="modal-box set-card" id="hotkeysCard">
+                <h3>Clicker &amp; keys</h3>
+                <p class="hk-help">Pair your clicker in its own app (for a Flic, the Flic app) and set a click to press a key. Then add that key here. It works while TikTok or any other window is in front.</p>
+                <div class="hk-row">
+                  <div class="hk-name"><b>Print last</b><small>Reprints the last label</small></div>
+                  <div class="hk-keys" id="hkKeys-printLast"></div>
+                  <button type="button" class="qbtn" id="hkAdd-printLast">Add a key</button>
+                </div>
+                <div class="hk-row hk-off">
+                  <div class="hk-name"><b>Run next lot</b><small>Coming soon</small></div>
+                  <div class="hk-keys"></div>
+                </div>
+                <div id="hkState" class="state muted" role="status"></div>
+                <p class="hk-help">Two clickers can share a key. Presses of the same button within 2 seconds count once, so two hosts can&rsquo;t print the same label twice.</p>
               </div>
 
               <div class="modal-box set-card">

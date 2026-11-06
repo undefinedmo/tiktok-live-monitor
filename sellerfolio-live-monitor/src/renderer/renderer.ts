@@ -7,6 +7,8 @@ import { SaleSeed } from '../core/saleSeed'
 import { labelCode } from '../core/labelCode'
 import { parseConnectToken, connectScreen } from '../core/sfConnect'
 import type { StoreResult } from '../core/storeIndex'
+import type { HotkeyStatus } from '../core/hotkeys'
+import { initHotkeysCard } from './hotkeysCard' // Settings → Clicker & keys
 // live-ui lanes (docs/live-ui/LANES.md): each module is owned by one lane; this file only calls them.
 import { initShell, onScreen, type Screen } from './shell' // lane A
 import { initSalesView, onSales } from './salesView' // lane B
@@ -60,11 +62,15 @@ declare global {
       onState: (cb: (s: SfSyncView) => void) => void
     }
     // ── live-ui bridges (preload-viewer.ts; handlers in electron/controlIpc.ts, storeIpc.ts, buyerHistory.ts)
-    /** lane A: window zoom (1 = 100%) for Text size, and hardware keys ('F14' = Print last). */
+    /** lane A: window zoom (1 = 100%) for Text size, and hardware buttons ('printLast' = Print last). */
     controlAPI?: {
       getZoom: () => Promise<number>
       setZoom: (factor: number) => Promise<number>
-      onKey: (cb: (key: string) => void) => void
+      onKey: (cb: (action: string) => void) => void
+      getHotkeys: () => Promise<HotkeyStatus>
+      addHotkey: (action: string, accel: string) => Promise<HotkeyStatus & { error?: string }>
+      removeHotkey: (action: string, accel: string) => Promise<HotkeyStatus>
+      learnHotkey: (on: boolean) => Promise<void>
     }
     /** lane B: the show store in the journal worker. Resolves empty (never rejects) when there is none. */
     storeAPI?: {
@@ -759,6 +765,7 @@ for (const [name, init] of [
   ['printLog', () => initPrintLog()],
   ['designer', () => initDesigner()],
   ['showStats', () => initShowStats()], // lane G
+  ['hotkeysCard', () => initHotkeysCard()],
 ] as [string, () => void][]) {
   try { init() } catch (e) { console.error(`[live-ui] ${name} failed to start`, e) }
 }
