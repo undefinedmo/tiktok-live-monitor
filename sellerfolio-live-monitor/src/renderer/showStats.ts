@@ -23,9 +23,8 @@ interface ShowBridge {
 
 const RUNTIME_REPAINT_MS = 15_000
 
-let panel: HTMLElement | null = null
-let grid: HTMLElement | null = null
-let meta: HTMLElement | null = null
+/** The Show screen's strip (#salesSoFar) and the Timeline screen's copy (#tlsSales): same cells. */
+const strips: { grid: HTMLElement; meta: HTMLElement }[] = []
 let room: string | undefined
 let liveStartedAtSec: number | undefined
 let runtimeBase: { sec: number; atMs: number } | null = null
@@ -46,21 +45,25 @@ function el(tag: string, cls?: string, text?: string): HTMLElement {
 }
 
 export function initShowStats(): void {
-  panel = document.getElementById('salesSoFar')
   const b = bridge()
   try { initTimeline({ setOpen: (open) => { void b?.setTimelineOpen(open).catch(() => {}) } }) } catch (e) { console.error('[live-ui] timeline failed to start', e) }
-  if (panel) {
+  for (const id of ['salesSoFar', 'tlsSales']) {
+    const panel = document.getElementById(id)
+    if (!panel) continue
     panel.replaceChildren()
     const head = el('div', 'ssf-head')
     head.append(el('span', 'eyebrow', 'Sales so far'))
-    meta = el('span', 'ssf-meta')
+    const meta = el('span', 'ssf-meta')
     head.append(meta)
-    grid = el('div', 'ssf-grid')
+    const grid = el('div', 'ssf-grid')
     grid.setAttribute('role', 'list')
     panel.append(head, grid)
     panel.hidden = false
-    const old = document.getElementById('statsGrid')
-    if (old) old.hidden = true //  superseded by this strip (same numbers and more)
+    strips.push({ grid, meta })
+    if (id === 'salesSoFar') {
+      const old = document.getElementById('statsGrid')
+      if (old) old.hidden = true //  superseded by this strip (same numbers and more)
+    }
   }
 
   if (b) {
@@ -139,17 +142,19 @@ function schedulePaint(): void {
 }
 
 function paint(): void {
-  if (!grid || !meta) return
+  if (!strips.length) return
   const hqForRoom = hq && (!room || !hq.room || hq.room === room) ? hq : null
   const v = buildSalesView({ tiktok, local, runtimeSec: runtimeNow(runtimeBase, Date.now(), liveStartedAtSec), hq: hqForRoom })
-  meta.textContent = v.note ?? ''
-  meta.classList.toggle('warn', !!v.note)
-  grid.replaceChildren(...v.cells.map((c) => {
-    const cell = el('div', `ssf-cell${c.hq ? ' hq' : ''}`)
-    cell.setAttribute('role', 'listitem')
-    cell.title = c.title
-    cell.append(el('div', 'l', c.label), el('div', 'v', c.value))
-    if (c.hq && v.asOf) cell.append(el('div', 's', v.asOf))
-    return cell
-  }))
+  for (const { grid, meta } of strips) {
+    meta.textContent = v.note ?? ''
+    meta.classList.toggle('warn', !!v.note)
+    grid.replaceChildren(...v.cells.map((c) => {
+      const cell = el('div', `ssf-cell${c.hq ? ' hq' : ''}`)
+      cell.setAttribute('role', 'listitem')
+      cell.title = c.title
+      cell.append(el('div', 'l', c.label), el('div', 'v', c.value))
+      if (c.hq && v.asOf) cell.append(el('div', 's', v.asOf))
+      return cell
+    }))
+  }
 }

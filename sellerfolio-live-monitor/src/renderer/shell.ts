@@ -16,7 +16,7 @@ import { onPrintLastChange, printLastLabel } from './printLog'
 import { printLastText } from '../core/printLogFormat'
 import { TEXT_DEFAULT, badgeText, canGrow, canShrink, factorToPct, isBigText, pctToFactor, stepText } from '../core/shellControls'
 
-export type Screen = 'monitor' | 'chat' | 'settings'
+export type Screen = 'monitor' | 'chat' | 'timeline' | 'settings'
 
 export interface ShellDeps {
   /** renderer.ts showScreen — honours the Connect gate (a gated call shows Connect instead). */
@@ -32,7 +32,7 @@ let lastPrintAt = 0
 let flashTimer: ReturnType<typeof setTimeout> | null = null
 
 const byId = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T | null
-const NAV: Record<Screen, string> = { monitor: 'navShow', chat: 'navChat', settings: 'navSettings' }
+const NAV: Record<Screen, string> = { monitor: 'navShow', chat: 'navChat', timeline: 'navTimeline', settings: 'navSettings' }
 /** One press = one label: F14 bounce or a double-click inside this window does not print twice. */
 const PRINT_LAST_GAP_MS = 700
 const TEXT_KEY = 'sf-text-size' // browser fallback only (no controlAPI, e.g. the http demo)

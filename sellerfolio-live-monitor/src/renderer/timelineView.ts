@@ -1,11 +1,13 @@
-// LANE G — the show timeline on the Show screen: a collapsible panel (#showTimeline) that draws
+// LANE G — the show timeline, on its own Timeline screen (#timelineScreen → #showTimeline). It draws
 // SellerFolio's timeline for this room — auction runs as bars (sold / unsold / unknown), viewer chat
 // per minute, question dots, flag triangles and "Said" diamonds — on one time axis, the same picture
-// as the show page in SellerFolio (layout ported to core/timelineLayout.ts).
+// as the show page in SellerFolio (layout ported to core/timelineLayout.ts). Above it, #tlsMetrics:
+// lots / sell-through / chat figures from the same payload (core/timelineMetrics.ts).
 //
-// Data comes from main (electron/showStats.ts), which polls hq only while this panel is OPEN; the
-// open state is remembered per computer. Hover shows details; clicking a bar (or Enter on it) opens
-// a small popover with that run's product, price and buyer — from the payload, no hq call.
+// Data comes from main (electron/showStats.ts), which polls hq only while the screen is SHOWING
+// (renderer.ts showScreen → setTimelineVisible). The tracks grow to fill the screen's height.
+// Hover shows details; clicking a bar (or Enter on it) opens a small popover with that run's
+// product, price and buyer — from the payload, no hq call.
 // Every wire string goes in through textContent, never innerHTML.
 
 import {
@@ -14,16 +16,18 @@ import {
   type BarLayout, type ShowTimeline, type TimelineAuction,
 } from '../core/timelineLayout'
 import { clockShort, type FeedView } from '../core/showStats'
+import { timelineMetrics } from '../core/timelineMetrics'
 
 const SVG = 'http://www.w3.org/2000/svg'
-const H_AXIS = 22, H_RUN = 34, H_CHAT = 52, H_MARK = 20
-const OPEN_KEY = 'sf-timeline-open'
-const VIEW_FALLBACK = 560
+// Full-screen sizes. The chat track takes whatever height is left (CHAT_MIN at least).
+const H_AXIS = 28, H_RUN = 64, H_MARK = 30, CHAT_MIN = 120, CHAT_FALLBACK = 220
+const VIEW_FALLBACK = 900
+let H_CHAT = CHAT_FALLBACK
 
 interface Deps { setOpen: (open: boolean) => void }
 
 let root: HTMLElement | null = null
-let head: HTMLButtonElement | null = null
+let metrics: HTMLElement | null = null
 let sum: HTMLElement | null = null
 let body: HTMLElement | null = null
 let msg: HTMLElement | null = null
@@ -55,23 +59,18 @@ function s(tag: string, attrs: Record<string, string | number>, cls?: string): S
   if (cls) e.setAttribute('class', cls)
   return e
 }
-function readOpen(): boolean { try { return localStorage.getItem(OPEN_KEY) === '1' } catch { return false } }
-function saveOpen(v: boolean): void { try { localStorage.setItem(OPEN_KEY, v ? '1' : '0') } catch { /* per-computer nicety only */ } }
-
 export function initTimeline(d: Deps): void {
   root = document.getElementById('showTimeline')
   if (!root) return
   deps = d
   root.replaceChildren()
   root.hidden = false
+  metrics = document.getElementById('tlsMetrics')
 
-  head = h('button', 'tl-head') as HTMLButtonElement
-  head.type = 'button'
-  head.setAttribute('aria-controls', 'tlBody')
-  head.append(h('span', 'eyebrow', 'Show timeline'))
+  const head = h('div', 'tl-head')
+  head.append(h('span', 'eyebrow', 'Auctions & chat'))
   sum = h('span', 'tl-sum')
-  head.append(sum, h('span', 'tl-chev'))
-  head.addEventListener('click', () => setOpen(!open))
+  head.append(sum)
 
   body = h('div', 'tl-body')
   body.id = 'tlBody'
@@ -126,31 +125,49 @@ export function initTimeline(d: Deps): void {
     closePop(false)
   })
   if (typeof ResizeObserver !== 'undefined') {
-    let lastW = 0
-    const sc = scroller
+    let lastW = 0, lastH = 0
+    const box = body
     new ResizeObserver(() => {
-      const w = sc.clientWidth
-      if (open && w > 0 && Math.abs(w - lastW) > 2) { lastW = w; render() }
-    }).observe(sc)
+      const w = box.clientWidth, hh = box.clientHeight
+      if (open && w > 0 && (Math.abs(w - lastW) > 2 || Math.abs(hh - lastH) > 2)) { lastW = w; lastH = hh; render() }
+    }).observe(box)
   }
-
-  open = readOpen()
+  // "Last 15 min" moves with the clock, not only with hq's pushes.
+  setInterval(() => { if (open) paintMetrics() }, 30_000)
   applyOpen()
 }
 
-function setOpen(v: boolean): void {
+/** renderer.ts showScreen: the Timeline screen is (or is no longer) on screen. */
+export function setTimelineVisible(v: boolean): void {
+  if (v === open) return
   open = v
-  saveOpen(v)
   applyOpen()
 }
 function applyOpen(): void {
-  if (!head || !body || !root) return
-  head.setAttribute('aria-expanded', String(open))
-  root.classList.toggle('open', open)
-  body.hidden = !open
+  if (!body || !root) return
   try { deps?.setOpen(open) } catch { /* never */ }
   if (!open) { hideTip(); closePop(false) }
   render()
+}
+
+function paintMetrics(): void {
+  if (!metrics) return
+  const t = feed.data
+  if (!t || !t.auctions.length && !t.chatBuckets.length) { metrics.hidden = true; return }
+  metrics.hidden = false
+  const grid = h('div', 'ssf-grid')
+  grid.setAttribute('role', 'list')
+  for (const c of timelineMetrics(t, Date.now())) {
+    const cell = h('div', 'ssf-cell')
+    cell.setAttribute('role', 'listitem')
+    cell.title = c.title
+    cell.append(h('div', 'l', c.label), h('div', 'v', c.value))
+    if (c.sub) cell.append(h('div', 's', c.sub))
+    grid.append(cell)
+  }
+  const head = h('div', 'ssf-head')
+  head.append(h('span', 'eyebrow', 'Lots & chat'), h('span', 'ssf-meta', feed.at ? `From SellerFolio · as of ${clockShort(feed.at)}` : ''))
+  metrics.replaceChildren(head, grid)
 }
 function setZoom(i: number): void {
   const next = Math.max(0, Math.min(ZOOMS.length - 1, i))
@@ -189,6 +206,7 @@ function render(): void {
   const t = feed.data
   sum.textContent = t && t.auctions.length ? timelineSummary(t) : ''
   if (!open) return
+  paintMetrics()
 
   const text = message()
   const domain = t ? timeDomain(t) : null
@@ -207,6 +225,10 @@ function render(): void {
 
   const viewW = scroller.clientWidth || VIEW_FALLBACK
   const W = plotWidth(viewW, ZOOMS[zoomIdx]!)
+  // Chat fills the height the screen gives the plot, after the fixed tracks (and a scrollbar's room).
+  const fixed = H_AXIS + H_RUN + H_MARK * (1 + (t.flags.length ? 1 : 0) + (t.auctions.some((a) => a.outcome === 'sold' && a.item?.summary?.trim()) ? 1 : 0))
+  const avail = plot.clientHeight
+  H_CHAT = avail > 0 ? Math.max(CHAT_MIN, avail - fixed - 16) : CHAT_FALLBACK
   const prev = { scrollLeft: scroller.scrollLeft, viewW, plotW: lastPlotW || W }
   const sc = makeScale(domain.t0, domain.t1, W)
   bars = layoutBars(t.auctions, sc)

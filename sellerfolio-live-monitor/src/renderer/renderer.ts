@@ -15,6 +15,7 @@ import { initBuyerHistory } from './buyerHistory' // lane D
 import { initPrintLog, onPrintResult } from './printLog' // lane E
 import { initDesigner } from './designer' // lane F
 import { initShowStats } from './showStats' // lane G: Sales so far + show timeline
+import { setTimelineVisible } from './timelineView' // the Timeline screen
 
 // ┌── lane F: label template types (moves to designer.ts) ─────────────────────
 // The print path's own types (the template may carry the designer's `layout`). The template
@@ -724,6 +725,7 @@ function showScreen(want: Screen) {
   const show = (id: string, on: boolean) => { const e = document.getElementById(id); if (e) e.style.display = on ? 'flex' : 'none' }
   show('monitorScreen', s === 'monitor')
   show('chatScreen', s === 'chat')
+  show('timelineScreen', s === 'timeline')
   show('settingsScreen', s === 'settings')
   show('connectScreen', s === 'connect')
   // The legacy rail icons (lane A replaces the rail; these lookups tolerate their absence).
@@ -739,6 +741,8 @@ function showScreen(want: Screen) {
   // lanes A + C: paint the rail; repaint the Chat screen when it opens. UI only, never fatal.
   try { onScreen(s, connectGate) } catch (e) { console.error('[live-ui] shell.onScreen', e) }
   if (s === 'chat') { try { onChatScreenShown() } catch (e) { console.error('[live-ui] chatDesk.onChatScreenShown', e) } }
+  // The timeline polls hq only while its screen is showing.
+  try { setTimelineVisible(s === 'timeline') } catch (e) { console.error('[live-ui] timeline visibility', e) }
 }
 document.getElementById('navMonitor')?.addEventListener('click', () => { if (!connectGate) showScreen('monitor') })
 document.getElementById('navSettings2')?.addEventListener('click', () => { if (!connectGate) showScreen('settings') })

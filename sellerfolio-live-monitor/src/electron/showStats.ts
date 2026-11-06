@@ -27,7 +27,7 @@ export const SHOW_STATS_PATH = '/api/desktop/show-stats'
 export const TIMELINE_PATH = '/api/desktop/timeline'
 
 export const STATS_EVERY_MS = 30_000
-export const TIMELINE_EVERY_MS = 60_000
+export const TIMELINE_EVERY_MS = 30_000 // only while the Timeline screen is showing
 /** How often main re-checks the room / connection without any network (cheap). */
 export const HEARTBEAT_MS = 5_000
 export const UNAVAILABLE_RETRY_MS = 10 * 60_000
