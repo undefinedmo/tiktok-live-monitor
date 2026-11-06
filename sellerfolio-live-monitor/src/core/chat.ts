@@ -171,18 +171,19 @@ export function decodeWebcast(b: Uint8Array): WebcastFetch {
   return { messages: decodeChat(b), ...webcastState(b) }
 }
 
-// The streamer key needed to POST chat sits in the webcast/im/fetch response as a sub-message
-// field 24 = "v1" (bytes c2 01 02 76 31) immediately followed by field 25 (tag ca 01) = the key.
-const EC_KEY_MARKER = [0xc2, 0x01, 0x02, 0x76, 0x31, 0xca, 0x01]
-/** Pull the per-streamer `ec_streamer_key` out of a webcast/im/fetch response (needed to post chat). */
-export function ecStreamerKey(b: Uint8Array): string | undefined {
-  outer: for (let i = 0; i + EC_KEY_MARKER.length + 1 < b.length; i++) {
-    for (let j = 0; j < EC_KEY_MARKER.length; j++) if (b[i + j] !== EC_KEY_MARKER[j]) continue outer
-    const lenPos = i + EC_KEY_MARKER.length
-    const len = b[lenPos]!
-    if (len > 0 && len < 64 && lenPos + 1 + len <= b.length) return utf8(b, lenPos + 1, lenPos + 1 + len)
-  }
-  return undefined
+// `ec_streamer_key` is NOT issued by TikTok. Measured 2026-11-05 in Streamer Desktop's own bundle
+// during a live show: every chat / block / mute call builds it client-side as a fresh random
+// 10-char nanoid (`Wa.generateAndAddId()` → `Ak(10)`), keeping the last 20 to recognise its own
+// echoes. We used to wait to find a "key" in the webcast/im/fetch bytes; that marker is no longer
+// sent, so every Approve failed with "streamer key not ready".
+const KEY_ALPHABET = 'useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict' // nanoid's
+/** A fresh `ec_streamer_key` for one outgoing streamer_desktop call, built the way the dashboard does. */
+export function newEcStreamerKey(size = 10): string {
+  const bytes = new Uint8Array(size)
+  globalThis.crypto.getRandomValues(bytes)
+  let id = ''
+  for (const b of bytes) id += KEY_ALPHABET[b & 63]
+  return id
 }
 
 /** Find every WebcastChatMessage in a WebcastResponse frame and decode it.

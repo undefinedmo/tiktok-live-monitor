@@ -1,5 +1,5 @@
 import { ipcRenderer } from 'electron'
-import { webcastState, ecStreamerKey } from '../core/chat'
+import { webcastState, newEcStreamerKey } from '../core/chat'
 import { parseWonFeedRow } from '../core/wonFeed'
 import { nextPinDelayMs, FINALIZE_LAG_MS } from '../core/pinSchedule'
 
@@ -419,7 +419,6 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
     `&history_comment_count=100&sup_ws_ds_opt=1&did_rule=3`
   let chatCursor = ''
   let chatExt = ''
-  let ecKey = '' // per-streamer key (needed to POST chat); arrives in a room-init webcast response
   const chatCycle = async () => {
     const url =
       `https://webcast.us.tiktok.com/webcast/im/fetch/?${chatStatic}&room_id=${cfg.roomId}` +
@@ -432,7 +431,6 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
       if (st.cursor) chatCursor = st.cursor
       chatExt = st.internalExt
       if (st.fetchIntervalMs > 0) nextMs = st.fetchIntervalMs
-      if (!ecKey) { const k = ecStreamerKey(buf); if (k) ecKey = k }
     } catch { /* ignore — try again next tick */ }
     setTimeout(() => void chatCycle(), Math.min(3000, Math.max(800, nextMs)))
   }
@@ -445,7 +443,7 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
     const id = req?.id
     const content = String(req?.text ?? '').trim()
     if (!content || !cfg.roomId) { ipcRenderer.send('tt-chat-sent', { id, ok: false, error: 'no text or no room' }); return }
-    if (!ecKey) { ipcRenderer.send('tt-chat-sent', { id, ok: false, error: 'streamer key not ready' }); return }
+    const ecKey = newEcStreamerKey() // fresh per message, as Streamer Desktop does
     const url =
       `https://shop.tiktok.com/api/v1/streamer_desktop/message/chat` +
       `?aid=253642&app_name=i18n_ecom_alliance&device_platform=web&user_language=en&locale=en&page_scene=1&carrier_region=us`
