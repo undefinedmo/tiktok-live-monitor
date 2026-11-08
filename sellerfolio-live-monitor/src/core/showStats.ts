@@ -145,7 +145,7 @@ export interface SalesInputs {
 }
 
 export interface SalesCell {
-  key: 'gmv' | 'orders' | 'items' | 'buyers' | 'aov' | 'runtime' | 'pace'
+  key: 'gmv' | 'orders' | 'items' | 'buyers' | 'aov' | 'pace'
   label: string
   value: string
   /** Hover text: where the number comes from (and hq's cross-check for GMV). */
@@ -196,8 +196,9 @@ export function buildSalesView(i: SalesInputs): SalesView {
     cells.push({ key: 'aov', label: 'AOV', value: hq.aovCents !== null ? fmtCents(hq.aovCents) : '—', title: `Average order value (GMV ÷ orders), from SellerFolio ${asOf ?? ''}`, hq: true })
   }
 
+  // No Runtime cell: the top bar's "Live 1h 05m" already shows it (owner, 2026-11-08). The runtime
+  // still feeds GMV / hr below.
   const rt = i.runtimeSec
-  cells.push({ key: 'runtime', label: 'Runtime', value: rt !== undefined ? fmtRuntime(rt) : '—', title: 'How long the show has been live (TikTok’s count)', hq: false })
 
   let pace = i.tiktok.paceCents
   if (pace === undefined && gmv !== undefined && rt !== undefined && rt >= 60) pace = Math.round((gmv * 3600) / rt)

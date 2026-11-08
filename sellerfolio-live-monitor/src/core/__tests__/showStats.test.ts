@@ -63,7 +63,7 @@ describe('buildSalesView', () => {
 
   it('all seven cells with hq; hq ones are flagged and dated', () => {
     const v = buildSalesView({ tiktok: { gmvCents: 130000, orders: 42, paceCents: 6000000 }, local: {}, runtimeSec: 7800, hq: hqOk })
-    expect(keys(v)).toEqual(['gmv', 'orders', 'items', 'buyers', 'aov', 'runtime', 'pace'])
+    expect(keys(v)).toEqual(['gmv', 'orders', 'items', 'buyers', 'aov', 'pace'])
     const by = Object.fromEntries(v.cells.map((c) => [c.key, c]))
     expect(by['gmv']!.value).toBe('$1,300.00') //   TikTok's figure wins; hq is the cross-check
     expect(by['gmv']!.title).toContain('SellerFolio: $1,234.50')
@@ -71,14 +71,14 @@ describe('buildSalesView', () => {
     expect(by['items']).toMatchObject({ value: '44', hq: true })
     expect(by['buyers']).toMatchObject({ value: '31', hq: true })
     expect(by['aov']).toMatchObject({ value: '$30.86', hq: true })
-    expect(by['runtime']!.value).toBe('2h 10m')
+    expect(by['runtime']).toBeUndefined() // the top bar shows how long the show has run
     expect(by['pace']!.value).toBe('$60,000')
     expect(v.asOf).toMatch(/^as of \d{1,2}:\d{2} [AP]M$/)
   })
 
   it('hq unavailable: no hq cells, items fall back to TikTok, no as-of', () => {
     const v = buildSalesView({ tiktok: { gmvCents: 1000 }, local: { itemsSold: 7, orders: 3 }, runtimeSec: 30, hq: { room: '7300', state: 'unavailable', data: null, at: null } })
-    expect(keys(v)).toEqual(['gmv', 'orders', 'items', 'runtime', 'pace'])
+    expect(keys(v)).toEqual(['gmv', 'orders', 'items', 'pace'])
     expect(v.cells.find((c) => c.key === 'items')).toMatchObject({ value: '7', hq: false })
     expect(v.cells.find((c) => c.key === 'orders')!.value).toBe('3')
     expect(v.cells.find((c) => c.key === 'pace')!.value).toBe('—') // under a minute: no rate
@@ -87,7 +87,7 @@ describe('buildSalesView', () => {
 
   it('before anything arrives: dashes, never zeros', () => {
     const v = buildSalesView({ tiktok: {}, local: {}, hq: null })
-    expect(keys(v)).toEqual(['gmv', 'orders', 'runtime', 'pace'])
+    expect(keys(v)).toEqual(['gmv', 'orders', 'pace'])
     expect(v.cells.every((c) => c.value === '—')).toBe(true)
   })
 
