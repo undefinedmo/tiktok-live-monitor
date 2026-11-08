@@ -24,13 +24,14 @@ import { decodeAuctionIm, extractMessagePayloads } from '../core/auctionIm'
 import { labelHtml, LABEL_SIZES, DEFAULT_TEMPLATE, type LabelData, type LabelTemplate } from './label'
 import { labelZpl, labelNeedsHtml } from './zplLabel'
 import { sendRawToPrinter, warmRawPrinter, probeRawPrinter, describePrinterStatus, isBlockingStatus } from './rawPrint'
-import type { LiveEvent, StatusEvent, PinState } from '../core/types'
+import type { LiveEvent, StatusEvent, PinState, RosterSnapshot } from '../core/types'
 // live-ui lanes (see docs/live-ui/LANES.md): each lane owns its own module, wired below
 import { registerControlIpc, attachControlToViewer } from './controlIpc' // lane A
 import { registerStoreIpc } from './storeIpc' // lane B
 import { registerBuyerHistoryIpc, BUYER_HISTORY_PATH } from './buyerHistory' // lane D
 import { registerShowStatsIpc } from './showStats' // lane G
 import { registerAnswerBankIpc } from './answerBank' // chat AI answer bank
+import { registerRunNext, runNextStateChanged } from './runNext' // Run next lot
 
 const DASHBOARD = 'https://shop.tiktok.com/streamer/live/event/dashboard'
 // Set TT_START_URL to log in via Seller Center (https://seller-us.tiktok.com/) —
@@ -63,6 +64,7 @@ const chatJournal = new ChatJournal()
 declare const __JOURNAL_WORKER_SRC__: string
 const journaledFailed = new Set<string>() // order ids already journaled as payment_failed
 let lastPin: PinState | null = null // latest pin/get — attributes im auction.end closes to a lot number
+let lastRoster: RosterSnapshot | null = null // latest added_auction_product/list — Run next lot reads stock per listing
 // Whole-show aggregates (insights trend/chart + room/status), NOT derived from the sales
 // we happened to capture — so they stay right when the app attaches to a show in progress.
 let showElapsedSec: number | undefined // room/status data.duration — the show's real runtime
@@ -516,6 +518,8 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
   }
   if (msg?.endpoint === 'roster') {
     const snap = parseRoster(json, now)
+    lastRoster = snap
+    runNextStateChanged()
     debug(`[tt] roster: ${snap.products.length} products, sold ${snap.totalSold}, pinned @${snap.pinned?.winUsername ?? '—'}`)
     // DIAG (sudden-death investigation): log each lot's auction-mode flags once. Run one
     // lot with sudden death ON and one OFF, then compare — the flag that flips is the one.
@@ -635,6 +639,7 @@ ipcMain.on('tt-rest-data', (_e, msg: { endpoint?: string; body?: string }) => {
       }
     }
     send(pin)
+    runNextStateChanged()
     // pin/get flips status 1→3 within ~0.5s of the gavel — measured 6.0s and 7.3s
     // AHEAD of the same sale landing in auction_result/get. This is what drives the
     // label now; auction_result stays authoritative and backfills order/payment.
@@ -904,6 +909,15 @@ ipcMain.handle('sf-connect:disconnect', () => {
 //   lane D buyerHistory.ts buyer:lookup · event buyer:counts
 // None of these is on the print path; all are async and best-effort.
 registerControlIpc({ viewer: () => viewer, send: viewerSend })
+registerRunNext({
+  monitor: () => monitor,
+  pin: () => lastPin,
+  roster: () => lastRoster,
+  roomId: () => pollRoomId,
+  sessionId: () => pollSessionId,
+  send: viewerSend,
+  log: flog,
+})
 registerStoreIpc()
 registerBuyerHistoryIpc({
   url: () => sfUrl(sf.baseUrl, BUYER_HISTORY_PATH),

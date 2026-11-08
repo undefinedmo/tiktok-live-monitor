@@ -7,9 +7,9 @@
 // and both the main-process input and the renderer's KeyboardEvent are turned into the same string,
 // so "is this a bound key?" is one string compare everywhere.
 
-/** What a button can do. Run next lot joins this list when it is back in the app. */
-export type HotkeyAction = 'printLast'
-export const HOTKEY_ACTIONS: readonly HotkeyAction[] = ['printLast']
+/** What a button can do. */
+export type HotkeyAction = 'runNext' | 'printLast'
+export const HOTKEY_ACTIONS: readonly HotkeyAction[] = ['runNext', 'printLast']
 
 /** Saved bindings: action → its keys (several buttons may share an action). */
 export type Hotkeys = Record<HotkeyAction, string[]>
@@ -19,8 +19,8 @@ export interface HotkeyStatus {
   keys: { action: HotkeyAction; accel: string; global: boolean }[]
 }
 
-/** F14 has always meant Print last; a first run keeps that. */
-export const DEFAULT_HOTKEYS: Hotkeys = { printLast: ['F14'] }
+/** F13 = Run next lot and F14 = Print last, as the top-bar badges have always said. */
+export const DEFAULT_HOTKEYS: Hotkeys = { runNext: ['F13'], printLast: ['F14'] }
 /** Enough for a Stream Deck plus two hosts' clickers sending different keys. */
 export const MAX_KEYS_PER_ACTION = 4
 /**
@@ -152,7 +152,7 @@ export function parseHotkeys(raw: string | null | undefined): Hotkeys {
 }
 
 export function cloneHotkeys(h: Hotkeys): Hotkeys {
-  return { printLast: [...h.printLast] }
+  return { runNext: [...h.runNext], printLast: [...h.printLast] }
 }
 
 /** Add a key to an action. A key belongs to one action only: it is taken off any other first. */

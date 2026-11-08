@@ -56,6 +56,13 @@ contextBridge.exposeInMainWorld('controlAPI', {
   learnHotkey: (on: boolean) => ipcRenderer.invoke('ctl:hotkeys-learn', on),
 })
 
+// electron/runNext.ts: Run next lot (main re-checks every press against fresh TikTok state).
+contextBridge.exposeInMainWorld('runAPI', {
+  start: () => ipcRenderer.invoke('run:next'),
+  getPlan: () => ipcRenderer.invoke('run:plan-get'),
+  onPlan: (cb: (p: unknown) => void) => ipcRenderer.on('run:plan', (_e, p) => cb(p)),
+})
+
 // Lane B, electron/storeIpc.ts → journal worker's core/storeIndex.ts.
 contextBridge.exposeInMainWorld('storeAPI', {
   searchSales: (text: string, limit?: number) => ipcRenderer.invoke('store:search-sales', { text, limit }),

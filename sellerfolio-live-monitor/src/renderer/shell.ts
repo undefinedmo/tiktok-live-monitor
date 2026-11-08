@@ -14,6 +14,7 @@
 import type { LabelData } from '../electron/label'
 import { onPrintLastChange, printLastLabel } from './printLog'
 import { printLastText } from '../core/printLogFormat'
+import { runNextTitle, type RunNextPlan } from '../core/runNext'
 import { TEXT_DEFAULT, badgeText, canGrow, canShrink, factorToPct, isBigText, pctToFactor, stepText } from '../core/shellControls'
 
 export type Screen = 'monitor' | 'chat' | 'timeline' | 'settings'
@@ -51,7 +52,18 @@ export function initShell(d: ShellDeps): void {
   byId<HTMLButtonElement>('printLastBtn')?.addEventListener('click', () => printLast())
   // A hardware button bound to Print last (Settings → Clicker & keys; F14 by default). Main has
   // already applied the 2-second lockout shared by every clicker.
-  try { window.controlAPI?.onKey((action) => { if (action === 'printLast') printLast() }) } catch { /* no bridge: the button still works */ }
+  try {
+    window.controlAPI?.onKey((action) => {
+      if (action === 'printLast') printLast()
+      else if (action === 'runNext') void runNext()
+    })
+  } catch { /* no bridge: the buttons still work */ }
+  byId<HTMLButtonElement>('runNextBtn')?.addEventListener('click', () => void runNext())
+  try {
+    window.runAPI?.onPlan((p) => { runPlan = p; paintRunNext() })
+    void window.runAPI?.getPlan().then((p) => { runPlan = p; paintRunNext() }).catch(() => {})
+  } catch { /* no bridge (the http demo): the button stays off */ }
+  paintRunNext()
   onPrintLastChange(() => paintPrintLast())
   paintPrintLast()
 
@@ -92,7 +104,7 @@ export function setChatBadge(n: number): void {
   }
 }
 
-/** The Arm switch. Run next is out of this build, so nothing reads it yet besides the switch itself. */
+/** The Arm switch: Run next lot (button or clicker) does nothing until the host arms it. */
 export function isArmed(): boolean { return armed }
 
 function setArmed(on: boolean): void {
@@ -101,6 +113,52 @@ function setArmed(on: boolean): void {
   if (arm) { arm.classList.toggle('on', on); arm.setAttribute('aria-pressed', String(on)) }
   const text = byId('armText')
   if (text) text.textContent = on ? 'Armed' : 'Arm buttons'
+  paintRunNext()
+}
+
+// ── Run next lot [F13] ───────────────────────────────────────────────────────
+// Main decides whether and what to start (electron/runNext.ts, core/runNext.ts) and re-checks
+// on every press; this paints what it last said and gates on Arm. "Same listing, next number":
+// a press starts the next lot of the listing that just ran.
+let runPlan: RunNextPlan = { ok: false, reason: 'Waiting for a live show.' }
+let runBusy = false
+let runFlashTimer: ReturnType<typeof setTimeout> | null = null
+
+function paintRunNext(): void {
+  const btn = byId<HTMLButtonElement>('runNextBtn'), text = byId('runNextText'), wrap = byId('runNextWrap'), why = byId('runNextWhy')
+  const reason = !armed ? 'Turn on Arm buttons to use Run next lot.' : runNextTitle(runPlan)
+  if (btn) btn.disabled = runBusy || !armed || !runPlan.ok
+  if (wrap) wrap.title = reason
+  if (why) why.textContent = reason
+  if (text && !runFlashTimer) text.textContent = runBusy ? 'Starting…' : 'Run next lot'
+}
+
+function flashRunNext(msg: string, bad: boolean): void {
+  const text = byId('runNextText'), btn = byId('runNextBtn')
+  if (!text) return
+  text.textContent = msg
+  btn?.classList.toggle('sh-flash', true)
+  btn?.classList.toggle('sh-bad', bad)
+  if (runFlashTimer) clearTimeout(runFlashTimer)
+  runFlashTimer = setTimeout(() => {
+    runFlashTimer = null
+    btn?.classList.remove('sh-flash', 'sh-bad')
+    paintRunNext()
+  }, bad ? 4000 : 1600)
+}
+
+async function runNext(): Promise<void> {
+  if (runBusy) return
+  if (!armed) { flashRunNext('Arm buttons first', true); return }
+  const api = window.runAPI
+  if (!api) { flashRunNext('Desktop app only', true); return }
+  runBusy = true
+  paintRunNext()
+  let r: { ok: boolean; error?: string }
+  try { r = await api.start() } catch (e) { r = { ok: false, error: String(e) } }
+  runBusy = false
+  if (r.ok) flashRunNext('Started ✓', false)
+  else flashRunNext(r.error || 'Not started', true)
 }
 
 // ── Print last [F14] ─────────────────────────────────────────────────────────
@@ -121,7 +179,7 @@ function paintPrintLast(): void {
   try { data = printLastLabel() } catch { data = undefined }
   const label = printLastText(data)
   if (text && !flashTimer) text.textContent = label
-  if (btn) btn.title = data ? `Reprint ${label.slice('Print last '.length) || 'the last label'} (F14)` : 'Reprint the last label (F14)'
+  if (btn) btn.title = data ? `Reprint ${label.slice('Print last '.length) || 'the last label'}` : 'Reprint the last label'
 }
 
 function flashPrintLast(msg: string): void {

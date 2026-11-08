@@ -8,6 +8,7 @@ import { labelCode } from '../core/labelCode'
 import { parseConnectToken, connectScreen } from '../core/sfConnect'
 import type { StoreResult } from '../core/storeIndex'
 import type { HotkeyStatus } from '../core/hotkeys'
+import type { RunNextPlan } from '../core/runNext'
 import { initHotkeysCard } from './hotkeysCard' // Settings → Clicker & keys
 // live-ui lanes (docs/live-ui/LANES.md): each module is owned by one lane; this file only calls them.
 import { initShell, onScreen, type Screen } from './shell' // lane A
@@ -71,6 +72,12 @@ declare global {
       addHotkey: (action: string, accel: string) => Promise<HotkeyStatus & { error?: string }>
       removeHotkey: (action: string, accel: string) => Promise<HotkeyStatus>
       learnHotkey: (on: boolean) => Promise<void>
+    }
+    /** electron/runNext.ts: Run next lot. start resolves with TikTok's real answer. */
+    runAPI?: {
+      start: () => Promise<{ ok: boolean; error?: string }>
+      getPlan: () => Promise<RunNextPlan>
+      onPlan: (cb: (p: RunNextPlan) => void) => void
     }
     /** lane B: the show store in the journal worker. Resolves empty (never rejects) when there is none. */
     storeAPI?: {

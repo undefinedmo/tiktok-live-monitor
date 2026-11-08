@@ -1,4 +1,5 @@
-// Settings → Clicker & keys: bind a hardware button (Flic, Stream Deck, any key) to Print last.
+// Settings → Clicker & keys: bind a hardware button (Flic, Stream Deck, any key) to Run next lot
+// or Print last.
 //
 // "Add a key" asks main to release the bound keys (ctl:hotkeys-learn), then listens for the next
 // key press in this window: the clicker's key is learned from that press (core/hotkeys learnKey),
@@ -11,7 +12,8 @@ import {
 } from '../core/hotkeys'
 
 const byId = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T | null
-const ACTIONS: HotkeyAction[] = ['printLast']
+const ACTIONS: HotkeyAction[] = ['runNext', 'printLast']
+const BADGE_OF: Record<HotkeyAction, string> = { runNext: 'runNextBtn', printLast: 'printLastBtn' }
 const LISTEN_MS = 20_000
 
 let current: HotkeyStatus = { keys: [] }
@@ -62,10 +64,12 @@ function paint(): void {
       add.classList.toggle('hk-listening', listening === a)
     }
   }
-  // The top-bar badge shows the first key bound to Print last, or nothing.
-  const first = current.keys.find((k) => k.action === 'printLast')
-  const badge = byId('printLastBtn')?.querySelector<HTMLElement>('.sh-key')
-  if (badge) { badge.textContent = first ? keyLabel(first.accel) : ''; badge.hidden = !first }
+  // Each top-bar button's badge shows its first bound key, or nothing.
+  for (const a of ACTIONS) {
+    const first = current.keys.find((k) => k.action === a)
+    const badge = byId(BADGE_OF[a])?.querySelector<HTMLElement>('.sh-key')
+    if (badge) { badge.textContent = first ? keyLabel(first.accel) : ''; badge.hidden = !first }
+  }
 }
 
 function stopListening(): void {

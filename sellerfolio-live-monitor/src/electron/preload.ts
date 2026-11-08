@@ -1,5 +1,6 @@
 import { ipcRenderer } from 'electron'
 import { webcastState, newEcStreamerKey } from '../core/chat'
+import { startAuctionBody } from '../core/runNext'
 import { parseWonFeedRow } from '../core/wonFeed'
 import { nextPinDelayMs, FINALIZE_LAG_MS } from '../core/pinSchedule'
 
@@ -457,6 +458,24 @@ ipcRenderer.on('tt-poll-config', (_e, cfg: { roomId?: string; sessionId?: string
       .then((res) => res.json().catch(() => ({})))
       .then((j: { code?: number; message?: string }) => ipcRenderer.send('tt-chat-sent', { id, ok: j?.code === 0, error: j?.message }))
       .catch((e) => ipcRenderer.send('tt-chat-sent', { id, ok: false, error: String(e) }))
+  })
+
+  // ── Run next lot ─────────────────────────────────────────────────────────────
+  // POST live_auction/start_auction, exactly as Streamer Desktop's own Start does
+  // (core/runNext.ts has the source). Main has already decided it is safe and which listing;
+  // this only sends it, through the page's auto-signed fetch, and reports TikTok's answer.
+  ipcRenderer.on('tt-auction-start', (_e, req: { id?: number; auctionConfigId?: string }) => {
+    const id = req?.id
+    if (!req?.auctionConfigId || !cfg.roomId || !cfg.sessionId) {
+      ipcRenderer.send('tt-auction-started', { id, ok: false, error: 'no listing or no show' })
+      return
+    }
+    void window
+      .fetch(`${base}/start_auction${q}`, post(startAuctionBody(req.auctionConfigId, cfg.roomId, cfg.sessionId, Date.now())))
+      .then((res) => res.json().catch(() => ({})))
+      .then((j: { code?: number; message?: string }) =>
+        ipcRenderer.send('tt-auction-started', { id, ok: j?.code === 0, code: j?.code, error: j?.code === 0 ? undefined : j?.message || `TikTok code ${j?.code ?? '?'}` }))
+      .catch((e) => ipcRenderer.send('tt-auction-started', { id, ok: false, error: String(e) }))
   })
 })
 

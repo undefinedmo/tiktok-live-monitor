@@ -356,6 +356,10 @@
       .sh-run{display:flex;align-items:center;gap:8px;height:36px;padding:0 12px;border:0;border-radius:8px;background:var(--accent);color:#fff;font:700 13px var(--ui);cursor:pointer;white-space:nowrap;}
       .sh-run:hover{background:var(--accent-2);}
       .sh-run:disabled{background:var(--panel-3);color:var(--ink-3);cursor:not-allowed;pointer-events:none;}
+      .sh-runwrap:has(.sh-run:not(:disabled)){cursor:default;}
+      #runNextText{max-width:280px;overflow:hidden;text-overflow:ellipsis;}
+      .sh-run.sh-flash{background:var(--gain,#1f9d55);color:#fff;}
+      .sh-run.sh-flash.sh-bad{background:var(--loss-bg);color:var(--loss);}
       .sh-last{display:flex;align-items:center;gap:8px;height:36px;padding:0 12px;border:1px solid var(--line-strong);border-radius:8px;background:var(--panel);color:var(--ink);font:700 13px var(--ui);cursor:pointer;white-space:nowrap;flex:none;}
       .sh-last:hover{background:var(--panel-hover);}
       .sh-last.sh-flash{border-color:var(--flag);color:var(--flag);}
@@ -623,11 +627,11 @@
     <div class="topbar">
       <div class="brand"><img src="./sf-logo.png" alt="SellerFolio" /><span>SellerFolio Live</span></div>
       <div class="livepill" id="livePill"><span id="status">connecting…</span><span class="sep">&middot;</span><span id="sessionName">—</span></div>
-      <!-- lane A (shell.ts): Arm switch, disabled "Run next" ("Coming soon"), Print last [F14] -->
+      <!-- lane A (shell.ts): Arm switch, Run next lot [F13] (needs Arm; main decides what it starts), Print last [F14] -->
       <div id="topControls" class="top-controls">
         <button type="button" id="armBtn" class="sh-arm" aria-pressed="false"><span class="sh-knob"><i></i></span><span id="armText">Arm buttons</span></button>
-        <span class="sh-runwrap" title="Coming soon — needs TikTok's start-auction call"><button type="button" id="runNextBtn" class="sh-run" disabled aria-describedby="runNextWhy"><span>Run next lot</span><span class="sh-key">F13</span></button></span>
-        <span id="runNextWhy" class="visually-hidden">Coming soon — needs TikTok's start-auction call</span>
+        <span class="sh-runwrap" id="runNextWrap" title="Turn on Arm buttons to use Run next lot."><button type="button" id="runNextBtn" class="sh-run" disabled aria-describedby="runNextWhy"><span id="runNextText">Run next lot</span><span class="sh-key">F13</span></button></span>
+        <span id="runNextWhy" class="visually-hidden" role="status">Turn on Arm buttons to use Run next lot.</span>
         <button type="button" id="printLastBtn" class="sh-last" title="Reprint the last label that printed"><span id="printLastText">Print last</span><span class="sh-key">F14</span></button>
       </div>
       <div style="flex:1;"></div>
@@ -833,16 +837,12 @@
                 <h3>Clicker &amp; keys</h3>
                 <p class="hk-help">Pair your clicker in its own app (for a Flic, the Flic app) and set a click to press a key. Then add that key here. It works while TikTok or any other window is in front.</p>
                 <div class="hk-row">
-                  <div class="hk-name"><b>Print last</b><small>Reprints the last label</small></div>
-                  <div class="hk-keys" id="hkKeys-printLast"></div>
-                  <button type="button" class="qbtn" id="hkAdd-printLast">Add a key</button>
-                </div>
-                <div class="hk-row hk-off">
-                  <div class="hk-name"><b>Run next lot</b><small>Coming soon</small></div>
-                  <div class="hk-keys"></div>
+                  <div class="hk-name"><b>Run next lot</b><small>Next lot of the listing that just ran. Needs Arm.</small></div>
+                  <div class="hk-keys" id="hkKeys-runNext"></div>
+                  <button type="button" class="qbtn" id="hkAdd-runNext">Add a key</button>
                 </div>
                 <div id="hkState" class="state muted" role="status"></div>
-                <p class="hk-help">Two clickers can share a key. Presses of the same button within 2 seconds count once, so two hosts can&rsquo;t print the same label twice.</p>
+                <p class="hk-help">Two clickers can share a key. Presses of the same button within 2 seconds count once, so two hosts can&rsquo;t start two lots or print the same label twice.</p>
               </div>
 
               <div class="modal-box set-card">
@@ -858,6 +858,11 @@
                     <button id="printTest" class="qbtn" type="button" style="flex:none;" disabled>Print test label</button>
                   </div>
                   <div id="printerState" class="state muted">&mdash;</div>
+                </div>
+                <div class="hk-row">
+                  <div class="hk-name"><b>Print last</b><small>Reprints the last label</small></div>
+                  <div class="hk-keys" id="hkKeys-printLast"></div>
+                  <button type="button" class="qbtn" id="hkAdd-printLast">Add a key</button>
                 </div>
                 <!-- lane F: the switch stays as the raw-ZPL state (setupPrinting / labelAPI.setRawZpl); the Label
                      designer's banner is the one place to change it. -->

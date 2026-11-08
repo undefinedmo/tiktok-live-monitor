@@ -51,7 +51,7 @@ describe('parseHotkeys', () => {
     expect(parseHotkeys('{}')).toEqual(DEFAULT_HOTKEYS)
   })
   it('keeps an empty list (the user removed every key) instead of bringing F14 back', () => {
-    expect(parseHotkeys('{"printLast":[]}')).toEqual({ printLast: [] })
+    expect(parseHotkeys('{"printLast":[]}')).toEqual({ runNext: ['F13'], printLast: [] })
   })
   it('drops hand-edited keys that would steal typing, duplicates, and anything past the cap', () => {
     const raw = JSON.stringify({ printLast: ['F13', 'P', 'Space', 'F13', 'Control+Alt+P', 42, 'Bogus+F1', 'F15', 'F16', 'F17'] })
@@ -60,10 +60,15 @@ describe('parseHotkeys', () => {
 })
 
 describe('addKey / removeKey / actionFor', () => {
+  it('defaults: F13 runs the next lot, F14 prints the last label', () => {
+    expect(actionFor(DEFAULT_HOTKEYS, 'F13')).toBe('runNext')
+    expect(actionFor(DEFAULT_HOTKEYS, 'F14')).toBe('printLast')
+  })
   it('adds, ignores a repeat, removes', () => {
     let h = addKey(DEFAULT_HOTKEYS, 'printLast', 'F13')
     if ('error' in h) throw new Error(h.error)
     expect(h.printLast).toEqual(['F14', 'F13'])
+    expect(h.runNext).toEqual([]) // a key belongs to one action: F13 moved off Run next
     const again = addKey(h, 'printLast', 'F13')
     if ('error' in again) throw new Error(again.error)
     expect(again.printLast).toEqual(['F14', 'F13'])
@@ -75,7 +80,7 @@ describe('addKey / removeKey / actionFor', () => {
   })
   it('refuses a key that would steal typing and a fifth key', () => {
     expect(addKey(DEFAULT_HOTKEYS, 'printLast', 'P')).toHaveProperty('error')
-    const full = { printLast: ['F13', 'F14', 'F15', 'F16'] }
+    const full = { runNext: [], printLast: ['F13', 'F14', 'F15', 'F16'] }
     expect(addKey(full, 'printLast', 'F17')).toHaveProperty('error')
   })
   it('never changes the bindings it was given', () => {
