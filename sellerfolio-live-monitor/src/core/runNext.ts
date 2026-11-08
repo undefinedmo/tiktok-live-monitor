@@ -19,6 +19,9 @@
 import type { PinState, RosterSnapshot } from './types'
 
 export const STATUS_BIDDING = 1
+/** Ended with no sale (no bids, or under reserve). Measured 2026-11-08: lot #97 went 1 → 2 with no
+ *  winner, then the host ran #97 again. A press after this re-runs the same lot, as the host did. */
+export const STATUS_UNSOLD = 2
 export const STATUS_ENDED = 3
 /** pin/get is polled about once a second; older than this and we no longer know what is running. */
 export const PIN_FRESH_MS = 15_000
@@ -57,7 +60,7 @@ export function planRunNext(i: RunNextInput): RunNextPlan {
     return { ok: false, reason: seenSince && c.status === STATUS_BIDDING ? running : 'Starting…' }
   }
   if (c.status === STATUS_BIDDING) return { ok: false, reason: running }
-  if (c.status !== STATUS_ENDED) return { ok: false, reason: `Waiting for ${listing} to finish.` }
+  if (c.status !== STATUS_ENDED && c.status !== STATUS_UNSOLD) return { ok: false, reason: `Waiting for ${listing} to finish.` }
 
   const p = i.roster?.products.find((x) => x.auctionConfigId === c.auctionConfigId)
   if (p?.statusError) return { ok: false, reason: `TikTok says: ${p.statusError}` }

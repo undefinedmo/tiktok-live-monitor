@@ -26,8 +26,11 @@ describe('planRunNext — same listing, next number', () => {
     const r = planRunNext(base({ pin: pin({ auctionConfigId: 'cfg1', status: 1, variantDesc: '#36' }) }))
     expect(r).toEqual({ ok: false, reason: '#36 is still running.' })
   })
+  it('runs again after an unsold lot (status 2, no winner) — the Flic stopped working here on 2026-11-08', () => {
+    expect(planRunNext(base({ pin: pin({ auctionConfigId: 'cfg1', status: 2, variantDesc: '#97' }) }))).toEqual({ ok: true, auctionConfigId: 'cfg1', listing: 'Mystery bag', after: '#97' })
+  })
   it('refuses a status it does not know rather than guess', () => {
-    const r = planRunNext(base({ pin: pin({ auctionConfigId: 'cfg1', status: 2 }) }))
+    const r = planRunNext(base({ pin: pin({ auctionConfigId: 'cfg1', status: 4 }) }))
     expect(r.ok).toBe(false)
     expect(planRunNext(base({ pin: pin({ auctionConfigId: 'cfg1' }) })).ok).toBe(false)
   })
